@@ -1,0 +1,9 @@
+.git
+.cache
+.jobdock
+web/node_modules
+web/dist
+sdk/python/.pytest_cache
+sdk/python/*.egg-info
+*.db
+

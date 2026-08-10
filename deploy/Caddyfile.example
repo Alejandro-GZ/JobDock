@@ -1,0 +1,8 @@
+jobdock.example.com {
+    encode zstd gzip
+    reverse_proxy jobdock-server:8080
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
+}
+

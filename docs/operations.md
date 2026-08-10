@@ -1,0 +1,38 @@
+# Operations guide
+
+## Production requirements
+
+- Terminate TLS at JobDock or a trusted reverse proxy. Agents reject HTTP unless explicitly configured for local development.
+- Keep the server data volume and agent state/workspace volumes on durable filesystems.
+- Treat every agent as host-administrative software: access to the Docker socket can control the host.
+- Put JobDock on a trusted private network or VPN and restrict public access at the firewall or reverse proxy.
+
+## Backup and restore
+
+Stop the server or use SQLite's online backup mechanism, then copy the database, `jobs/`, and `master.key` from the same point in time. The encryption key is mandatory for restoring secrets. Restore into an empty data directory with the same or newer compatible JobDock version.
+
+## Capacity defaults
+
+- 10 GiB of persisted logs per job.
+- 100 GiB of outputs per job.
+- An agent should stop accepting work below the greater of 10 GiB or 10% workspace free space.
+- Resource telemetry is sampled every five seconds.
+
+Limits are controlled with `JOBDOCK_MAX_LOG_BYTES` and `JOBDOCK_MAX_OUTPUT_BYTES`. Limit events are visible in the job timeline; workloads are not killed merely because central collection reached a quota.
+
+## Upgrades
+
+Back up the server, upgrade the control plane, verify readiness, then upgrade agents gradually. Do not skip major protocol versions. A draining node receives no new work and can be upgraded after active jobs finish.
+
+## Troubleshooting
+
+- `NO_ONLINE_NODE`: verify agent credentials, server URL, TLS trust, and heartbeats.
+- `NO_COMPATIBLE_GPU`: ensure NVIDIA Container Toolkit is installed and the agent is started with the GPU Compose override.
+- Jobs remain `LOST`: inspect Docker labels `jobdock.managed`, `jobdock.job_id`, and `jobdock.attempt_id` on the assigned host.
+- Image pulls fail: store a registry secret containing Docker AuthConfig JSON and select it in the job specification.
+
+Example registry secret value:
+
+```json
+{"username":"registry-user","password":"registry-token","serveraddress":"ghcr.io"}
+```

@@ -1,0 +1,15 @@
+# syntax=docker/dockerfile:1.7
+FROM golang:1.26-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/jobdock-agent ./cmd/jobdock-agent
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/jobdock-agent /usr/local/bin/jobdock-agent
+ENV JOBDOCK_AGENT_STATE_DIR=/var/lib/jobdock-agent JOBDOCK_WORKSPACE_DIR=/var/lib/jobdock-agent/jobs JOBDOCK_DOCKER_SOCKET=/var/run/docker.sock
+VOLUME ["/var/lib/jobdock-agent"]
+ENTRYPOINT ["jobdock-agent"]
+

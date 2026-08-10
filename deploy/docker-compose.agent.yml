@@ -1,0 +1,23 @@
+services:
+  jobdock-agent:
+    build:
+      context: ..
+      dockerfile: Dockerfile.agent
+    image: jobdock-agent:0.1.0
+    restart: unless-stopped
+    environment:
+      JOBDOCK_SERVER_URL: "${JOBDOCK_SERVER_URL:?Set the JobDock server URL}"
+      JOBDOCK_ENROLLMENT_TOKEN: "${JOBDOCK_ENROLLMENT_TOKEN:-}"
+      JOBDOCK_NODE_NAME: "${JOBDOCK_NODE_NAME:-docker-node}"
+      JOBDOCK_NODE_LABELS: "${JOBDOCK_NODE_LABELS:-}"
+      JOBDOCK_ALLOW_INSECURE_HTTP: "${JOBDOCK_ALLOW_INSECURE_HTTP:-false}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/jobdock-agent:/var/lib/jobdock-agent
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
