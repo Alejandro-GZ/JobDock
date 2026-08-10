@@ -57,6 +57,22 @@ func TestLoginAndIdempotentJobCreation(t *testing.T) {
 	if cookie == nil {
 		t.Fatal("missing session cookie")
 	}
+	for _, path := range []string{"/jobs", "/nodes", "/secrets"} {
+		request, _ := http.NewRequest("GET", server.URL+"/api/v1"+path, nil)
+		request.AddCookie(cookie)
+		result, requestErr := http.DefaultClient.Do(request)
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		var collection struct {
+			Items json.RawMessage `json:"items"`
+		}
+		decodeErr := json.NewDecoder(result.Body).Decode(&collection)
+		result.Body.Close()
+		if result.StatusCode != http.StatusOK || decodeErr != nil || string(collection.Items) != "[]" {
+			t.Fatalf("empty collection %s: status=%d items=%s error=%v", path, result.StatusCode, collection.Items, decodeErr)
+		}
+	}
 	jobBody := `{"name":"test-job","image":"alpine:3","command":["echo","ok"],"resources":{"cpu_millis":100,"memory_bytes":1048576,"gpu":{"count":0,"min_vram_bytes":0}}}`
 	create := func() (int, string) {
 		request, _ := http.NewRequest("POST", server.URL+"/api/v1/jobs", bytes.NewBufferString(jobBody))

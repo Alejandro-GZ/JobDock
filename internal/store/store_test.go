@@ -84,3 +84,37 @@ func TestIdempotencyReplay(t *testing.T) {
 		t.Fatalf("replay: %v %d %s %v", cached, status, data, err)
 	}
 }
+
+func TestEmptyCollectionsAreJSONArrays(t *testing.T) {
+	ctx := context.Background()
+	repository, err := store.Open(t.TempDir() + "/jobdock.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+
+	users, err := repository.ListUsers(ctx)
+	if err != nil || users == nil {
+		t.Fatalf("users must be an empty slice: %#v %v", users, err)
+	}
+	jobs, err := repository.ListJobs(ctx, false)
+	if err != nil || jobs == nil {
+		t.Fatalf("jobs must be an empty slice: %#v %v", jobs, err)
+	}
+	nodes, err := repository.ListNodes(ctx)
+	if err != nil || nodes == nil {
+		t.Fatalf("nodes must be an empty slice: %#v %v", nodes, err)
+	}
+	events, err := repository.Events(ctx, "missing-job", 0)
+	if err != nil || events == nil {
+		t.Fatalf("events must be an empty slice: %#v %v", events, err)
+	}
+	secrets, err := repository.ListSecrets(ctx, "missing-owner")
+	if err != nil || secrets == nil {
+		t.Fatalf("secrets must be an empty slice: %#v %v", secrets, err)
+	}
+	audit, err := repository.ListAudit(ctx, 10)
+	if err != nil || audit == nil {
+		t.Fatalf("audit must be an empty slice: %#v %v", audit, err)
+	}
+}

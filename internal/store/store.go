@@ -110,7 +110,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]domain.User, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var users []domain.User
+	users := make([]domain.User, 0)
 	for rows.Next() {
 		var user domain.User
 		var created string
@@ -167,7 +167,7 @@ func (s *Store) ListJobs(ctx context.Context, includeDeleted bool) ([]domain.Job
 		return nil, err
 	}
 	defer rows.Close()
-	var jobs []domain.Job
+	jobs := make([]domain.Job, 0)
 	for rows.Next() {
 		job, err := scanJob(rows)
 		if err != nil {
@@ -339,9 +339,10 @@ func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var nodes []domain.Node
+	nodes := make([]domain.Node, 0)
 	for rows.Next() {
 		var node domain.Node
+		node.GPUs = make([]domain.GPU, 0)
 		var labels, heartbeat, created string
 		if err := rows.Scan(&node.ID, &node.Name, &node.Status, &node.AgentVersion, &node.ProtocolVersion, &node.Architecture, &node.DockerVersion, &node.CPUTotalMillis, &node.MemoryTotalBytes, &node.WorkspaceFreeBytes, &labels, &heartbeat, &created); err != nil {
 			return nil, err
@@ -518,7 +519,7 @@ func (s *Store) Events(ctx context.Context, jobID string, after int64) ([]domain
 		return nil, err
 	}
 	defer rows.Close()
-	var events []domain.Event
+	events := make([]domain.Event, 0)
 	for rows.Next() {
 		var event domain.Event
 		var payload, created string
@@ -560,7 +561,7 @@ func (s *Store) ListSecrets(ctx context.Context, ownerID string) ([]SecretMetada
 		return nil, err
 	}
 	defer rows.Close()
-	var result []SecretMetadata
+	result := make([]SecretMetadata, 0)
 	for rows.Next() {
 		var item SecretMetadata
 		var created, updated string
@@ -611,7 +612,7 @@ func (s *Store) ListAudit(ctx context.Context, limit int) ([]AuditEvent, error) 
 		return nil, err
 	}
 	defer rows.Close()
-	var result []AuditEvent
+	result := make([]AuditEvent, 0)
 	for rows.Next() {
 		var event AuditEvent
 		var metadata, created string
