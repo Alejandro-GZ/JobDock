@@ -37,6 +37,7 @@ type Agent struct {
 	DockerSocket      string
 	Labels            map[string]string
 	AllowInsecureHTTP bool
+	GPUMode           string
 }
 
 func LoadServer() (Server, error) {
@@ -87,6 +88,10 @@ func LoadAgent() (Agent, error) {
 		DockerSocket:      env("JOBDOCK_DOCKER_SOCKET", "/var/run/docker.sock"),
 		Labels:            parseLabels(env("JOBDOCK_NODE_LABELS", "")),
 		AllowInsecureHTTP: envBool("JOBDOCK_ALLOW_INSECURE_HTTP", false),
+		GPUMode:           strings.ToLower(env("JOBDOCK_GPU_MODE", "auto")),
+	}
+	if c.GPUMode != "auto" && c.GPUMode != "required" && c.GPUMode != "disabled" {
+		return c, errors.New("JOBDOCK_GPU_MODE must be auto, required, or disabled")
 	}
 	if strings.HasPrefix(c.ServerURL, "http://") && !c.AllowInsecureHTTP {
 		return c, errors.New("agent refuses plain HTTP unless JOBDOCK_ALLOW_INSECURE_HTTP=true")

@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,6 +54,15 @@ type AuditEvent struct {
 	CreatedAt  time.Time      `json:"created_at"`
 }
 
+type JobUpdate struct {
+	Cursor    int64            `json:"cursor"`
+	JobID     string           `json:"job_id"`
+	Name      string           `json:"name"`
+	Status    domain.JobStatus `json:"status"`
+	Version   int64            `json:"version"`
+	CreatedAt time.Time        `json:"created_at"`
+}
+
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, err
@@ -75,12 +86,49 @@ func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) DB() *sql.DB { return s.db }
 
 func (s *Store) migrate(ctx context.Context) error {
-	contents, err := migrations.ReadFile("migrations/001_initial.sql")
+	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
+		return err
+	}
+	entries, err := migrations.ReadDir("migrations")
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, string(contents))
-	return err
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+		version, parseErr := strconv.Atoi(strings.SplitN(entry.Name(), "_", 2)[0])
+		if parseErr != nil {
+			return fmt.Errorf("invalid migration name %s", entry.Name())
+		}
+		var applied int
+		if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version=?`, version).Scan(&applied); err != nil {
+			return err
+		}
+		if applied > 0 {
+			continue
+		}
+		contents, readErr := migrations.ReadFile("migrations/" + entry.Name())
+		if readErr != nil {
+			return readErr
+		}
+		tx, beginErr := s.db.BeginTx(ctx, nil)
+		if beginErr != nil {
+			return beginErr
+		}
+		if _, err = tx.ExecContext(ctx, string(contents)); err == nil {
+			_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)`, version, formatTime(time.Now().UTC()))
+		}
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("apply migration %s: %w", entry.Name(), err)
+		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) UserCount(ctx context.Context) (int, error) {
@@ -222,6 +270,9 @@ func (s *Store) ReserveJob(ctx context.Context, jobID, nodeID, attemptID, assign
 	if _, err = tx.ExecContext(ctx, `INSERT INTO assignments(id,job_id,attempt_id,node_id,gpu_uuids_json,job_token_ciphertext,created_at) VALUES(?,?,?,?,?,?,?)`, assignmentID, jobID, attemptID, nodeID, gpus, jobTokenCiphertext, now); err != nil {
 		return err
 	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO job_events(job_id,sequence,type,status,payload_json,created_at) SELECT ?,COALESCE(MAX(sequence),0)+1,'assigned','ASSIGNED','{}',? FROM job_events WHERE job_id=?`, jobID, now, jobID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -292,7 +343,7 @@ func (s *Store) UpsertNode(ctx context.Context, node domain.Node, credentialHash
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT INTO nodes(id,name,status,agent_version,protocol_version,architecture,docker_version,cpu_total_millis,memory_total_bytes,workspace_free_bytes,labels_json,credential_hash,credential_created_at,last_heartbeat,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,status=excluded.status,agent_version=excluded.agent_version,protocol_version=excluded.protocol_version,architecture=excluded.architecture,docker_version=excluded.docker_version,cpu_total_millis=excluded.cpu_total_millis,memory_total_bytes=excluded.memory_total_bytes,workspace_free_bytes=excluded.workspace_free_bytes,labels_json=excluded.labels_json,last_heartbeat=excluded.last_heartbeat`, node.ID, node.Name, node.Status, node.AgentVersion, node.ProtocolVersion, node.Architecture, node.DockerVersion, node.CPUTotalMillis, node.MemoryTotalBytes, node.WorkspaceFreeBytes, labels, credentialHash, formatTime(time.Now().UTC()), formatTime(node.LastHeartbeat), formatTime(node.CreatedAt))
+	_, err = tx.ExecContext(ctx, `INSERT INTO nodes(id,name,status,agent_version,protocol_version,architecture,docker_version,cpu_total_millis,memory_total_bytes,workspace_free_bytes,labels_json,credential_hash,credential_created_at,last_heartbeat,created_at,gpu_discovery_status,gpu_error_code,gpu_error_message) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,status=excluded.status,agent_version=excluded.agent_version,protocol_version=excluded.protocol_version,architecture=excluded.architecture,docker_version=excluded.docker_version,cpu_total_millis=excluded.cpu_total_millis,memory_total_bytes=excluded.memory_total_bytes,workspace_free_bytes=excluded.workspace_free_bytes,labels_json=excluded.labels_json,last_heartbeat=excluded.last_heartbeat,gpu_discovery_status=excluded.gpu_discovery_status,gpu_error_code=excluded.gpu_error_code,gpu_error_message=excluded.gpu_error_message`, node.ID, node.Name, node.Status, node.AgentVersion, node.ProtocolVersion, node.Architecture, node.DockerVersion, node.CPUTotalMillis, node.MemoryTotalBytes, node.WorkspaceFreeBytes, labels, credentialHash, formatTime(time.Now().UTC()), formatTime(node.LastHeartbeat), formatTime(node.CreatedAt), node.GPUDiscovery.Status, node.GPUDiscovery.ErrorCode, node.GPUDiscovery.Message)
 	if err != nil {
 		return err
 	}
@@ -314,7 +365,7 @@ func (s *Store) Heartbeat(ctx context.Context, node domain.Node) error {
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE nodes SET name=?,status=CASE WHEN status='DRAINING' THEN status ELSE ? END,agent_version=?,protocol_version=?,architecture=?,docker_version=?,cpu_total_millis=?,memory_total_bytes=?,workspace_free_bytes=?,labels_json=?,last_heartbeat=? WHERE id=?`, node.Name, node.Status, node.AgentVersion, node.ProtocolVersion, node.Architecture, node.DockerVersion, node.CPUTotalMillis, node.MemoryTotalBytes, node.WorkspaceFreeBytes, labels, formatTime(node.LastHeartbeat), node.ID)
+	result, err := tx.ExecContext(ctx, `UPDATE nodes SET name=?,status=CASE WHEN status='DRAINING' THEN status ELSE ? END,agent_version=?,protocol_version=?,architecture=?,docker_version=?,cpu_total_millis=?,memory_total_bytes=?,workspace_free_bytes=?,labels_json=?,last_heartbeat=?,gpu_discovery_status=?,gpu_error_code=?,gpu_error_message=? WHERE id=?`, node.Name, node.Status, node.AgentVersion, node.ProtocolVersion, node.Architecture, node.DockerVersion, node.CPUTotalMillis, node.MemoryTotalBytes, node.WorkspaceFreeBytes, labels, formatTime(node.LastHeartbeat), node.GPUDiscovery.Status, node.GPUDiscovery.ErrorCode, node.GPUDiscovery.Message, node.ID)
 	if err != nil {
 		return err
 	}
@@ -334,7 +385,7 @@ func (s *Store) Heartbeat(ctx context.Context, node domain.Node) error {
 }
 
 func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,status,agent_version,protocol_version,architecture,docker_version,cpu_total_millis,memory_total_bytes,workspace_free_bytes,labels_json,last_heartbeat,created_at FROM nodes ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,status,agent_version,protocol_version,architecture,docker_version,cpu_total_millis,memory_total_bytes,workspace_free_bytes,labels_json,last_heartbeat,created_at,gpu_discovery_status,gpu_error_code,gpu_error_message FROM nodes ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +395,7 @@ func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
 		var node domain.Node
 		node.GPUs = make([]domain.GPU, 0)
 		var labels, heartbeat, created string
-		if err := rows.Scan(&node.ID, &node.Name, &node.Status, &node.AgentVersion, &node.ProtocolVersion, &node.Architecture, &node.DockerVersion, &node.CPUTotalMillis, &node.MemoryTotalBytes, &node.WorkspaceFreeBytes, &labels, &heartbeat, &created); err != nil {
+		if err := rows.Scan(&node.ID, &node.Name, &node.Status, &node.AgentVersion, &node.ProtocolVersion, &node.Architecture, &node.DockerVersion, &node.CPUTotalMillis, &node.MemoryTotalBytes, &node.WorkspaceFreeBytes, &labels, &heartbeat, &created, &node.GPUDiscovery.Status, &node.GPUDiscovery.ErrorCode, &node.GPUDiscovery.Message); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(labels), &node.Labels)
@@ -406,8 +457,29 @@ func (s *Store) MarkStaleNodes(ctx context.Context, offlineBefore, lostBefore ti
 	if _, err := s.db.ExecContext(ctx, `UPDATE nodes SET status='OFFLINE' WHERE status IN ('ONLINE','DEGRADED') AND last_heartbeat < ?`, formatTime(offlineBefore)); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE jobs SET status='LOST',observed_status='LOST',version=version+1 WHERE status IN ('ASSIGNED','PULLING_IMAGE','STARTING','RUNNING','STOPPING') AND assigned_node_id IN (SELECT id FROM nodes WHERE last_heartbeat < ?)`, formatTime(lostBefore))
-	return err
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM jobs WHERE status IN ('ASSIGNED','PULLING_IMAGE','STARTING','RUNNING','STOPPING') AND assigned_node_id IN (SELECT id FROM nodes WHERE last_heartbeat < ?)`, formatTime(lostBefore))
+	if err != nil {
+		return err
+	}
+	var jobIDs []string
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		jobIDs = append(jobIDs, id)
+	}
+	rows.Close()
+	for _, jobID := range jobIDs {
+		if _, err = s.db.ExecContext(ctx, `UPDATE jobs SET status='LOST',observed_status='LOST',version=version+1 WHERE id=? AND status IN ('ASSIGNED','PULLING_IMAGE','STARTING','RUNNING','STOPPING')`, jobID); err != nil {
+			return err
+		}
+		if err = s.AppendServerEvent(ctx, jobID, "lost", map[string]any{}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) AssignmentForNode(ctx context.Context, nodeID string) (domain.Assignment, error) {
@@ -490,14 +562,14 @@ func (s *Store) AcceptAssignment(ctx context.Context, nodeID, assignmentID, cont
 
 func (s *Store) AppendEvent(ctx context.Context, event domain.Event) error {
 	payload, _ := json.Marshal(event.Payload)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO job_events(job_id,sequence,type,payload_json,created_at) VALUES(?,?,?,?,?) ON CONFLICT(job_id,sequence) DO NOTHING`, event.JobID, event.Sequence, event.Type, payload, formatTime(event.CreatedAt))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO job_events(job_id,sequence,type,status,payload_json,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(job_id,sequence) DO NOTHING`, event.JobID, event.Sequence, event.Type, event.Status, payload, formatTime(event.CreatedAt))
 	return err
 }
 
 func (s *Store) AppendServerEvent(ctx context.Context, jobID, eventType string, payload map[string]any) error {
 	data, _ := json.Marshal(payload)
 	for attempts := 0; attempts < 3; attempts++ {
-		_, err := s.db.ExecContext(ctx, `INSERT INTO job_events(job_id,sequence,type,payload_json,created_at) SELECT ?,COALESCE(MAX(sequence),0)+1,?,?,? FROM job_events WHERE job_id=?`, jobID, eventType, data, formatTime(time.Now().UTC()), jobID)
+		_, err := s.db.ExecContext(ctx, `INSERT INTO job_events(job_id,sequence,type,status,payload_json,created_at) VALUES(?,COALESCE((SELECT MAX(sequence) FROM job_events WHERE job_id=?),0)+1,?,(SELECT status FROM jobs WHERE id=?),?,?)`, jobID, jobID, eventType, jobID, data, formatTime(time.Now().UTC()))
 		if err == nil {
 			return nil
 		}
@@ -514,7 +586,7 @@ func (s *Store) JobByToken(ctx context.Context, tokenHash string) (domain.Job, e
 }
 
 func (s *Store) Events(ctx context.Context, jobID string, after int64) ([]domain.Event, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,job_id,sequence,type,payload_json,created_at FROM job_events WHERE job_id=? AND id>? ORDER BY id LIMIT 1000`, jobID, after)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,job_id,sequence,type,status,payload_json,created_at FROM job_events WHERE job_id=? AND id>? ORDER BY id LIMIT 1000`, jobID, after)
 	if err != nil {
 		return nil, err
 	}
@@ -523,7 +595,7 @@ func (s *Store) Events(ctx context.Context, jobID string, after int64) ([]domain
 	for rows.Next() {
 		var event domain.Event
 		var payload, created string
-		if err := rows.Scan(&event.ID, &event.JobID, &event.Sequence, &event.Type, &payload, &created); err != nil {
+		if err := rows.Scan(&event.ID, &event.JobID, &event.Sequence, &event.Type, &event.Status, &payload, &created); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(payload), &event.Payload)
@@ -531,6 +603,31 @@ func (s *Store) Events(ctx context.Context, jobID string, after int64) ([]domain
 		events = append(events, event)
 	}
 	return events, rows.Err()
+}
+
+func (s *Store) JobUpdatesForOwner(ctx context.Context, ownerID string, after int64) ([]JobUpdate, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.job_id,json_extract(j.spec_json,'$.name'),e.status,j.version,e.created_at FROM job_events e JOIN jobs j ON j.id=e.job_id WHERE j.owner_id=? AND e.id>? AND e.status<>'' ORDER BY e.id LIMIT 1000`, ownerID, after)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	updates := make([]JobUpdate, 0)
+	for rows.Next() {
+		var item JobUpdate
+		var created string
+		if err := rows.Scan(&item.Cursor, &item.JobID, &item.Name, &item.Status, &item.Version, &created); err != nil {
+			return nil, err
+		}
+		item.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		updates = append(updates, item)
+	}
+	return updates, rows.Err()
+}
+
+func (s *Store) LatestJobUpdateCursorForOwner(ctx context.Context, ownerID string) (int64, error) {
+	var cursor int64
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(e.id),0) FROM job_events e JOIN jobs j ON j.id=e.job_id WHERE j.owner_id=?`, ownerID).Scan(&cursor)
+	return cursor, err
 }
 
 func (s *Store) CreateEnrollmentToken(ctx context.Context, tokenHash, userID string, expires time.Time) error {

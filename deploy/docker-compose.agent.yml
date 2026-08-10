@@ -11,6 +11,7 @@ services:
       JOBDOCK_NODE_NAME: "${JOBDOCK_NODE_NAME:-docker-node}"
       JOBDOCK_NODE_LABELS: "${JOBDOCK_NODE_LABELS:-}"
       JOBDOCK_ALLOW_INSECURE_HTTP: "${JOBDOCK_ALLOW_INSECURE_HTTP:-false}"
+      JOBDOCK_GPU_MODE: "${JOBDOCK_GPU_MODE:-auto}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/jobdock-agent:/var/lib/jobdock-agent
@@ -20,4 +21,3 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
-

@@ -64,6 +64,13 @@ paths:
       operationId: streamJob
       parameters: [{$ref: '#/components/parameters/JobID'}]
       responses: {'200': {description: Resumable text/event-stream}}
+  /jobs/stream:
+    get:
+      operationId: streamOwnedJobs
+      parameters:
+        - {name: scope, in: query, schema: {type: string, enum: [mine], default: mine}}
+        - {name: after, in: query, schema: {type: integer, format: int64}}
+      responses: {'200': {description: Resumable owner-scoped job status text/event-stream}}
   /jobs/{jobId}/archive.zip:
     get:
       operationId: downloadJobArchive
@@ -72,7 +79,15 @@ paths:
   /nodes:
     get:
       operationId: listNodes
-      responses: {'200': {description: Shared compute inventory}}
+      responses:
+        '200':
+          description: Shared compute inventory with current reservations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties: {items: {type: array, items: {$ref: '#/components/schemas/Node'}}}
   /audit:
     get:
       operationId: listAuditEvents
@@ -190,6 +205,50 @@ components:
         finished_at: {type: string, format: date-time}
         version: {type: integer, format: int64}
     JobStatus: {type: string, enum: [QUEUED, ASSIGNED, PULLING_IMAGE, STARTING, RUNNING, STOPPING, CANCELLED, SUCCEEDED, FAILED, LOST, DELETING, DELETED]}
+    GPU:
+      type: object
+      required: [uuid, model, vram_bytes, allocated]
+      properties:
+        uuid: {type: string}
+        model: {type: string}
+        vram_bytes: {type: integer, format: int64}
+        allocated: {type: boolean}
+    GPUDiscovery:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string, enum: [available, unavailable, disabled, unknown]}
+        error_code: {type: string}
+        message: {type: string}
+    Node:
+      type: object
+      required: [id, name, status, cpu_total_millis, cpu_allocated_millis, memory_total_bytes, memory_allocated_bytes, workspace_free_bytes, labels, gpus, gpu_discovery, last_heartbeat]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        status: {type: string, enum: [ONLINE, OFFLINE, DEGRADED, DRAINING]}
+        agent_version: {type: string}
+        architecture: {type: string}
+        docker_version: {type: string}
+        cpu_total_millis: {type: integer, format: int64}
+        cpu_allocated_millis: {type: integer, format: int64}
+        memory_total_bytes: {type: integer, format: int64}
+        memory_allocated_bytes: {type: integer, format: int64}
+        workspace_free_bytes: {type: integer, format: int64}
+        labels: {type: object, additionalProperties: {type: string}}
+        gpus: {type: array, items: {$ref: '#/components/schemas/GPU'}}
+        gpu_discovery: {$ref: '#/components/schemas/GPUDiscovery'}
+        last_heartbeat: {type: string, format: date-time}
+    JobUpdate:
+      type: object
+      required: [cursor, job_id, name, status, version, created_at]
+      properties:
+        cursor: {type: integer, format: int64}
+        job_id: {type: string, format: uuid}
+        name: {type: string}
+        status: {$ref: '#/components/schemas/JobStatus'}
+        version: {type: integer, format: int64}
+        created_at: {type: string, format: date-time}
     Problem:
       type: object
       required: [type, title, status, code, detail]

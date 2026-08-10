@@ -1,0 +1,18 @@
+//go:build !linux || !cgo
+
+package agent
+
+import (
+	"context"
+	"runtime"
+
+	"github.com/jobdock/jobdock/internal/domain"
+)
+
+type unsupportedGPUDiscoverer struct{}
+
+func newGPUDiscoverer() GPUDiscoverer { return unsupportedGPUDiscoverer{} }
+
+func (unsupportedGPUDiscoverer) Discover(context.Context) ([]domain.GPU, domain.GPUDiscovery) {
+	return []domain.GPU{}, domain.GPUDiscovery{Status: "unavailable", ErrorCode: "NVML_UNAVAILABLE", Message: "NVML discovery is unavailable on " + runtime.GOOS}
+}

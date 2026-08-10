@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jobdock/jobdock/internal/auth"
+	"github.com/jobdock/jobdock/internal/capacity"
 	"github.com/jobdock/jobdock/internal/domain"
 	"github.com/jobdock/jobdock/internal/ids"
 	"github.com/jobdock/jobdock/internal/secretbox"
@@ -48,19 +49,10 @@ func (s *Scheduler) Schedule(ctx context.Context) error {
 	if err != nil || len(jobs) == 0 {
 		return err
 	}
-	nodes, err := s.store.ListNodes(ctx)
+	nodes, err := capacity.Snapshot(ctx, s.store)
 	if err != nil {
 		return err
 	}
-	allJobs, err := s.store.ListJobs(ctx, false)
-	if err != nil {
-		return err
-	}
-	gpuAllocations, err := s.store.AllocatedGPUUUIDs(ctx)
-	if err != nil {
-		return err
-	}
-	accountAllocations(nodes, allJobs, gpuAllocations)
 	for _, job := range jobs {
 		selected, code, message := selectNode(job.Spec, nodes)
 		if selected == nil {
@@ -83,27 +75,6 @@ func (s *Scheduler) Schedule(ctx context.Context) error {
 		reserveInSnapshot(nodes, selected.node.ID, job.Spec.Resources, selected.gpuUUIDs)
 	}
 	return nil
-}
-
-func accountAllocations(nodes []domain.Node, jobs []domain.Job, gpuAllocations map[string]map[string]bool) {
-	byID := map[string]*domain.Node{}
-	for index := range nodes {
-		byID[nodes[index].ID] = &nodes[index]
-		for gpuIndex := range nodes[index].GPUs {
-			nodes[index].GPUs[gpuIndex].Allocated = gpuAllocations[nodes[index].ID][nodes[index].GPUs[gpuIndex].UUID]
-		}
-	}
-	for _, job := range jobs {
-		if !domain.IsActive(job.Status) || job.AssignedNodeID == "" {
-			continue
-		}
-		node := byID[job.AssignedNodeID]
-		if node == nil {
-			continue
-		}
-		node.CPUAllocatedMillis += job.Spec.Resources.CPUMillis
-		node.MemoryAllocatedBytes += job.Spec.Resources.MemoryBytes
-	}
 }
 
 func selectNode(spec domain.JobSpec, nodes []domain.Node) (*candidate, string, string) {

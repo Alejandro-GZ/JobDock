@@ -27,7 +27,17 @@ Back up the server, upgrade the control plane, verify readiness, then upgrade ag
 ## Troubleshooting
 
 - `NO_ONLINE_NODE`: verify agent credentials, server URL, TLS trust, and heartbeats.
-- `NO_COMPATIBLE_GPU`: ensure NVIDIA Container Toolkit is installed and the agent is started with the GPU Compose override.
+- `NVML_UNAVAILABLE`: verify `nvidia-smi` works on the host and in a test container, then recreate the agent with all three Compose files and `--force-recreate`:
+
+  ```text
+  docker run --rm --gpus all ubuntu:24.04 nvidia-smi -L
+  docker compose --env-file .env -f deploy/docker-compose.yml -f deploy/docker-compose.agent.yml -f deploy/docker-compose.agent.gpu.yml up --build -d --force-recreate jobdock-agent
+  docker inspect jobdock-jobdock-agent-1 --format "{{json .HostConfig.DeviceRequests}}"
+  ```
+
+- `NO_GPU_FOUND`: NVML loaded, but no complete NVIDIA device inventory was returned.
+- `DISCOVERY_FAILED`: inspect the node diagnostic and agent logs for the specific NVML query that failed.
+- `NO_COMPATIBLE_GPU`: confirm the requested count and minimum VRAM can fit on one online node; JobDock never combines GPUs across hosts.
 - Jobs remain `LOST`: inspect Docker labels `jobdock.managed`, `jobdock.job_id`, and `jobdock.attempt_id` on the assigned host.
 - Image pulls fail: store a registry secret containing Docker AuthConfig JSON and select it in the job specification.
 

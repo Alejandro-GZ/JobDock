@@ -15,7 +15,13 @@ The repository contains:
 3. Sign in at `http://localhost:8080`.
 4. Create a one-time enrollment token in **Nodes**.
 5. On each Docker host, set `JOBDOCK_SERVER_URL`, `JOBDOCK_ENROLLMENT_TOKEN`, and a unique `JOBDOCK_NODE_NAME`.
-6. Start a CPU agent with `docker compose --env-file .env -f deploy/docker-compose.yml -f deploy/docker-compose.agent.yml up -d --build`, or add `-f deploy/docker-compose.agent.gpu.yml` for NVIDIA discovery.
+6. Start a CPU agent with `docker compose --env-file .env -f deploy/docker-compose.yml -f deploy/docker-compose.agent.yml up -d --build`, or recreate it with the NVIDIA override:
+
+```text
+docker compose --env-file .env -f deploy/docker-compose.yml -f deploy/docker-compose.agent.yml -f deploy/docker-compose.agent.gpu.yml up --build -d --force-recreate jobdock-agent
+```
+
+The GPU override requests NVIDIA devices from Docker and runs discovery in `required` mode. If NVML cannot initialize, the node is reported as `DEGRADED` and receives no assignments.
 
 The explicit `--env-file .env` is required because the Compose files live under `deploy/`, while the development environment file lives at the repository root.
 

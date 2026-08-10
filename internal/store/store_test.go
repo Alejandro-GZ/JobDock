@@ -118,3 +118,32 @@ func TestEmptyCollectionsAreJSONArrays(t *testing.T) {
 		t.Fatalf("audit must be an empty slice: %#v %v", audit, err)
 	}
 }
+
+func TestJobUpdatesAreIsolatedByOwner(t *testing.T) {
+	ctx := context.Background()
+	repository, err := store.Open(t.TempDir() + "/jobdock.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	for _, owner := range []string{"owner-a", "owner-b"} {
+		user := domain.User{ID: owner, Username: owner, Role: domain.RoleMember, CreatedAt: time.Now().UTC()}
+		if err = repository.CreateUser(ctx, user, "hash"); err != nil {
+			t.Fatal(err)
+		}
+		job := domain.Job{ID: "job-" + owner, OwnerID: owner, Spec: domain.JobSpec{Name: owner, Image: "alpine"}, Status: domain.JobQueued, DesiredStatus: domain.JobRunning, ObservedStatus: domain.JobQueued, CreatedAt: time.Now().UTC()}
+		if err = repository.CreateJob(ctx, job); err != nil {
+			t.Fatal(err)
+		}
+		if err = repository.AppendServerEvent(ctx, job.ID, "queued", map[string]any{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	updates, err := repository.JobUpdatesForOwner(ctx, "owner-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updates) != 1 || updates[0].JobID != "job-owner-a" || updates[0].Status != domain.JobQueued {
+		t.Fatalf("unexpected private updates: %#v", updates)
+	}
+}

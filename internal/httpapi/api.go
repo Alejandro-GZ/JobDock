@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jobdock/jobdock/internal/auth"
+	"github.com/jobdock/jobdock/internal/capacity"
 	"github.com/jobdock/jobdock/internal/config"
 	"github.com/jobdock/jobdock/internal/domain"
 	"github.com/jobdock/jobdock/internal/filestore"
@@ -67,6 +68,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/audit", a.withSession(true, false, a.listAudit))
 	mux.HandleFunc("GET /api/v1/jobs", a.withSession(false, false, a.listJobs))
 	mux.HandleFunc("POST /api/v1/jobs", a.withSession(false, true, a.createJob))
+	mux.HandleFunc("GET /api/v1/jobs/stream", a.withSession(false, false, a.jobsStream))
 	mux.HandleFunc("GET /api/v1/jobs/{id}", a.withSession(false, false, a.getJob))
 	mux.HandleFunc("POST /api/v1/jobs/{id}/stop", a.withSession(false, true, a.stopJob))
 	mux.HandleFunc("DELETE /api/v1/jobs/{id}", a.withSession(false, true, a.deleteJob))
@@ -414,8 +416,57 @@ func (a *API) jobStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (a *API) jobsStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeProblem(w, 500, "stream_unsupported", "Streaming is unavailable")
+		return
+	}
+	user := currentUser(r)
+	afterText := r.URL.Query().Get("after")
+	after, _ := strconv.ParseInt(afterText, 10, 64)
+	if afterText == "latest" {
+		cursor, err := a.store.LatestJobUpdateCursorForOwner(r.Context(), user.ID)
+		if err != nil {
+			writeProblem(w, 500, "database_error", err.Error())
+			return
+		}
+		after = cursor
+	}
+	if lastEventID := r.Header.Get("Last-Event-ID"); lastEventID != "" {
+		if parsed, err := strconv.ParseInt(lastEventID, 10, 64); err == nil && parsed > after {
+			after = parsed
+		}
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		updates, err := a.store.JobUpdatesForOwner(r.Context(), user.ID, after)
+		if err != nil {
+			return
+		}
+		for _, update := range updates {
+			data, _ := json.Marshal(update)
+			fmt.Fprintf(w, "id: %d\nevent: job-status\ndata: %s\n\n", update.Cursor, data)
+			after = update.Cursor
+		}
+		if len(updates) == 0 {
+			fmt.Fprint(w, ": keepalive\n\n")
+		}
+		flusher.Flush()
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
 func (a *API) listNodes(w http.ResponseWriter, r *http.Request) {
-	nodes, err := a.store.ListNodes(r.Context())
+	nodes, err := capacity.Snapshot(r.Context(), a.store)
 	if err != nil {
 		writeProblem(w, 500, "database_error", err.Error())
 		return
@@ -664,7 +715,7 @@ func (a *API) agentEvent(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	event := domain.Event{JobID: job.ID, Sequence: body.Sequence, Type: body.Type, Payload: body.Payload, CreatedAt: time.Now().UTC()}
+	event := domain.Event{JobID: job.ID, Sequence: body.Sequence, Type: body.Type, Status: body.Status, Payload: body.Payload, CreatedAt: time.Now().UTC()}
 	if err = a.store.AppendEvent(r.Context(), event); err != nil {
 		writeStoreError(w, err)
 		return

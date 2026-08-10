@@ -100,6 +100,12 @@ type GPU struct {
 	Allocated bool   `json:"allocated"`
 }
 
+type GPUDiscovery struct {
+	Status    string `json:"status"`
+	ErrorCode string `json:"error_code,omitempty"`
+	Message   string `json:"message,omitempty"`
+}
+
 type Node struct {
 	ID                   string            `json:"id"`
 	Name                 string            `json:"name"`
@@ -115,6 +121,7 @@ type Node struct {
 	WorkspaceFreeBytes   int64             `json:"workspace_free_bytes"`
 	Labels               map[string]string `json:"labels"`
 	GPUs                 []GPU             `json:"gpus"`
+	GPUDiscovery         GPUDiscovery      `json:"gpu_discovery"`
 	LastHeartbeat        time.Time         `json:"last_heartbeat"`
 	CreatedAt            time.Time         `json:"created_at"`
 }
@@ -137,6 +144,7 @@ type Event struct {
 	JobID     string         `json:"job_id"`
 	Sequence  int64          `json:"sequence"`
 	Type      string         `json:"type"`
+	Status    JobStatus      `json:"status,omitempty"`
 	Payload   map[string]any `json:"payload"`
 	CreatedAt time.Time      `json:"created_at"`
 }

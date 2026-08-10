@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -36,6 +35,8 @@ type Agent struct {
 	credentialRotatedAt time.Time
 	mu                  sync.Mutex
 	running             map[string]*runtimeAssignment
+	gpu                 GPUDiscoverer
+	gpuLogOnce          sync.Once
 }
 
 type runtimeAssignment struct {
@@ -62,7 +63,11 @@ type credentialState struct {
 }
 
 func New(cfg config.Agent, logger *slog.Logger) *Agent {
-	return &Agent{config: cfg, log: logger, docker: dockerengine.New(cfg.DockerSocket), http: &http.Client{Timeout: 30 * time.Second}, running: map[string]*runtimeAssignment{}}
+	return NewWithGPUDiscoverer(cfg, logger, newGPUDiscoverer())
+}
+
+func NewWithGPUDiscoverer(cfg config.Agent, logger *slog.Logger, gpu GPUDiscoverer) *Agent {
+	return &Agent{config: cfg, log: logger, docker: dockerengine.New(cfg.DockerSocket), http: &http.Client{Timeout: 30 * time.Second}, running: map[string]*runtimeAssignment{}, gpu: gpu}
 }
 
 func (a *Agent) Run(ctx context.Context) error {
@@ -158,25 +163,20 @@ func (a *Agent) inventory(ctx context.Context) (domain.Node, error) {
 	if free < minimum {
 		status = domain.NodeDegraded
 	}
-	return domain.Node{Name: a.config.Name, Status: status, AgentVersion: version, ProtocolVersion: 1, Architecture: info.Architecture, DockerVersion: info.ServerVersion, CPUTotalMillis: int64(info.NCPU) * 1000, MemoryTotalBytes: info.MemTotal, WorkspaceFreeBytes: free, Labels: a.config.Labels, GPUs: discoverGPUs(ctx)}, nil
-}
-
-func discoverGPUs(ctx context.Context) []domain.GPU {
-	command := exec.CommandContext(ctx, "nvidia-smi", "--query-gpu=uuid,name,memory.total", "--format=csv,noheader,nounits")
-	output, err := command.Output()
-	if err != nil {
-		return nil
-	}
-	var result []domain.GPU
-	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-		parts := strings.Split(line, ",")
-		if len(parts) != 3 {
-			continue
+	gpus, discovery, degraded := resolveGPUInventory(ctx, a.config.GPUMode, a.gpu)
+	a.gpuLogOnce.Do(func() {
+		if discovery.Status == "available" {
+			a.log.Info("gpu_discovery_ready", "count", len(gpus))
+		} else if discovery.Status == "unavailable" {
+			a.log.Warn("gpu_discovery_unavailable", "mode", a.config.GPUMode, "code", discovery.ErrorCode, "message", discovery.Message)
+		} else {
+			a.log.Info("gpu_discovery_skipped", "status", discovery.Status)
 		}
-		memoryMiB, _ := strconv.ParseInt(strings.TrimSpace(parts[2]), 10, 64)
-		result = append(result, domain.GPU{UUID: strings.TrimSpace(parts[0]), Model: strings.TrimSpace(parts[1]), VRAMBytes: memoryMiB << 20})
+	})
+	if degraded {
+		status = domain.NodeDegraded
 	}
-	return result
+	return domain.Node{Name: a.config.Name, Status: status, AgentVersion: version, ProtocolVersion: 1, Architecture: info.Architecture, DockerVersion: info.ServerVersion, CPUTotalMillis: int64(info.NCPU) * 1000, MemoryTotalBytes: info.MemTotal, WorkspaceFreeBytes: free, Labels: a.config.Labels, GPUs: gpus, GPUDiscovery: discovery}, nil
 }
 
 func (a *Agent) heartbeatLoop(ctx context.Context) {
@@ -293,7 +293,7 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 		binds = append(binds, path+":/run/secrets/jobdock/"+target+":ro")
 	}
 	if record.ContainerID == "" {
-		if !a.sendEvent(record, "image_pull_started", domain.JobPullingImage, nil, "", nil) {
+		if !a.sendEvent(record, "image_pull_started", domain.JobPullingImage, nil, "", "", nil) {
 			return
 		}
 		if err := a.docker.Pull(ctx, record.Spec.Image, record.RegistryAuth); err != nil {
@@ -301,7 +301,7 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 			return
 		}
 		digest := a.docker.ImageDigest(ctx, record.Spec.Image)
-		if !a.sendEvent(record, "image_pull_finished", domain.JobStarting, nil, digest, nil) {
+		if !a.sendEvent(record, "image_pull_finished", domain.JobStarting, nil, "", digest, nil) {
 			return
 		}
 		containerID, err := a.docker.Create(ctx, dockerengine.CreateOptions{Name: "jobdock-" + strings.ReplaceAll(record.JobID, "-", "")[:12], JobID: record.JobID, AttemptID: record.AttemptID, Image: record.Spec.Image, Command: record.Spec.Command, WorkingDirectory: record.Spec.WorkingDirectory, Environment: environment, Binds: binds, CPUMillis: record.Spec.Resources.CPUMillis, MemoryBytes: record.Spec.Resources.MemoryBytes, GPUUUIDs: record.GPUUUIDs})
@@ -323,7 +323,7 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 			return
 		}
 	}
-	if !a.sendEvent(record, "container_started", domain.JobRunning, nil, "", nil) {
+	if !a.sendEvent(record, "container_started", domain.JobRunning, nil, "", "", nil) {
 		return
 	}
 	logDone := make(chan struct{})
@@ -338,7 +338,7 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 	}
 	if err := a.uploadOutputs(ctx, record, outputDir); err != nil {
 		a.log.Warn("output_upload_incomplete", "error", err, "job_id", record.JobID)
-		_ = a.sendEvent(record, "output_upload_warning", "", nil, err.Error(), map[string]any{})
+		_ = a.sendEvent(record, "output_upload_warning", "", nil, err.Error(), "", map[string]any{})
 	}
 	status := domain.JobSucceeded
 	eventType := "completed"
@@ -355,7 +355,7 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 		eventType = "failed"
 		reason = fmt.Sprintf("container exited with code %d", exitCode)
 	}
-	_ = a.sendEvent(record, eventType, status, &exitCode, reason, nil)
+	_ = a.sendEvent(record, eventType, status, &exitCode, reason, "", nil)
 	record.Completed = true
 	_ = a.save(record)
 	_ = a.docker.Remove(context.Background(), record.ContainerID)
@@ -449,7 +449,7 @@ func (a *Agent) telemetry(ctx context.Context, record *runtimeAssignment) {
 			if err != nil {
 				return
 			}
-			if !a.sendEvent(record, "resource_sample", "", nil, "", stats) {
+			if !a.sendEvent(record, "resource_sample", "", nil, "", "", stats) {
 				return
 			}
 		}
@@ -555,13 +555,13 @@ func (a *Agent) reconcile(ctx context.Context) error {
 	return nil
 }
 
-func (a *Agent) sendEvent(record *runtimeAssignment, eventType string, status domain.JobStatus, exitCode *int, reason string, payload map[string]any) bool {
+func (a *Agent) sendEvent(record *runtimeAssignment, eventType string, status domain.JobStatus, exitCode *int, reason, imageDigest string, payload map[string]any) bool {
 	record.eventMu.Lock()
 	defer record.eventMu.Unlock()
 	record.mu.Lock()
 	sequence := record.Sequence + 1
 	record.mu.Unlock()
-	body := map[string]any{"sequence": sequence, "type": eventType, "status": status, "exit_code": exitCode, "reason": reason, "payload": payload}
+	body := map[string]any{"sequence": sequence, "type": eventType, "status": status, "exit_code": exitCode, "reason": reason, "image_digest": imageDigest, "payload": payload}
 	var err error
 	for _, delay := range []time.Duration{0, time.Second, 2 * time.Second, 5 * time.Second, 10 * time.Second} {
 		if delay > 0 {
@@ -586,7 +586,7 @@ func (a *Agent) sendEvent(record *runtimeAssignment, eventType string, status do
 }
 func (a *Agent) fail(record *runtimeAssignment, eventType string, err error) {
 	a.log.Error(eventType, "error", err, "job_id", record.JobID)
-	_ = a.sendEvent(record, eventType, domain.JobFailed, nil, err.Error(), nil)
+	_ = a.sendEvent(record, eventType, domain.JobFailed, nil, err.Error(), "", nil)
 	if record.ContainerID != "" {
 		_ = a.docker.Remove(context.Background(), record.ContainerID)
 	}
