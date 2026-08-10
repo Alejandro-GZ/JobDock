@@ -1,0 +1,31 @@
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 13px;
+  margin-top: 18px;
+}
+
+.metric-card {
+  background: #0e141e;
+  border: 1px solid #293348;
+  border-radius: 9px;
+  padding: 15px;
+}
+
+.metric-card > div {
+  display: flex;
+  justify-content: space-between;
+}
+
+.metric-card svg {
+  width: 100%;
+  height: 70px;
+  margin: 10px 0;
+}
+
+.metric-card polyline {
+  fill: none;
+  stroke: #6f8aff;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}

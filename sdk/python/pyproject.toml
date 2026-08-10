@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jobdock-sdk"
+version = "0.1.0"
+description = "Optional telemetry SDK for jobs running in JobDock"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{name = "JobDock contributors"}]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jobdock"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]

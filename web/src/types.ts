@@ -1,0 +1,9 @@
+export type Role = "admin" | "member";
+export type User = { id: string; username: string; role: Role; created_at: string };
+export type GPU = { uuid: string; model: string; vram_bytes: number; allocated: boolean };
+export type Node = { id: string; name: string; status: string; agent_version: string; architecture: string; docker_version: string; cpu_total_millis: number; cpu_allocated_millis: number; memory_total_bytes: number; memory_allocated_bytes: number; workspace_free_bytes: number; labels: Record<string,string>; gpus: GPU[]; last_heartbeat: string };
+export type JobSpec = { name: string; image?: string; command?: string[]; working_directory?: string; environment?: Record<string,string>; secret_refs?: {name:string;target:string;mode:"file"|"env"}[]; registry_secret?: string; resources?: {cpu_millis:number;memory_bytes:number;gpu:{count:number;min_vram_bytes:number}}; labels?: Record<string,string>; node_selector?: Record<string,string> };
+export type Job = { id:string; owner_id:string; spec:JobSpec; status:string; desired_status:string; observed_status:string; assigned_node_id?:string; image_digest?:string; exit_code?:number; queue_reason_code?:string; queue_reason?:string; failure_reason?:string; created_at:string; started_at?:string; finished_at?:string; version:number };
+export type Secret = { id:string; name:string; kind:string; created_at:string };
+export type JobEvent = { id:number; sequence:number; type:string; payload:Record<string,unknown>; created_at:string };
+export type AuditEvent = {id:number;actor_id?:string;action:string;target_type:string;target_id:string;metadata:Record<string,unknown>;created_at:string};
