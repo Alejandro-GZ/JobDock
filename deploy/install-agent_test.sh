@@ -21,7 +21,7 @@ export PATH="$temporary:$PATH"
 export DOCKER_CALLS="$temporary/calls"
 
 sh "$root/deploy/install-agent.sh" --server https://dock.example.test --token one-use-token --name cpu-01 --labels zone=lab >/dev/null
-grep -F "pull ghcr.io/alejandro-gz/jobdock-agent:0.1.0" "$DOCKER_CALLS" >/dev/null
+grep -F "pull ghcr.io/alejandro-gz/jobdock-agent:latest" "$DOCKER_CALLS" >/dev/null
 grep -F "JOBDOCK_GPU_MODE=auto" "$DOCKER_CALLS" >/dev/null
 if grep -F -- "--gpus all" "$DOCKER_CALLS" >/dev/null; then
   echo "CPU installation unexpectedly requested GPUs" >&2
