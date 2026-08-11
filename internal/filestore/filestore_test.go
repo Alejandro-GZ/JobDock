@@ -112,3 +112,66 @@ func TestLogOffsetsAreIdempotent(t *testing.T) {
 		t.Fatalf("bounded chunk: %q %d %v", chunk, next, err)
 	}
 }
+
+func TestAttemptFilesRemainIsolatedAndArchiveKeepsInputs(t *testing.T) {
+	store, err := New(t.TempDir(), 1024, 1024, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.StoreInput("job", "dataset.txt", bytes.NewBufferString("input")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.AppendAttemptLog("job", "attempt-one", "stdout", 0, bytes.NewBufferString("first")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.AppendAttemptOutput("job", "attempt-one", "result.txt", 0, bytes.NewBufferString("one")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.AppendAttemptLog("job", "attempt-two", "stdout", 0, bytes.NewBufferString("second")); err != nil {
+		t.Fatal(err)
+	}
+	var archive bytes.Buffer
+	if err = store.ArchiveAttempt("job", "attempt-one", &archive); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(archive.Bytes()), int64(archive.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := map[string]string{}
+	for _, item := range reader.File {
+		file, openErr := item.Open()
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		data, _ := io.ReadAll(file)
+		_ = file.Close()
+		contents[item.Name] = string(data)
+	}
+	if contents["logs/stdout.log"] != "first" || contents["output/result.txt"] != "one" || contents["inputs/dataset.txt"] != "input" {
+		t.Fatalf("attempt archive contents: %#v", contents)
+	}
+	if bytes.Contains(archive.Bytes(), []byte("second")) {
+		t.Fatal("archive leaked data from another attempt")
+	}
+}
+
+func TestLegacyFilesPromoteIntoFirstAttempt(t *testing.T) {
+	store, err := New(t.TempDir(), 1024, 1024, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.AppendLog("job", "stdout", 0, bytes.NewBufferString("legacy")); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.PromoteLegacyAttempt("job", "attempt-one"); err != nil {
+		t.Fatal(err)
+	}
+	var log bytes.Buffer
+	if _, err = store.ReadAttemptLog("job", "attempt-one", "stdout", 0, &log); err != nil || log.String() != "legacy" {
+		t.Fatalf("promoted log = %q, err=%v", log.String(), err)
+	}
+	if err = store.PromoteLegacyAttempt("job", "attempt-one"); err != nil {
+		t.Fatalf("promotion is not idempotent: %v", err)
+	}
+}

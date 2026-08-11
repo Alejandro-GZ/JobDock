@@ -42,6 +42,21 @@ file before the job becomes visible to the scheduler, generates an immutable
 size/SHA-256 manifest, and rejects client-supplied manifests. Assigned agents
 may download only paths present in that manifest.
 
+## Reruns and attempt history
+
+`POST /api/v1/jobs/{jobId}/rerun` reuses the persisted `JobSpec` and queues the
+same job for another execution. It accepts an idempotency key and only permits
+`SUCCEEDED`, `FAILED`, or `CANCELLED` jobs; `LOST` is deliberately excluded
+because its container may still exist. `GET /api/v1/jobs/{jobId}/attempts`
+returns newest-first numbered executions with their node, timestamps, exit
+code, image digest, failure reason, and output manifest.
+
+Logs, events, metrics, and resources accept `attempt_id`. Attempt ZIPs are
+available from `/jobs/{jobId}/attempts/{attemptId}/archive.zip`. Agent event,
+telemetry, log, and output uploads carry the assigned attempt identity; stale
+requests from a previous execution are rejected instead of contaminating the
+current one.
+
 Each JSON snapshot includes a common, attempt-scoped `cursor`. Supplying that
 cursor back to either query fixes the result to the same persistence boundary.
 `GET /api/v1/jobs/{jobId}/series/stream?after=<cursor>` then emits only metric

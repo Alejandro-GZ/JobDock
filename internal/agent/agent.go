@@ -3,6 +3,8 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -251,7 +253,7 @@ func (a *Agent) startAssignment(ctx context.Context, assignment domain.Assignmen
 }
 
 func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
-	jobDir := filepath.Join(a.config.WorkspaceDir, record.JobID)
+	jobDir := filepath.Join(a.config.WorkspaceDir, record.JobID, record.AttemptID)
 	outputDir := filepath.Join(jobDir, "output")
 	inputDir := filepath.Join(jobDir, "input")
 	logsDir := filepath.Join(jobDir, "logs")
@@ -359,9 +361,10 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 		a.fail(record, "container_wait_failed", waitErr)
 		return
 	}
-	if err := a.uploadOutputs(ctx, record, outputDir); err != nil {
-		a.log.Warn("output_upload_incomplete", "error", err, "job_id", record.JobID)
-		_ = a.sendEvent(record, "output_upload_warning", "", nil, err.Error(), "", map[string]any{})
+	outputs, outputErr := a.uploadOutputs(ctx, record, outputDir)
+	if outputErr != nil {
+		a.log.Warn("output_upload_incomplete", "error", outputErr, "job_id", record.JobID)
+		_ = a.sendEvent(record, "output_upload_warning", "", nil, outputErr.Error(), "", map[string]any{})
 	}
 	status := domain.JobSucceeded
 	eventType := "completed"
@@ -378,7 +381,7 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 		eventType = "failed"
 		reason = fmt.Sprintf("container exited with code %d", exitCode)
 	}
-	_ = a.sendEvent(record, eventType, status, &exitCode, reason, "", nil)
+	_ = a.sendEvent(record, eventType, status, &exitCode, reason, "", map[string]any{"outputs": outputs})
 	record.Completed = true
 	_ = a.save(record)
 	_ = a.docker.Remove(context.Background(), record.ContainerID)
@@ -437,7 +440,7 @@ func (a *Agent) syncLog(ctx context.Context, record *runtimeAssignment, stream, 
 	for {
 		count, readErr := file.Read(buffer)
 		if count > 0 {
-			next, uploadErr := a.uploadBinary(ctx, "PUT", fmt.Sprintf("/api/v1/agent/jobs/%s/logs/%s?offset=%d", record.JobID, stream, offset), bytes.NewReader(buffer[:count]))
+			next, uploadErr := a.uploadBinary(ctx, "PUT", fmt.Sprintf("/api/v1/agent/jobs/%s/logs/%s?attempt_id=%s&offset=%d", record.JobID, stream, url.QueryEscape(record.AttemptID), offset), bytes.NewReader(buffer[:count]))
 			if uploadErr != nil {
 				return uploadErr
 			}
@@ -476,7 +479,7 @@ func (a *Agent) telemetry(ctx context.Context, record *runtimeAssignment) {
 				a.log.Warn("resource_sample_failed", "error", err, "job_id", record.JobID)
 				continue
 			}
-			sample := domain.ResourceSample{CPUMillis: stats.CPUMillis, MemoryBytes: stats.MemoryBytes}
+			sample := domain.ResourceSample{AttemptID: record.AttemptID, CPUMillis: stats.CPUMillis, MemoryBytes: stats.MemoryBytes}
 			if len(record.GPUUUIDs) > 0 {
 				usage, sampleErr := a.gpu.Sample(ctx, record.GPUUUIDs)
 				if sampleErr != nil {
@@ -496,8 +499,9 @@ func (a *Agent) telemetry(ctx context.Context, record *runtimeAssignment) {
 	}
 }
 
-func (a *Agent) uploadOutputs(ctx context.Context, record *runtimeAssignment, root string) error {
-	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+func (a *Agent) uploadOutputs(ctx context.Context, record *runtimeAssignment, root string) ([]domain.OutputFile, error) {
+	outputs := make([]domain.OutputFile, 0)
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -521,11 +525,13 @@ func (a *Agent) uploadOutputs(ctx context.Context, record *runtimeAssignment, ro
 		}
 		defer file.Close()
 		offset := int64(0)
+		hash := sha256.New()
 		buffer := make([]byte, 1<<20)
 		for {
 			count, readErr := file.Read(buffer)
 			if count > 0 {
-				endpoint := "/api/v1/agent/jobs/" + record.JobID + "/outputs/" + strings.ReplaceAll(url.PathEscape(filepath.ToSlash(relative)), "%2F", "/") + "?offset=" + strconv.FormatInt(offset, 10)
+				_, _ = hash.Write(buffer[:count])
+				endpoint := "/api/v1/agent/jobs/" + record.JobID + "/outputs/" + strings.ReplaceAll(url.PathEscape(filepath.ToSlash(relative)), "%2F", "/") + "?attempt_id=" + url.QueryEscape(record.AttemptID) + "&offset=" + strconv.FormatInt(offset, 10)
 				next, uploadErr := a.uploadBinary(ctx, "PUT", endpoint, bytes.NewReader(buffer[:count]))
 				if uploadErr != nil {
 					return uploadErr
@@ -539,8 +545,10 @@ func (a *Agent) uploadOutputs(ctx context.Context, record *runtimeAssignment, ro
 				return readErr
 			}
 		}
+		outputs = append(outputs, domain.OutputFile{Path: filepath.ToSlash(relative), Size: info.Size(), SHA256: hex.EncodeToString(hash.Sum(nil))})
 		return nil
 	})
+	return outputs, err
 }
 
 func (a *Agent) startCheckpointSync(ctx context.Context, item domain.CheckpointSync) {
@@ -556,7 +564,7 @@ func (a *Agent) startCheckpointSync(ctx context.Context, item domain.CheckpointS
 		defer func() { a.mu.Lock(); delete(a.syncing, item.ID); a.mu.Unlock() }()
 		record.checkpointMu.Lock()
 		defer record.checkpointMu.Unlock()
-		root := filepath.Join(a.config.WorkspaceDir, record.JobID, "output")
+		root := filepath.Join(a.config.WorkspaceDir, record.JobID, record.AttemptID, "output")
 		files, err := a.uploadCheckpoint(ctx, item, root)
 		if err != nil {
 			a.log.Warn("checkpoint_sync_failed", "error", err, "job_id", item.JobID, "sync_id", item.ID)
@@ -721,7 +729,7 @@ func (a *Agent) sendEvent(record *runtimeAssignment, eventType string, status do
 	record.mu.Lock()
 	sequence := record.Sequence + 1
 	record.mu.Unlock()
-	body := map[string]any{"sequence": sequence, "type": eventType, "status": status, "exit_code": exitCode, "reason": reason, "image_digest": imageDigest, "payload": payload}
+	body := map[string]any{"attempt_id": record.AttemptID, "sequence": sequence, "type": eventType, "status": status, "exit_code": exitCode, "reason": reason, "image_digest": imageDigest, "payload": payload}
 	var err error
 	for _, delay := range []time.Duration{0, time.Second, 2 * time.Second, 5 * time.Second, 10 * time.Second} {
 		if delay > 0 {

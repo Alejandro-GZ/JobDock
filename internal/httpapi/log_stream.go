@@ -26,7 +26,11 @@ func (a *API) tailLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stream := r.PathValue("stream")
-	size, err := a.files.LogSize(job.ID, stream)
+	attemptID, ok := a.attemptIDForRequest(w, r, job)
+	if !ok {
+		return
+	}
+	size, err := a.files.AttemptLogSize(job.ID, attemptID, stream)
 	if err != nil {
 		writeProblem(w, http.StatusUnprocessableEntity, "invalid_log_stream", err.Error())
 		return
@@ -72,7 +76,7 @@ func (a *API) tailLogs(w http.ResponseWriter, r *http.Request) {
 	defer keepalive.Stop()
 	for {
 		for {
-			data, next, readErr := a.files.ReadLogChunk(job.ID, stream, after, liveLogChunkSize)
+			data, next, readErr := a.files.ReadAttemptLogChunk(job.ID, attemptID, stream, after, liveLogChunkSize)
 			if readErr != nil {
 				a.log.Error("tail log", "error", readErr, "job_id", job.ID, "stream", stream, "offset", after)
 				return

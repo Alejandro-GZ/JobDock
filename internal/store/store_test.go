@@ -97,6 +97,65 @@ func TestIdempotencyReplay(t *testing.T) {
 	}
 }
 
+func TestRerunCreatesNumberedTraceableAttempts(t *testing.T) {
+	ctx := context.Background()
+	repository, err := store.Open(t.TempDir() + "/jobdock.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	now := time.Now().UTC()
+	user := domain.User{ID: ids.New(), Username: "owner", Role: domain.RoleMember, CreatedAt: now}
+	node := domain.Node{ID: ids.New(), Name: "worker", Status: domain.NodeOnline, ProtocolVersion: 1, CPUTotalMillis: 2000, MemoryTotalBytes: 2 << 30, WorkspaceFreeBytes: 20 << 30, Labels: map[string]string{}, LastHeartbeat: now, CreatedAt: now}
+	if err = repository.CreateUser(ctx, user, "hash"); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.UpsertNode(ctx, node, "credential"); err != nil {
+		t.Fatal(err)
+	}
+	job := domain.Job{ID: ids.New(), OwnerID: user.ID, Spec: domain.JobSpec{Name: "repeatable", Image: "alpine:3", Command: []string{"true"}, Resources: domain.Resources{CPUMillis: 100, MemoryBytes: 1 << 20}}, Status: domain.JobQueued, DesiredStatus: domain.JobRunning, ObservedStatus: domain.JobQueued, CreatedAt: now}
+	if err = repository.CreateJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	attemptOne := ids.New()
+	if err = repository.ReserveJob(ctx, job.ID, node.ID, attemptOne, ids.New(), "token-one", []byte("cipher"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.UpdateJobStatus(ctx, job.ID, domain.JobRunning, nil, "sha256:first", ""); err != nil {
+		t.Fatal(err)
+	}
+	outputs := []domain.OutputFile{{Path: "result.txt", Size: 6, SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+	if err = repository.SetAttemptOutputs(ctx, job.ID, attemptOne, outputs); err != nil {
+		t.Fatal(err)
+	}
+	exitCode := 0
+	if err = repository.UpdateJobStatus(ctx, job.ID, domain.JobSucceeded, &exitCode, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.RerunJob(ctx, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	queued, err := repository.Job(ctx, job.ID)
+	if err != nil || queued.Status != domain.JobQueued || queued.AttemptID != "" || queued.Spec.Image != job.Spec.Image || queued.StartedAt != nil || queued.FinishedAt != nil {
+		t.Fatalf("rerun did not reset only execution state: %#v %v", queued, err)
+	}
+	attemptTwo := ids.New()
+	if err = repository.ReserveJob(ctx, job.ID, node.ID, attemptTwo, ids.New(), "token-two", []byte("cipher"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.RerunJob(ctx, job.ID); err != store.ErrConflict {
+		t.Fatalf("active job rerun = %v, want conflict", err)
+	}
+	attempts, err := repository.Attempts(ctx, job.ID)
+	if err != nil || len(attempts) != 2 || attempts[0].AttemptNumber != 2 || attempts[1].AttemptNumber != 1 {
+		t.Fatalf("numbered attempts: %#v %v", attempts, err)
+	}
+	first := attempts[1]
+	if first.NodeID != node.ID || first.Status != domain.JobSucceeded || first.StartedAt == nil || first.FinishedAt == nil || first.ExitCode == nil || *first.ExitCode != 0 || len(first.Outputs) != 1 || first.Outputs[0].Path != "result.txt" {
+		t.Fatalf("first attempt trace was not retained: %#v", first)
+	}
+}
+
 func TestEmptyCollectionsAreJSONArrays(t *testing.T) {
 	ctx := context.Background()
 	repository, err := store.Open(t.TempDir() + "/jobdock.db")

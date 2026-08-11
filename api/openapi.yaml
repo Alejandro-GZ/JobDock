@@ -87,10 +87,31 @@ paths:
       operationId: stopJob
       parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/CSRFToken'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       responses: {'202': {description: Stop accepted}, '409': {$ref: '#/components/responses/Problem'}}
+  /jobs/{jobId}/rerun:
+    post:
+      operationId: rerunJob
+      description: Queue the same immutable JobSpec for a new numbered attempt. Only terminal jobs can be rerun.
+      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/CSRFToken'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '202': {description: Job queued for another attempt, content: {application/json: {schema: {$ref: '#/components/schemas/Job'}}}}
+        '409': {$ref: '#/components/responses/Problem'}
+  /jobs/{jobId}/attempts:
+    get:
+      operationId: listJobAttempts
+      parameters: [{$ref: '#/components/parameters/JobID'}]
+      responses:
+        '200': {description: Newest-first execution history, content: {application/json: {schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/JobAttempt'}}}}}}}
+  /jobs/{jobId}/attempts/{attemptId}/archive.zip:
+    get:
+      operationId: downloadJobAttemptArchive
+      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDPath'}]
+      responses:
+        '200': {description: Attempt-scoped logs, outputs, immutable inputs and metadata, content: {application/zip: {schema: {type: string, format: binary}}}}
+        '404': {$ref: '#/components/responses/Problem'}
   /jobs/{jobId}/events:
     get:
       operationId: listJobEvents
-      parameters: [{$ref: '#/components/parameters/JobID'}, {name: after, in: query, schema: {type: integer, format: int64}}]
+      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDQuery'}, {name: after, in: query, schema: {type: integer, format: int64}}]
       responses: {'200': {description: Ordered job events}}
   /jobs/{jobId}/metrics:
     get:
@@ -151,6 +172,7 @@ paths:
       operationId: tailJobLogs
       parameters:
         - {$ref: '#/components/parameters/JobID'}
+        - {$ref: '#/components/parameters/AttemptIDQuery'}
         - {name: stream, in: path, required: true, schema: {type: string, enum: [stdout, stderr]}}
         - {name: after, in: query, schema: {oneOf: [{type: integer, format: int64, minimum: 0}, {type: string, const: tail}], default: tail}}
         - {name: Last-Event-ID, in: header, description: Last acknowledged byte offset used for automatic SSE reconnection, schema: {type: integer, format: int64, minimum: 0}}
@@ -163,6 +185,7 @@ paths:
       parameters:
         - {$ref: '#/components/parameters/JobID'}
         - {$ref: '#/components/parameters/LogStream'}
+        - {$ref: '#/components/parameters/AttemptIDQuery'}
         - {name: offset, in: query, schema: {type: integer, format: int64, minimum: 0}}
       responses:
         '200':
@@ -366,6 +389,7 @@ paths:
       parameters:
         - {$ref: '#/components/parameters/JobID'}
         - {$ref: '#/components/parameters/LogStream'}
+        - {$ref: '#/components/parameters/AttemptIDQuery'}
         - {$ref: '#/components/parameters/UploadOffset'}
       requestBody:
         required: true
@@ -381,6 +405,7 @@ paths:
       parameters:
         - {$ref: '#/components/parameters/JobID'}
         - {name: path, in: path, required: true, description: Slash-separated path relative to the output directory, schema: {type: string}}
+        - {$ref: '#/components/parameters/AttemptIDQuery'}
         - {$ref: '#/components/parameters/UploadOffset'}
       requestBody:
         required: true
@@ -468,6 +493,7 @@ components:
     bearerToken: {type: http, scheme: bearer}
   parameters:
     JobID: {name: jobId, in: path, required: true, schema: {type: string, format: uuid}}
+    AttemptIDPath: {name: attemptId, in: path, required: true, schema: {type: string, format: uuid}}
     NodeID: {name: nodeId, in: path, required: true, schema: {type: string, format: uuid}}
     CSRFToken: {name: X-CSRF-Token, in: header, required: true, schema: {type: string}}
     IdempotencyKey: {name: Idempotency-Key, in: header, required: false, schema: {type: string, minLength: 16, maxLength: 128}}
@@ -573,6 +599,30 @@ components:
         deleted_at: {type: string, format: date-time}
         version: {type: integer, format: int64}
     JobStatus: {type: string, enum: [QUEUED, ASSIGNED, PULLING_IMAGE, STARTING, RUNNING, STOPPING, CANCELLED, SUCCEEDED, FAILED, LOST, DELETING, DELETED]}
+    OutputFile:
+      type: object
+      additionalProperties: false
+      required: [path, size, sha256]
+      properties:
+        path: {type: string}
+        size: {type: integer, format: int64, minimum: 0}
+        sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+    JobAttempt:
+      type: object
+      required: [id, job_id, attempt_number, node_id, status, outputs, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        job_id: {type: string, format: uuid}
+        attempt_number: {type: integer, minimum: 1}
+        node_id: {type: string, format: uuid}
+        status: {$ref: '#/components/schemas/JobStatus'}
+        image_digest: {type: string}
+        exit_code: {type: integer}
+        failure_reason: {type: string}
+        outputs: {type: array, items: {$ref: '#/components/schemas/OutputFile'}}
+        created_at: {type: string, format: date-time}
+        started_at: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time}
     GPU:
       type: object
       required: [uuid, model, vram_bytes, allocated]
@@ -622,7 +672,7 @@ components:
     ResourceSample:
       type: object
       additionalProperties: false
-      required: [cpu_millis, memory_bytes]
+      required: [attempt_id, cpu_millis, memory_bytes]
       properties:
         cursor: {type: integer, format: int64, minimum: 0}
         attempt_id: {type: string, format: uuid}
@@ -751,8 +801,9 @@ components:
     AgentJobEvent:
       type: object
       additionalProperties: false
-      required: [sequence, type]
+      required: [attempt_id, sequence, type]
       properties:
+        attempt_id: {type: string, format: uuid}
         sequence: {type: integer, format: int64, minimum: 1}
         type: {type: string}
         status: {$ref: '#/components/schemas/JobStatus'}

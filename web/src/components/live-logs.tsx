@@ -7,11 +7,11 @@ type StreamName = "stdout" | "stderr";
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Chunk = { stream: StreamName; start_offset: number; next_offset: number; data: string };
 
-export function LiveLogs({ jobId }: { jobId: string }) {
-  return <div className="grid gap-3 xl:grid-cols-2"><LiveLog jobId={jobId} stream="stdout"/><LiveLog jobId={jobId} stream="stderr"/></div>;
+export function LiveLogs({ jobId, attemptId }: { jobId: string; attemptId: string }) {
+  return <div className="grid gap-3 xl:grid-cols-2"><LiveLog jobId={jobId} attemptId={attemptId} stream="stdout"/><LiveLog jobId={jobId} attemptId={attemptId} stream="stderr"/></div>;
 }
 
-function LiveLog({ jobId, stream }: { jobId: string; stream: StreamName }) {
+function LiveLog({ jobId, attemptId, stream }: { jobId: string; attemptId: string; stream: StreamName }) {
   const [log, setLog] = useState<VisibleLog>({ text: "", truncated: false });
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const cursor = useRef<number | undefined>(undefined);
@@ -23,7 +23,7 @@ function LiveLog({ jobId, stream }: { jobId: string; stream: StreamName }) {
     setConnection("connecting");
     cursor.current = undefined;
     decoder.current = new TextDecoder();
-    const source = api.openLogStream(jobId, stream);
+    const source = api.openLogStream(jobId, attemptId, stream);
     source.onopen = () => setConnection("live");
     source.onerror = () => setConnection("reconnecting");
     source.addEventListener("log", (event) => {
@@ -38,7 +38,7 @@ function LiveLog({ jobId, stream }: { jobId: string; stream: StreamName }) {
       setConnection("live");
     });
     return () => source.close();
-  }, [jobId, stream]);
+  }, [jobId, attemptId, stream]);
 
   useEffect(() => { if (output.current) output.current.scrollTop = output.current.scrollHeight; }, [log.text]);
   const live = connection === "live";

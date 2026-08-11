@@ -46,6 +46,21 @@ type job struct {
 	} `json:"spec"`
 }
 
+type jobAttempt struct {
+	ID            string `json:"id"`
+	AttemptNumber int    `json:"attempt_number"`
+	NodeID        string `json:"node_id"`
+	Status        string `json:"status"`
+	ExitCode      *int   `json:"exit_code"`
+	StartedAt     string `json:"started_at"`
+	FinishedAt    string `json:"finished_at"`
+	Outputs       []struct {
+		Path   string `json:"path"`
+		Size   int64  `json:"size"`
+		SHA256 string `json:"sha256"`
+	} `json:"outputs"`
+}
+
 type event struct {
 	Type string `json:"type"`
 }
@@ -86,6 +101,7 @@ func TestDistributedDockerLifecycle(t *testing.T) {
 
 	h.run("submit run logs output archive", h.testHappyPath)
 	h.run("immutable read-only job inputs", h.testInputs)
+	h.run("idempotent rerun and attempt history", h.testRerun)
 	h.run("SDK metrics and resource series", h.testObservableSeries)
 	h.run("cooperative stop", h.testStop)
 	h.run("server restart", h.testServerRestart)
@@ -342,7 +358,11 @@ func (h *harness) waitJob(id string, timeout time.Duration, wanted ...string) jo
 
 func (h *harness) release(id string) {
 	h.t.Helper()
-	path := filepath.Join(h.root, "agent-workspace", id, "output", "release")
+	current, err := h.currentJob(id)
+	if err != nil || current.AttemptID == "" {
+		h.t.Fatalf("resolve current attempt for release: %#v %v", current, err)
+	}
+	path := filepath.Join(h.root, "agent-workspace", id, current.AttemptID, "output", "release")
 	if err := os.WriteFile(path, []byte("release"), 0o666); err != nil {
 		h.t.Fatal(err)
 	}
@@ -387,7 +407,7 @@ func (h *harness) testInputs(t *testing.T) {
 	if len(created.Spec.Inputs) != 1 || created.Spec.Inputs[0].Path != "dataset/value.txt" || created.Spec.Inputs[0].Size != int64(len("immutable-input")) || len(created.Spec.Inputs[0].SHA256) != 64 {
 		t.Fatalf("input manifest missing: %#v", created.Spec.Inputs)
 	}
-	h.waitJob(created.ID, 60*time.Second, "SUCCEEDED")
+	finished := h.waitJob(created.ID, 60*time.Second, "SUCCEEDED")
 	archiveData := h.raw(http.MethodGet, "/api/v1/jobs/"+created.ID+"/archive.zip", nil, http.StatusOK, false)
 	archive, err := zip.NewReader(bytes.NewReader(archiveData), int64(len(archiveData)))
 	if err != nil {
@@ -410,7 +430,7 @@ func (h *harness) testInputs(t *testing.T) {
 		t.Fatal("job archive does not retain the reproducible input generation")
 	}
 	h.eventually(10*time.Second, func() bool {
-		_, err := os.Stat(filepath.Join(h.root, "agent-workspace", created.ID, "input"))
+		_, err := os.Stat(filepath.Join(h.root, "agent-workspace", created.ID, finished.AttemptID, "input"))
 		return os.IsNotExist(err)
 	}, "agent input workspace cleanup")
 	h.request(http.MethodDelete, "/api/v1/jobs/"+created.ID, nil, nil, http.StatusAccepted, true)
@@ -424,6 +444,81 @@ func (h *harness) testInputs(t *testing.T) {
 	if len(after) != len(before) {
 		t.Fatalf("failed input staging was not cleaned: before=%d after=%d", len(before), len(after))
 	}
+}
+
+func (h *harness) testRerun(t *testing.T) {
+	created := h.submit("e2e-rerun", "alpine:3.20", []string{"sh", "-c", `echo "attempt:$JOBDOCK_ATTEMPT_ID"; printf %s "$JOBDOCK_ATTEMPT_ID" > /jobdock/output/attempt.txt`})
+	firstJob := h.waitJob(created.ID, 60*time.Second, "SUCCEEDED")
+	var firstHistory struct {
+		Items []jobAttempt `json:"items"`
+	}
+	h.request(http.MethodGet, "/api/v1/jobs/"+created.ID+"/attempts", nil, &firstHistory, http.StatusOK, false)
+	if len(firstHistory.Items) != 1 || firstHistory.Items[0].AttemptNumber != 1 || firstHistory.Items[0].ID != firstJob.AttemptID {
+		t.Fatalf("first attempt history: %#v", firstHistory.Items)
+	}
+	key := "e2e-rerun-idempotency-key"
+	rerun := func() (int, []byte, string) {
+		request, _ := http.NewRequest(http.MethodPost, h.serverURL+"/api/v1/jobs/"+created.ID+"/rerun", nil)
+		request.Header.Set("X-CSRF-Token", h.csrf)
+		request.Header.Set("Idempotency-Key", key)
+		response, err := h.client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		data, _ := io.ReadAll(response.Body)
+		return response.StatusCode, data, response.Header.Get("Idempotency-Replayed")
+	}
+	firstStatus, firstResponse, _ := rerun()
+	secondStatus, secondResponse, replayed := rerun()
+	if firstStatus != http.StatusAccepted || secondStatus != http.StatusAccepted || !bytes.Equal(firstResponse, secondResponse) || replayed != "true" {
+		t.Fatalf("rerun replay: %d/%d replayed=%q %s/%s", firstStatus, secondStatus, replayed, firstResponse, secondResponse)
+	}
+	secondJob := h.waitJob(created.ID, 60*time.Second, "SUCCEEDED")
+	if secondJob.AttemptID == firstJob.AttemptID {
+		t.Fatal("rerun reused the previous attempt identity")
+	}
+	var history struct {
+		Items []jobAttempt `json:"items"`
+	}
+	h.request(http.MethodGet, "/api/v1/jobs/"+created.ID+"/attempts", nil, &history, http.StatusOK, false)
+	if len(history.Items) != 2 || history.Items[0].AttemptNumber != 2 || history.Items[1].AttemptNumber != 1 {
+		t.Fatalf("numbered history: %#v", history.Items)
+	}
+	for _, attempt := range history.Items {
+		if attempt.NodeID == "" || attempt.StartedAt == "" || attempt.FinishedAt == "" || attempt.ExitCode == nil || *attempt.ExitCode != 0 || len(attempt.Outputs) != 1 || attempt.Outputs[0].Path != "attempt.txt" || len(attempt.Outputs[0].SHA256) != 64 {
+			t.Fatalf("incomplete attempt trace: %#v", attempt)
+		}
+		archive := h.raw(http.MethodGet, "/api/v1/jobs/"+created.ID+"/attempts/"+attempt.ID+"/archive.zip", nil, http.StatusOK, false)
+		if value := zipEntry(t, archive, "output/attempt.txt"); value != attempt.ID {
+			t.Fatalf("attempt %d archive output = %q, want %q", attempt.AttemptNumber, value, attempt.ID)
+		}
+		if log := zipEntry(t, archive, "logs/stdout.log"); !strings.Contains(log, attempt.ID) {
+			t.Fatalf("attempt %d archive log = %q", attempt.AttemptNumber, log)
+		}
+	}
+}
+
+func zipEntry(t *testing.T, data []byte, name string) string {
+	t.Helper()
+	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range archive.File {
+		if item.Name != name {
+			continue
+		}
+		file, openErr := item.Open()
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		contents, _ := io.ReadAll(file)
+		_ = file.Close()
+		return string(contents)
+	}
+	t.Fatalf("archive entry %q not found", name)
+	return ""
 }
 
 func (h *harness) testObservableSeries(t *testing.T) {

@@ -25,11 +25,18 @@ Scheduling first removes offline/draining nodes, label mismatches, and nodes wit
 
 `LOST` means that execution is unknown, not failed. JobDock never starts another attempt automatically. If the original agent returns, Docker labels and the local assignment journal allow it to report the real state.
 
+An explicit rerun moves a terminal job back to `QUEUED` without changing its
+specification or immutable inputs. The scheduler allocates the next attempt
+number and assignment atomically. Attempts retain their execution node,
+timestamps, terminal result, output manifest, logs, outputs, events, and
+telemetry. Every agent upload is checked against the current attempt so a
+delayed retry cannot write into a later execution.
+
 ## Storage
 
 - SQLite WAL: users, sessions, node inventory, jobs, attempts, assignments, metadata, structured SDK metric samples, compact resource samples, events, secrets, and audit records.
-- Server filesystem: ordered stdout/stderr files, outputs, and generated metadata.
-- Agent filesystem: assignment journal, bounded log spool, job token files, secret files, and output workspaces.
+- Server filesystem: attempt-scoped stdout/stderr files, outputs, and generated metadata.
+- Agent filesystem: assignment journal, bounded attempt workspaces, job token files, secret files, and outputs.
 
 Job inputs are committed to central storage before `QUEUED` is persisted. Their
 relative paths, sizes, and SHA-256 digests become part of the immutable job

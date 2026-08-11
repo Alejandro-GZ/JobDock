@@ -53,7 +53,7 @@ func TestAgentTelemetryPersistsOnlyNormalizedScalars(t *testing.T) {
 	server := httptest.NewServer(api.Handler())
 	defer server.Close()
 
-	request, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/agent/jobs/"+job.ID+"/telemetry", bytes.NewBufferString(`{"cpu_millis":1250,"memory_bytes":536870912,"gpu_utilization_basis_points":4200,"gpu_memory_bytes":1073741824}`))
+	request, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/agent/jobs/"+job.ID+"/telemetry", bytes.NewBufferString(`{"attempt_id":"`+attemptID+`","cpu_millis":1250,"memory_bytes":536870912,"gpu_utilization_basis_points":4200,"gpu_memory_bytes":1073741824}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+credential)
 	request.Header.Set("X-JobDock-Protocol-Version", "1")
@@ -70,7 +70,7 @@ func TestAgentTelemetryPersistsOnlyNormalizedScalars(t *testing.T) {
 		t.Fatalf("normalized samples: %#v %v", samples, err)
 	}
 
-	rawRequest, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/agent/jobs/"+job.ID+"/events", bytes.NewBufferString(`{"sequence":1,"type":"resource_sample","payload":{"networks":{"eth0":{"rx_bytes":42}}}}`))
+	rawRequest, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/agent/jobs/"+job.ID+"/events", bytes.NewBufferString(`{"attempt_id":"`+attemptID+`","sequence":1,"type":"resource_sample","payload":{"networks":{"eth0":{"rx_bytes":42}}}}`))
 	rawRequest.Header = request.Header.Clone()
 	rawResponse, err := http.DefaultClient.Do(rawRequest)
 	if err != nil {

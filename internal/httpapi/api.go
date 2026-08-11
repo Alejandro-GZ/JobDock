@@ -72,6 +72,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/jobs", a.withSession(false, true, a.createJob))
 	mux.HandleFunc("GET /api/v1/jobs/stream", a.withSession(false, false, a.jobsStream))
 	mux.HandleFunc("GET /api/v1/jobs/{id}", a.withSession(false, false, a.getJob))
+	mux.HandleFunc("GET /api/v1/jobs/{id}/attempts", a.withSession(false, false, a.listJobAttempts))
+	mux.HandleFunc("POST /api/v1/jobs/{id}/rerun", a.withSession(false, true, a.rerunJob))
+	mux.HandleFunc("GET /api/v1/jobs/{id}/attempts/{attempt}/archive.zip", a.withSession(false, false, a.attemptArchive))
 	mux.HandleFunc("POST /api/v1/jobs/{id}/stop", a.withSession(false, true, a.stopJob))
 	mux.HandleFunc("DELETE /api/v1/jobs/{id}", a.withSession(false, true, a.deleteJob))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/events", a.withSession(false, false, a.jobEvents))
@@ -365,7 +368,18 @@ func (a *API) jobEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-	events, err := a.store.Events(r.Context(), job.ID, after)
+	attemptID := r.URL.Query().Get("attempt_id")
+	var events []domain.Event
+	var err error
+	if attemptID != "" {
+		if _, err = a.store.Attempt(r.Context(), job.ID, attemptID); err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		events, err = a.store.EventsForAttempt(r.Context(), job.ID, attemptID, after)
+	} else {
+		events, err = a.store.Events(r.Context(), job.ID, after)
+	}
 	if err != nil {
 		writeProblem(w, 500, "database_error", err.Error())
 		return
@@ -378,9 +392,13 @@ func (a *API) getLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stream := r.PathValue("stream")
+	attemptID, ok := a.attemptIDForRequest(w, r, job)
+	if !ok {
+		return
+	}
 	offsetText := r.URL.Query().Get("offset")
 	offset, _ := strconv.ParseInt(offsetText, 10, 64)
-	size, err := a.files.LogSize(job.ID, stream)
+	size, err := a.files.AttemptLogSize(job.ID, attemptID, stream)
 	if err != nil {
 		writeProblem(w, 422, "invalid_log_stream", err.Error())
 		return
@@ -391,7 +409,7 @@ func (a *API) getLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-JobDock-Start-Offset", strconv.FormatInt(offset, 10))
 	w.Header().Set("X-JobDock-Next-Offset", strconv.FormatInt(size, 10))
-	_, err = a.files.ReadLog(job.ID, stream, offset, w)
+	_, err = a.files.ReadAttemptLog(job.ID, attemptID, stream, offset, w)
 	if err != nil {
 		a.log.Error("read log", "error", err, "job_id", job.ID)
 		return
@@ -402,10 +420,19 @@ func (a *API) archive(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	_ = a.files.WriteMetadata(job.ID, job)
+	attemptID, ok := a.attemptIDForRequest(w, r, job)
+	if !ok {
+		return
+	}
+	attempt, err := a.store.Attempt(r.Context(), job.ID, attemptID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	_ = a.files.WriteAttemptMetadata(job.ID, attemptID, map[string]any{"job": job, "attempt": attempt})
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="job-%s.zip"`, job.ID))
-	if err := a.files.Archive(job.ID, w); err != nil {
+	if err := a.files.ArchiveAttempt(job.ID, attemptID, w); err != nil {
 		a.log.Error("archive failed", "error", err, "job_id", job.ID)
 	}
 }
@@ -787,6 +814,7 @@ func (a *API) agentEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
+		AttemptID   string           `json:"attempt_id"`
 		Sequence    int64            `json:"sequence"`
 		Type        string           `json:"type"`
 		Status      domain.JobStatus `json:"status"`
@@ -798,11 +826,15 @@ func (a *API) agentEvent(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
+	if body.AttemptID == "" || body.AttemptID != job.AttemptID {
+		writeProblem(w, http.StatusConflict, "stale_attempt", "The event does not belong to the current job attempt")
+		return
+	}
 	if body.Type == "resource_sample" {
 		writeProblem(w, http.StatusUnprocessableEntity, "raw_telemetry_rejected", "Raw Docker Stats events are not accepted; upgrade the agent")
 		return
 	}
-	event := domain.Event{JobID: job.ID, Sequence: body.Sequence, Type: body.Type, Status: body.Status, Payload: body.Payload, CreatedAt: time.Now().UTC()}
+	event := domain.Event{JobID: job.ID, AttemptID: body.AttemptID, Sequence: body.Sequence, Type: body.Type, Status: body.Status, Payload: body.Payload, CreatedAt: time.Now().UTC()}
 	if err = a.store.AppendEvent(r.Context(), event); err != nil {
 		writeStoreError(w, err)
 		return
@@ -811,6 +843,16 @@ func (a *API) agentEvent(w http.ResponseWriter, r *http.Request) {
 		if err = a.store.UpdateJobStatus(r.Context(), job.ID, body.Status, body.ExitCode, body.ImageDigest, body.Reason); err != nil && !errors.Is(err, store.ErrConflict) {
 			writeStoreError(w, err)
 			return
+		}
+		if body.Status == domain.JobSucceeded || body.Status == domain.JobFailed || body.Status == domain.JobCancelled {
+			var outputs []domain.OutputFile
+			if encoded, marshalErr := json.Marshal(body.Payload["outputs"]); marshalErr == nil {
+				_ = json.Unmarshal(encoded, &outputs)
+			}
+			if err = a.store.SetAttemptOutputs(r.Context(), job.ID, body.AttemptID, outputs); err != nil {
+				writeStoreError(w, err)
+				return
+			}
 		}
 	}
 	w.WriteHeader(204)
@@ -831,12 +873,15 @@ func (a *API) agentTelemetry(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &sample) {
 		return
 	}
+	if sample.AttemptID == "" || sample.AttemptID != job.AttemptID {
+		writeProblem(w, http.StatusConflict, "stale_attempt", "Telemetry does not belong to the current job attempt")
+		return
+	}
 	if sample.CPUMillis < 0 || sample.MemoryBytes < 0 || (sample.GPUUtilizationBasisPoints != nil && (*sample.GPUUtilizationBasisPoints < 0 || *sample.GPUUtilizationBasisPoints > 10000)) || (sample.GPUMemoryBytes != nil && *sample.GPUMemoryBytes < 0) {
 		writeProblem(w, http.StatusUnprocessableEntity, "invalid_resource_sample", "Resource telemetry values are outside their valid range")
 		return
 	}
 	sample.JobID = job.ID
-	sample.AttemptID = job.AttemptID
 	sample.CapturedAt = time.Now().UTC()
 	if err = a.store.AppendResourceSample(r.Context(), sample); err != nil {
 		writeStoreError(w, err)
@@ -855,8 +900,13 @@ func (a *API) putLog(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, 403, "forbidden", "Job is not assigned to this node")
 		return
 	}
+	attemptID := r.URL.Query().Get("attempt_id")
+	if attemptID == "" || attemptID != job.AttemptID {
+		writeProblem(w, http.StatusConflict, "stale_attempt", "The log chunk does not belong to the current job attempt")
+		return
+	}
 	offset, _ := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
-	next, err := a.files.AppendLog(job.ID, r.PathValue("stream"), offset, http.MaxBytesReader(w, r.Body, 4<<20))
+	next, err := a.files.AppendAttemptLog(job.ID, attemptID, r.PathValue("stream"), offset, http.MaxBytesReader(w, r.Body, 4<<20))
 	if err != nil && err != filestore.ErrOffsetMismatch && err != filestore.ErrLimitExceeded {
 		writeProblem(w, 500, "log_write_failed", err.Error())
 		return
@@ -882,8 +932,13 @@ func (a *API) putOutput(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, 403, "forbidden", "Job is not assigned to this node")
 		return
 	}
+	attemptID := r.URL.Query().Get("attempt_id")
+	if attemptID == "" || attemptID != job.AttemptID {
+		writeProblem(w, http.StatusConflict, "stale_attempt", "The output chunk does not belong to the current job attempt")
+		return
+	}
 	offset, _ := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
-	next, err := a.files.AppendOutput(job.ID, r.PathValue("path"), offset, http.MaxBytesReader(w, r.Body, 8<<20))
+	next, err := a.files.AppendAttemptOutput(job.ID, attemptID, r.PathValue("path"), offset, http.MaxBytesReader(w, r.Body, 8<<20))
 	if err != nil {
 		if err == filestore.ErrOffsetMismatch {
 			writeJSON(w, 409, map[string]any{"next_offset": next})

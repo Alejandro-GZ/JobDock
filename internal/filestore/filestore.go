@@ -128,10 +128,18 @@ func (s *Store) JobDir(jobID string) (string, error) {
 }
 
 func (s *Store) AppendLog(jobID, stream string, offset int64, source io.Reader) (int64, error) {
+	return s.appendLog(jobID, "", stream, offset, source)
+}
+
+func (s *Store) AppendAttemptLog(jobID, attemptID, stream string, offset int64, source io.Reader) (int64, error) {
+	return s.appendLog(jobID, attemptID, stream, offset, source)
+}
+
+func (s *Store) appendLog(jobID, attemptID, stream string, offset int64, source io.Reader) (int64, error) {
 	if stream != "stdout" && stream != "stderr" {
 		return 0, errors.New("invalid log stream")
 	}
-	dir, err := s.JobDir(jobID)
+	dir, err := s.dataDir(jobID, attemptID)
 	if err != nil {
 		return 0, err
 	}
@@ -175,7 +183,15 @@ func (s *Store) AppendLog(jobID, stream string, offset int64, source io.Reader) 
 }
 
 func (s *Store) ReadLog(jobID, stream string, offset int64, destination io.Writer) (int64, error) {
-	dir, err := s.JobDir(jobID)
+	return s.readLog(jobID, "", stream, offset, destination)
+}
+
+func (s *Store) ReadAttemptLog(jobID, attemptID, stream string, offset int64, destination io.Writer) (int64, error) {
+	return s.readLog(jobID, attemptID, stream, offset, destination)
+}
+
+func (s *Store) readLog(jobID, attemptID, stream string, offset int64, destination io.Writer) (int64, error) {
+	dir, err := s.dataDir(jobID, attemptID)
 	if err != nil {
 		return offset, err
 	}
@@ -197,10 +213,18 @@ func (s *Store) ReadLog(jobID, stream string, offset int64, destination io.Write
 // ReadLogChunk reads at most limit bytes starting at offset. It is used by live
 // consumers so each refresh is proportional to newly appended data.
 func (s *Store) ReadLogChunk(jobID, stream string, offset, limit int64) ([]byte, int64, error) {
+	return s.readLogChunk(jobID, "", stream, offset, limit)
+}
+
+func (s *Store) ReadAttemptLogChunk(jobID, attemptID, stream string, offset, limit int64) ([]byte, int64, error) {
+	return s.readLogChunk(jobID, attemptID, stream, offset, limit)
+}
+
+func (s *Store) readLogChunk(jobID, attemptID, stream string, offset, limit int64) ([]byte, int64, error) {
 	if limit <= 0 {
 		return nil, offset, errors.New("log chunk limit must be positive")
 	}
-	dir, err := s.JobDir(jobID)
+	dir, err := s.dataDir(jobID, attemptID)
 	if err != nil {
 		return nil, offset, err
 	}
@@ -223,10 +247,18 @@ func (s *Store) ReadLogChunk(jobID, stream string, offset, limit int64) ([]byte,
 }
 
 func (s *Store) LogSize(jobID, stream string) (int64, error) {
+	return s.logSize(jobID, "", stream)
+}
+
+func (s *Store) AttemptLogSize(jobID, attemptID, stream string) (int64, error) {
+	return s.logSize(jobID, attemptID, stream)
+}
+
+func (s *Store) logSize(jobID, attemptID, stream string) (int64, error) {
 	if stream != "stdout" && stream != "stderr" {
 		return 0, errors.New("invalid log stream")
 	}
-	dir, err := s.JobDir(jobID)
+	dir, err := s.dataDir(jobID, attemptID)
 	if err != nil {
 		return 0, err
 	}
@@ -241,11 +273,19 @@ func (s *Store) LogSize(jobID, stream string) (int64, error) {
 }
 
 func (s *Store) AppendOutput(jobID, relativePath string, offset int64, source io.Reader) (int64, error) {
+	return s.appendOutput(jobID, "", relativePath, offset, source)
+}
+
+func (s *Store) AppendAttemptOutput(jobID, attemptID, relativePath string, offset int64, source io.Reader) (int64, error) {
+	return s.appendOutput(jobID, attemptID, relativePath, offset, source)
+}
+
+func (s *Store) appendOutput(jobID, attemptID, relativePath string, offset int64, source io.Reader) (int64, error) {
 	clean, err := safeRelativePath(relativePath)
 	if err != nil {
 		return 0, err
 	}
-	dir, err := s.JobDir(jobID)
+	dir, err := s.dataDir(jobID, attemptID)
 	if err != nil {
 		return 0, err
 	}
@@ -442,7 +482,15 @@ func (s *Store) ArchiveCheckpoint(jobID, syncID string, destination io.Writer) e
 }
 
 func (s *Store) WriteMetadata(jobID string, value any) error {
-	dir, err := s.JobDir(jobID)
+	return s.writeMetadata(jobID, "", value)
+}
+
+func (s *Store) WriteAttemptMetadata(jobID, attemptID string, value any) error {
+	return s.writeMetadata(jobID, attemptID, value)
+}
+
+func (s *Store) writeMetadata(jobID, attemptID string, value any) error {
+	dir, err := s.dataDir(jobID, attemptID)
 	if err != nil {
 		return err
 	}
@@ -522,6 +570,105 @@ func (s *Store) Archive(jobID string, destination io.Writer) error {
 	return archive.Close()
 }
 
+func (s *Store) ArchiveAttempt(jobID, attemptID string, destination io.Writer) error {
+	jobDir, err := s.JobDir(jobID)
+	if err != nil {
+		return err
+	}
+	attemptDir, err := s.dataDir(jobID, attemptID)
+	if err != nil {
+		return err
+	}
+	archive := zip.NewWriter(destination)
+	for _, source := range []struct {
+		root   string
+		prefix string
+	}{{attemptDir, ""}, {filepath.Join(jobDir, "inputs"), "inputs"}} {
+		walkErr := appendDirectoryToZip(archive, source.root, source.prefix)
+		if walkErr != nil {
+			_ = archive.Close()
+			return walkErr
+		}
+	}
+	return archive.Close()
+}
+
+// PromoteLegacyAttempt preserves data written before attempt-scoped storage was
+// introduced. It is safe to call repeatedly and only moves the legacy mutable
+// directories into the first attempt generation.
+func (s *Store) PromoteLegacyAttempt(jobID, attemptID string) error {
+	jobDir, err := s.JobDir(jobID)
+	if err != nil {
+		return err
+	}
+	attemptDir, err := s.dataDir(jobID, attemptID)
+	if err != nil {
+		return err
+	}
+	if err = os.MkdirAll(attemptDir, 0o750); err != nil {
+		return err
+	}
+	for _, name := range []string{"logs", "output", "metadata"} {
+		source, destination := filepath.Join(jobDir, name), filepath.Join(attemptDir, name)
+		if _, statErr := os.Stat(source); errors.Is(statErr, os.ErrNotExist) {
+			continue
+		} else if statErr != nil {
+			return statErr
+		}
+		if _, statErr := os.Stat(destination); statErr == nil {
+			continue
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
+		}
+		if err = os.Rename(source, destination); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func appendDirectoryToZip(archive *zip.Writer, root, prefix string) error {
+	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if errors.Is(walkErr, os.ErrNotExist) {
+			return nil
+		}
+		if walkErr != nil || entry.IsDir() {
+			return walkErr
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return err
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		name := filepath.ToSlash(relative)
+		if prefix != "" {
+			name = filepath.ToSlash(filepath.Join(prefix, relative))
+		}
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+		header.Name, header.Method = name, zip.Deflate
+		writer, err := archive.CreateHeader(header)
+		if err != nil {
+			return err
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(writer, file)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	})
+}
+
 func archiveDirectory(dir string, destination io.Writer) error {
 	archive := zip.NewWriter(destination)
 	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -572,6 +719,17 @@ func (s *Store) DeleteJob(jobID string) error {
 		return err
 	}
 	return os.RemoveAll(dir)
+}
+
+func (s *Store) dataDir(jobID, attemptID string) (string, error) {
+	dir, err := s.JobDir(jobID)
+	if err != nil || attemptID == "" {
+		return dir, err
+	}
+	if !safeSegment(attemptID) {
+		return "", errors.New("invalid attempt ID")
+	}
+	return filepath.Join(dir, "attempts", attemptID), nil
 }
 
 func safeSegment(value string) bool {

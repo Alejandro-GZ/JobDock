@@ -170,6 +170,31 @@ func TestLoginAndIdempotentJobCreation(t *testing.T) {
 	if err != nil || len(jobs) != 1 {
 		t.Fatalf("jobs: %d %v", len(jobs), err)
 	}
+	if _, err = repository.DB().Exec(`UPDATE jobs SET status='SUCCEEDED',desired_status='SUCCEEDED',observed_status='SUCCEEDED',finished_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), jobs[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	rerunRequest := func() (int, string, string) {
+		request, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/jobs/"+jobs[0].ID+"/rerun", nil)
+		request.Header.Set("X-CSRF-Token", session.CSRF)
+		request.Header.Set("Idempotency-Key", "rerun-1234567890abcdef")
+		request.AddCookie(cookie)
+		result, requestErr := http.DefaultClient.Do(request)
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		defer result.Body.Close()
+		data, _ := io.ReadAll(result.Body)
+		return result.StatusCode, string(data), result.Header.Get("Idempotency-Replayed")
+	}
+	firstStatus, firstRerun, _ := rerunRequest()
+	secondStatus, secondRerun, replayed := rerunRequest()
+	if firstStatus != http.StatusAccepted || secondStatus != http.StatusAccepted || firstRerun != secondRerun || replayed != "true" {
+		t.Fatalf("rerun idempotency: first=%d second=%d replayed=%q bodies=%q/%q", firstStatus, secondStatus, replayed, firstRerun, secondRerun)
+	}
+	attempts, err := repository.Attempts(context.Background(), jobs[0].ID)
+	if err != nil || len(attempts) != 0 {
+		t.Fatalf("HTTP retry created attempts outside scheduling: %#v %v", attempts, err)
+	}
 	if _, err = files.AppendLog(jobs[0].ID, "stdout", 0, bytes.NewBufferString("hello")); err != nil {
 		t.Fatal(err)
 	}

@@ -16,6 +16,7 @@ uses a real Docker Engine for every workload. It covers:
 
 - submit, scheduling, execution, log ingestion, output upload, and ZIP archive;
 - immutable input upload, manifest verification, read-only mounting, limits, and cleanup;
+- idempotent rerun with numbered attempts and isolated logs/output archives;
 - cooperative stop;
 - server process loss and restart with persistent state;
 - agent process loss and restart with persistent state;

@@ -84,7 +84,7 @@ func TestOpenAPIDomainSchemasCoverJSONFields(t *testing.T) {
 		"User": domain.User{}, "Job": domain.Job{}, "Node": domain.Node{},
 		"GPU": domain.GPU{}, "GPUDiscovery": domain.GPUDiscovery{}, "MetricPoint": domain.MetricPoint{}, "MetricSeries": domain.MetricSeries{},
 		"ResourceSample": domain.ResourceSample{}, "CheckpointSync": domain.CheckpointSync{},
-		"Assignment": domain.Assignment{}, "InputFile": domain.InputFile{},
+		"Assignment": domain.Assignment{}, "InputFile": domain.InputFile{}, "JobAttempt": domain.JobAttempt{}, "OutputFile": domain.OutputFile{},
 	}
 	for schema, contract := range contracts {
 		for field := range jsonFields(reflect.TypeOf(contract)) {

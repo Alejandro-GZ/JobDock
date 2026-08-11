@@ -100,6 +100,27 @@ type Job struct {
 	Version         int64      `json:"version"`
 }
 
+type OutputFile struct {
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
+}
+
+type JobAttempt struct {
+	ID            string       `json:"id"`
+	JobID         string       `json:"job_id"`
+	AttemptNumber int          `json:"attempt_number"`
+	NodeID        string       `json:"node_id"`
+	Status        JobStatus    `json:"status"`
+	ImageDigest   string       `json:"image_digest,omitempty"`
+	ExitCode      *int         `json:"exit_code,omitempty"`
+	FailureReason string       `json:"failure_reason,omitempty"`
+	Outputs       []OutputFile `json:"outputs"`
+	CreatedAt     time.Time    `json:"created_at"`
+	StartedAt     *time.Time   `json:"started_at,omitempty"`
+	FinishedAt    *time.Time   `json:"finished_at,omitempty"`
+}
+
 type GPU struct {
 	UUID      string `json:"uuid"`
 	Model     string `json:"model"`
@@ -166,6 +187,7 @@ type CheckpointFile struct {
 type Event struct {
 	ID        int64          `json:"id"`
 	JobID     string         `json:"job_id"`
+	AttemptID string         `json:"attempt_id,omitempty"`
 	Sequence  int64          `json:"sequence"`
 	Type      string         `json:"type"`
 	Status    JobStatus      `json:"status,omitempty"`

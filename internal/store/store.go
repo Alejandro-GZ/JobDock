@@ -205,6 +205,27 @@ func (s *Store) Job(ctx context.Context, id string) (domain.Job, error) {
 	return scanJob(row)
 }
 
+func (s *Store) Attempts(ctx context.Context, jobID string) ([]domain.JobAttempt, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,job_id,attempt_number,node_id,status,image_digest,exit_code,failure_reason,outputs_json,created_at,started_at,finished_at FROM job_attempts WHERE job_id=? ORDER BY attempt_number DESC`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	attempts := make([]domain.JobAttempt, 0)
+	for rows.Next() {
+		attempt, scanErr := scanAttempt(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		attempts = append(attempts, attempt)
+	}
+	return attempts, rows.Err()
+}
+
+func (s *Store) Attempt(ctx context.Context, jobID, attemptID string) (domain.JobAttempt, error) {
+	return scanAttempt(s.db.QueryRowContext(ctx, `SELECT id,job_id,attempt_number,node_id,status,image_digest,exit_code,failure_reason,outputs_json,created_at,started_at,finished_at FROM job_attempts WHERE id=? AND job_id=?`, attemptID, jobID))
+}
+
 func (s *Store) ListJobs(ctx context.Context, includeDeleted bool) ([]domain.Job, error) {
 	query := jobSelect
 	if !includeDeleted {
@@ -264,14 +285,14 @@ func (s *Store) ReserveJob(ctx context.Context, jobID, nodeID, attemptID, assign
 		return ErrConflict
 	}
 	now := formatTime(time.Now().UTC())
-	if _, err = tx.ExecContext(ctx, `INSERT INTO job_attempts(id,job_id,attempt_number,node_id,assignment_id,status,job_token_hash,created_at) VALUES(?,?,?,?,?,'ASSIGNED',?,?)`, attemptID, jobID, 1, nodeID, assignmentID, jobTokenHash, now); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO job_attempts(id,job_id,attempt_number,node_id,assignment_id,status,job_token_hash,created_at) SELECT ?,?,COALESCE(MAX(attempt_number),0)+1,?,?, 'ASSIGNED',?,? FROM job_attempts WHERE job_id=?`, attemptID, jobID, nodeID, assignmentID, jobTokenHash, now, jobID); err != nil {
 		return err
 	}
 	gpus, _ := json.Marshal(gpuUUIDs)
 	if _, err = tx.ExecContext(ctx, `INSERT INTO assignments(id,job_id,attempt_id,node_id,gpu_uuids_json,job_token_ciphertext,created_at) VALUES(?,?,?,?,?,?,?)`, assignmentID, jobID, attemptID, nodeID, gpus, jobTokenCiphertext, now); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO job_events(job_id,sequence,type,status,payload_json,created_at) SELECT ?,COALESCE(MAX(sequence),0)+1,'assigned','ASSIGNED','{}',? FROM job_events WHERE job_id=?`, jobID, now, jobID); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO job_events(job_id,attempt_id,sequence,type,status,payload_json,created_at) SELECT ?,?,COALESCE(MAX(sequence),0)+1,'assigned','ASSIGNED','{}',? FROM job_events WHERE job_id=?`, jobID, attemptID, now, jobID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -293,11 +314,51 @@ func (s *Store) UpdateJobStatus(ctx context.Context, jobID string, status domain
 	if status == domain.JobSucceeded || status == domain.JobFailed || status == domain.JobCancelled {
 		finished = formatTime(now)
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE jobs SET status=?,observed_status=?,exit_code=COALESCE(?,exit_code),image_digest=CASE WHEN ?='' THEN image_digest ELSE ? END,failure_reason=CASE WHEN ?='' THEN failure_reason ELSE ? END,started_at=COALESCE(?,started_at),finished_at=COALESCE(?,finished_at),version=version+1 WHERE id=?`, status, status, exitCode, imageDigest, imageDigest, reason, reason, started, finished, jobID)
-	if err == nil && (status == domain.JobSucceeded || status == domain.JobFailed || status == domain.JobCancelled) {
-		_, err = s.db.ExecContext(ctx, `UPDATE job_attempts SET job_token_hash='revoked:'||id,finished_at=COALESCE(finished_at,?) WHERE job_id=?`, formatTime(now), jobID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
-	return err
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE jobs SET status=?,observed_status=?,exit_code=COALESCE(?,exit_code),image_digest=CASE WHEN ?='' THEN image_digest ELSE ? END,failure_reason=CASE WHEN ?='' THEN failure_reason ELSE ? END,started_at=COALESCE(?,started_at),finished_at=COALESCE(?,finished_at),version=version+1 WHERE id=? AND status=? AND attempt_id=?`, status, status, exitCode, imageDigest, imageDigest, reason, reason, started, finished, jobID, job.Status, job.AttemptID)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return ErrConflict
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE job_attempts SET status=?,exit_code=COALESCE(?,exit_code),image_digest=CASE WHEN ?='' THEN image_digest ELSE ? END,failure_reason=CASE WHEN ?='' THEN failure_reason ELSE ? END,started_at=COALESCE(?,started_at),finished_at=COALESCE(?,finished_at),job_token_hash=CASE WHEN ? THEN 'revoked:'||id ELSE job_token_hash END WHERE id=? AND job_id=?`, status, exitCode, imageDigest, imageDigest, reason, reason, started, finished, finished != nil, job.AttemptID, jobID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) SetAttemptOutputs(ctx context.Context, jobID, attemptID string, outputs []domain.OutputFile) error {
+	data, _ := json.Marshal(outputs)
+	result, err := s.db.ExecContext(ctx, `UPDATE job_attempts SET outputs_json=? WHERE id=? AND job_id=?`, data, attemptID, jobID)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) RerunJob(ctx context.Context, jobID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE jobs SET status='QUEUED',desired_status='RUNNING',observed_status='QUEUED',assigned_node_id=NULL,attempt_id=NULL,image_digest='',exit_code=NULL,queue_reason_code='',queue_reason='',failure_reason='',started_at=NULL,finished_at=NULL,version=version+1 WHERE id=? AND status IN ('SUCCEEDED','FAILED','CANCELLED')`, jobID)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return ErrConflict
+	}
+	return tx.Commit()
 }
 
 func (s *Store) RequestStop(ctx context.Context, jobID string) error {
@@ -310,6 +371,9 @@ func (s *Store) RequestStop(ctx context.Context, jobID string) error {
 		_, err = s.db.ExecContext(ctx, `UPDATE jobs SET status='CANCELLED',desired_status='CANCELLED',observed_status='CANCELLED',finished_at=?,version=version+1 WHERE id=? AND status='QUEUED'`, formatTime(time.Now().UTC()), jobID)
 	case domain.JobAssigned, domain.JobPullingImage, domain.JobStarting, domain.JobRunning, domain.JobLost:
 		_, err = s.db.ExecContext(ctx, `UPDATE jobs SET status='STOPPING',desired_status='CANCELLED',version=version+1 WHERE id=?`, jobID)
+		if err == nil && job.AttemptID != "" {
+			_, err = s.db.ExecContext(ctx, `UPDATE job_attempts SET status='STOPPING' WHERE id=? AND job_id=?`, job.AttemptID, jobID)
+		}
 	default:
 		err = ErrConflict
 	}
@@ -492,6 +556,9 @@ func (s *Store) MarkStaleNodes(ctx context.Context, offlineBefore, lostBefore ti
 		if _, err = s.db.ExecContext(ctx, `UPDATE jobs SET status='LOST',observed_status='LOST',version=version+1 WHERE id=? AND status IN ('ASSIGNED','PULLING_IMAGE','STARTING','RUNNING','STOPPING')`, jobID); err != nil {
 			return err
 		}
+		if _, err = s.db.ExecContext(ctx, `UPDATE job_attempts SET status='LOST' WHERE id=(SELECT attempt_id FROM jobs WHERE id=?)`, jobID); err != nil {
+			return err
+		}
 		if err = s.AppendServerEvent(ctx, jobID, "lost", map[string]any{}); err != nil {
 			return err
 		}
@@ -660,14 +727,14 @@ func (s *Store) AppendEvent(ctx context.Context, event domain.Event) error {
 		return ErrRawTelemetry
 	}
 	payload, _ := json.Marshal(event.Payload)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO job_events(job_id,sequence,type,status,payload_json,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(job_id,sequence) DO NOTHING`, event.JobID, event.Sequence, event.Type, event.Status, payload, formatTime(event.CreatedAt))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO job_events(job_id,attempt_id,sequence,type,status,payload_json,created_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(job_id,sequence) DO NOTHING`, event.JobID, nullable(event.AttemptID), event.Sequence, event.Type, event.Status, payload, formatTime(event.CreatedAt))
 	return err
 }
 
 func (s *Store) AppendServerEvent(ctx context.Context, jobID, eventType string, payload map[string]any) error {
 	data, _ := json.Marshal(payload)
 	for attempts := 0; attempts < 3; attempts++ {
-		_, err := s.db.ExecContext(ctx, `INSERT INTO job_events(job_id,sequence,type,status,payload_json,created_at) VALUES(?,COALESCE((SELECT MAX(sequence) FROM job_events WHERE job_id=?),0)+1,?,(SELECT status FROM jobs WHERE id=?),?,?)`, jobID, jobID, eventType, jobID, data, formatTime(time.Now().UTC()))
+		_, err := s.db.ExecContext(ctx, `INSERT INTO job_events(job_id,attempt_id,sequence,type,status,payload_json,created_at) VALUES(?,(SELECT attempt_id FROM jobs WHERE id=?),COALESCE((SELECT MAX(sequence) FROM job_events WHERE job_id=?),0)+1,?,(SELECT status FROM jobs WHERE id=?),?,?)`, jobID, jobID, jobID, eventType, jobID, data, formatTime(time.Now().UTC()))
 		if err == nil {
 			return nil
 		}
@@ -684,7 +751,22 @@ func (s *Store) JobByToken(ctx context.Context, tokenHash string) (domain.Job, e
 }
 
 func (s *Store) Events(ctx context.Context, jobID string, after int64) ([]domain.Event, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,job_id,sequence,type,status,payload_json,created_at FROM job_events WHERE job_id=? AND id>? ORDER BY id LIMIT 1000`, jobID, after)
+	return s.events(ctx, jobID, "", after)
+}
+
+func (s *Store) EventsForAttempt(ctx context.Context, jobID, attemptID string, after int64) ([]domain.Event, error) {
+	return s.events(ctx, jobID, attemptID, after)
+}
+
+func (s *Store) events(ctx context.Context, jobID, attemptID string, after int64) ([]domain.Event, error) {
+	query := `SELECT id,job_id,COALESCE(attempt_id,''),sequence,type,status,payload_json,created_at FROM job_events WHERE job_id=? AND id>?`
+	arguments := []any{jobID, after}
+	if attemptID != "" {
+		query += ` AND attempt_id=?`
+		arguments = append(arguments, attemptID)
+	}
+	query += ` ORDER BY id LIMIT 1000`
+	rows, err := s.db.QueryContext(ctx, query, arguments...)
 	if err != nil {
 		return nil, err
 	}
@@ -693,7 +775,7 @@ func (s *Store) Events(ctx context.Context, jobID string, after int64) ([]domain
 	for rows.Next() {
 		var event domain.Event
 		var payload, created string
-		if err := rows.Scan(&event.ID, &event.JobID, &event.Sequence, &event.Type, &event.Status, &payload, &created); err != nil {
+		if err := rows.Scan(&event.ID, &event.JobID, &event.AttemptID, &event.Sequence, &event.Type, &event.Status, &payload, &created); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(payload), &event.Payload)
@@ -879,6 +961,32 @@ func scanJob(row scanner) (domain.Job, error) {
 	job.FinishedAt = parseNullTime(finished)
 	job.DeletedAt = parseNullTime(deleted)
 	return job, nil
+}
+
+func scanAttempt(row scanner) (domain.JobAttempt, error) {
+	var attempt domain.JobAttempt
+	var exit sql.NullInt64
+	var outputs, created string
+	var started, finished sql.NullString
+	err := row.Scan(&attempt.ID, &attempt.JobID, &attempt.AttemptNumber, &attempt.NodeID, &attempt.Status, &attempt.ImageDigest, &exit, &attempt.FailureReason, &outputs, &created, &started, &finished)
+	if errors.Is(err, sql.ErrNoRows) {
+		return attempt, ErrNotFound
+	}
+	if err != nil {
+		return attempt, err
+	}
+	if exit.Valid {
+		value := int(exit.Int64)
+		attempt.ExitCode = &value
+	}
+	_ = json.Unmarshal([]byte(outputs), &attempt.Outputs)
+	if attempt.Outputs == nil {
+		attempt.Outputs = []domain.OutputFile{}
+	}
+	attempt.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	attempt.StartedAt = parseNullTime(started)
+	attempt.FinishedAt = parseNullTime(finished)
+	return attempt, nil
 }
 
 func formatTime(value time.Time) string { return value.UTC().Format(time.RFC3339Nano) }
