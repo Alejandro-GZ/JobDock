@@ -14,16 +14,21 @@ The repository contains:
 2. Start the control plane with `docker compose --env-file .env -f deploy/docker-compose.yml up --build`.
 3. Sign in at `http://localhost:8080`.
 4. Create a one-time enrollment token in **Nodes**.
-5. On each Docker host, set `JOBDOCK_SERVER_URL`, `JOBDOCK_ENROLLMENT_TOKEN`, and a unique `JOBDOCK_NODE_NAME`.
-6. Start a CPU agent with `docker compose --env-file .env -f deploy/docker-compose.yml -f deploy/docker-compose.agent.yml up -d --build`, or recreate it with the NVIDIA override:
+5. On each additional Docker host, run the versioned CPU installer with the one-time token:
 
-```text
-docker compose --env-file .env -f deploy/docker-compose.yml -f deploy/docker-compose.agent.yml -f deploy/docker-compose.agent.gpu.yml up --build -d --force-recreate jobdock-agent
+```sh
+curl -fsSL https://dock.example.com/install-agent.sh | sudo sh -s -- --server https://dock.example.com --token YOUR_ONE_TIME_TOKEN --name cpu-01
 ```
 
-The GPU override requests NVIDIA devices from Docker and runs discovery in `required` mode. If NVML cannot initialize, the node is reported as `DEGRADED` and receives no assignments.
+For an NVIDIA host, use the same command with `--gpu`:
 
-The explicit `--env-file .env` is required because the Compose files live under `deploy/`, while the development environment file lives at the repository root.
+```sh
+curl -fsSL https://dock.example.com/install-agent.sh | sudo sh -s -- --server https://dock.example.com --token YOUR_ONE_TIME_TOKEN --name gpu-01 --gpu
+```
+
+The installer pulls the immutable `ghcr.io/alejandro-gz/jobdock-agent:0.1.0` image, creates persistent agent state, and starts the constrained agent container. It does not clone this repository, invoke a compiler, or edit Compose. The GPU mode requests NVIDIA devices and requires NVML discovery; a discovery failure marks the node `DEGRADED` and prevents assignments.
+
+For an intentionally insecure local server, append `--allow-insecure-http`. The installer otherwise requires HTTPS.
 
 The quick start permits plain HTTP for local evaluation. Production deployments must terminate TLS and set `JOBDOCK_ALLOW_INSECURE_HTTP=false`.
 

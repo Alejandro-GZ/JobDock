@@ -1,9 +1,6 @@
 services:
   jobdock-agent:
-    build:
-      context: ..
-      dockerfile: Dockerfile.agent
-    image: jobdock-agent:0.1.0
+    image: "${JOBDOCK_AGENT_IMAGE:-ghcr.io/alejandro-gz/jobdock-agent:0.1.0}"
     restart: unless-stopped
     environment:
       JOBDOCK_SERVER_URL: "${JOBDOCK_SERVER_URL:?Set the JobDock server URL}"

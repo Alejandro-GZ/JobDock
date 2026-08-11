@@ -23,7 +23,7 @@ import (
 	"github.com/jobdock/jobdock/internal/domain"
 )
 
-const version = "0.1.0"
+var version = "dev"
 
 type Agent struct {
 	config              config.Agent

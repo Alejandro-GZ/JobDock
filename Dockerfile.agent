@@ -1,12 +1,18 @@
 # syntax=docker/dockerfile:1.7
 FROM golang:1.26-bookworm AS build
+ARG VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/jobdock-agent ./cmd/jobdock-agent
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X github.com/jobdock/jobdock/internal/agent.version=${VERSION}" -o /out/jobdock-agent ./cmd/jobdock-agent
 
 FROM debian:bookworm-slim
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="JobDock Agent" \
+      org.opencontainers.image.description="Trusted per-host Docker executor for JobDock" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="https://github.com/Alejandro-GZ/JobDock"
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/jobdock-agent /usr/local/bin/jobdock-agent
 ENV JOBDOCK_AGENT_STATE_DIR=/var/lib/jobdock-agent JOBDOCK_WORKSPACE_DIR=/var/lib/jobdock-agent/jobs JOBDOCK_DOCKER_SOCKET=/var/run/docker.sock JOBDOCK_GPU_MODE=auto

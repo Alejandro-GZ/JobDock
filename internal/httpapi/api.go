@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	deployassets "github.com/jobdock/jobdock/deploy"
 	"github.com/jobdock/jobdock/internal/auth"
 	"github.com/jobdock/jobdock/internal/capacity"
 	"github.com/jobdock/jobdock/internal/config"
@@ -60,6 +61,7 @@ func (a *API) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	})
 	mux.HandleFunc("GET /metrics", a.metrics)
+	mux.HandleFunc("GET /install-agent.sh", a.agentInstaller)
 	mux.HandleFunc("POST /api/v1/auth/login", a.login)
 	mux.HandleFunc("POST /api/v1/auth/logout", a.withSession(false, true, a.logout))
 	mux.HandleFunc("GET /api/v1/auth/me", a.withSession(false, false, a.me))
@@ -100,6 +102,13 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/job-context/stop", a.withJob(a.sdkStop))
 	mux.HandleFunc("/", a.serveWeb)
 	return a.securityHeaders(a.requestLog(mux))
+}
+
+func (a *API) agentInstaller(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	w.Header().Set("Content-Disposition", `inline; filename="install-agent.sh"`)
+	w.Header().Set("Cache-Control", "no-cache")
+	_, _ = w.Write(deployassets.AgentInstaller)
 }
 
 func (a *API) BootstrapAdmin(ctx context.Context) error {

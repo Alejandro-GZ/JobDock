@@ -35,6 +35,15 @@ func TestLoginAndIdempotentJobCreation(t *testing.T) {
 	}
 	server := httptest.NewServer(api.Handler())
 	defer server.Close()
+	installerResponse, err := http.Get(server.URL + "/install-agent.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	installer, _ := io.ReadAll(installerResponse.Body)
+	installerResponse.Body.Close()
+	if installerResponse.StatusCode != http.StatusOK || !bytes.Contains(installer, []byte("DEFAULT_VERSION=\"0.1.0\"")) {
+		t.Fatalf("versioned installer endpoint: status=%d", installerResponse.StatusCode)
+	}
 	loginBody := bytes.NewBufferString(`{"username":"admin","password":"correct horse battery"}`)
 	response, err := http.Post(server.URL+"/api/v1/auth/login", "application/json", loginBody)
 	if err != nil {

@@ -24,6 +24,26 @@ Limits are controlled with `JOBDOCK_MAX_LOG_BYTES` and `JOBDOCK_MAX_OUTPUT_BYTES
 
 Back up the server, upgrade the control plane, verify readiness, then upgrade agents gradually. Do not skip major protocol versions. A draining node receives no new work and can be upgraded after active jobs finish.
 
+## Enrolling a Docker host
+
+Create a one-time enrollment token from **Nodes**, then run one installer command on a Linux amd64 host with Docker ready. Enrollment tokens expire after 15 minutes and cannot be reused.
+
+CPU host:
+
+```sh
+curl -fsSL https://dock.example.com/install-agent.sh | sudo sh -s -- --server https://dock.example.com --token YOUR_ONE_TIME_TOKEN --name cpu-01 --labels zone=lab
+```
+
+NVIDIA GPU host:
+
+```sh
+curl -fsSL https://dock.example.com/install-agent.sh | sudo sh -s -- --server https://dock.example.com --token YOUR_ONE_TIME_TOKEN --name gpu-01 --labels zone=lab --gpu
+```
+
+The host must have outbound access to the JobDock URL and GHCR. GPU hosts additionally require a working NVIDIA driver and NVIDIA Container Toolkit. A prepared host performs only an image pull, volume creation, and container start, so no repository checkout or local build is involved. Verify enrollment with `docker logs -f jobdock-agent` and confirm the heartbeat in **Nodes**.
+
+The installer rejects an existing `jobdock-agent` container instead of replacing it implicitly. Drain the node, remove the old container explicitly, and rerun the command with the desired `--version` during an upgrade. Persistent identity and reconciliation state remain in the `jobdock-agent-state` volume.
+
 ## Troubleshooting
 
 - `NO_ONLINE_NODE`: verify agent credentials, server URL, TLS trust, and heartbeats.
