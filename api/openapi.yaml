@@ -64,6 +64,17 @@ paths:
       operationId: streamJob
       parameters: [{$ref: '#/components/parameters/JobID'}]
       responses: {'200': {description: Resumable text/event-stream}}
+  /jobs/{jobId}/logs/{stream}/tail:
+    get:
+      operationId: tailJobLogs
+      parameters:
+        - {$ref: '#/components/parameters/JobID'}
+        - {name: stream, in: path, required: true, schema: {type: string, enum: [stdout, stderr]}}
+        - {name: after, in: query, schema: {oneOf: [{type: integer, format: int64, minimum: 0}, {type: string, const: tail}], default: tail}}
+        - {name: Last-Event-ID, in: header, description: Last acknowledged byte offset used for automatic SSE reconnection, schema: {type: integer, format: int64, minimum: 0}}
+      responses:
+        '200': {description: Byte-offset resumable log chunks as text/event-stream}
+        '400': {$ref: '#/components/responses/Problem'}
   /jobs/stream:
     get:
       operationId: streamOwnedJobs

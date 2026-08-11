@@ -102,6 +102,34 @@ func (s *Store) ReadLog(jobID, stream string, offset int64, destination io.Write
 	return offset + written, err
 }
 
+// ReadLogChunk reads at most limit bytes starting at offset. It is used by live
+// consumers so each refresh is proportional to newly appended data.
+func (s *Store) ReadLogChunk(jobID, stream string, offset, limit int64) ([]byte, int64, error) {
+	if limit <= 0 {
+		return nil, offset, errors.New("log chunk limit must be positive")
+	}
+	dir, err := s.JobDir(jobID)
+	if err != nil {
+		return nil, offset, err
+	}
+	if stream != "stdout" && stream != "stderr" {
+		return nil, offset, errors.New("invalid log stream")
+	}
+	file, err := os.Open(filepath.Join(dir, "logs", stream+".log"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, offset, nil
+	}
+	if err != nil {
+		return nil, offset, err
+	}
+	defer file.Close()
+	if _, err = file.Seek(offset, io.SeekStart); err != nil {
+		return nil, offset, err
+	}
+	data, err := io.ReadAll(io.LimitReader(file, limit))
+	return data, offset + int64(len(data)), err
+}
+
 func (s *Store) LogSize(jobID, stream string) (int64, error) {
 	if stream != "stdout" && stream != "stderr" {
 		return 0, errors.New("invalid log stream")

@@ -27,4 +27,8 @@ func TestLogOffsetsAreIdempotent(t *testing.T) {
 	if err != ErrOffsetMismatch || offset != 5 {
 		t.Fatalf("expected offset mismatch at 5: %d %v", offset, err)
 	}
+	chunk, next, err := store.ReadLogChunk("job", "stdout", 2, 2)
+	if err != nil || string(chunk) != "ll" || next != 4 {
+		t.Fatalf("bounded chunk: %q %d %v", chunk, next, err)
+	}
 }

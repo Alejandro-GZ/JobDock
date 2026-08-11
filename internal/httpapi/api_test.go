@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -160,4 +161,63 @@ func TestLoginAndIdempotentJobCreation(t *testing.T) {
 	if err != nil || len(jobs) != 1 {
 		t.Fatalf("jobs: %d %v", len(jobs), err)
 	}
+	if _, err = files.AppendLog(jobs[0].ID, "stdout", 0, bytes.NewBufferString("hello")); err != nil {
+		t.Fatal(err)
+	}
+	firstChunk := readLogSSE(t, server.Client(), server.URL+"/api/v1/jobs/"+jobs[0].ID+"/logs/stdout/tail?after=0", cookie, "")
+	if firstChunk.StartOffset != 0 || firstChunk.NextOffset != 5 || string(firstChunk.Data) != "hello" {
+		t.Fatalf("initial log chunk: %#v", firstChunk)
+	}
+	if _, err = files.AppendLog(jobs[0].ID, "stdout", 5, bytes.NewBufferString(" world")); err != nil {
+		t.Fatal(err)
+	}
+	resumedChunk := readLogSSE(t, server.Client(), server.URL+"/api/v1/jobs/"+jobs[0].ID+"/logs/stdout/tail?after=0", cookie, "5")
+	if resumedChunk.StartOffset != 5 || resumedChunk.NextOffset != 11 || string(resumedChunk.Data) != " world" {
+		t.Fatalf("resumed log chunk downloaded old bytes: %#v", resumedChunk)
+	}
+}
+
+func readLogSSE(t *testing.T, client *http.Client, url string, cookie *http.Cookie, lastEventID string) liveLogChunk {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	request.AddCookie(cookie)
+	if lastEventID != "" {
+		request.Header.Set("Last-Event-ID", lastEventID)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("log stream status %d: %s", response.StatusCode, body)
+	}
+	scanner := bufio.NewScanner(response.Body)
+	var eventType, data string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" && data != "" {
+			break
+		}
+		if len(line) > 7 && line[:7] == "event: " {
+			eventType = line[7:]
+		}
+		if len(line) > 6 && line[:6] == "data: " {
+			data = line[6:]
+		}
+	}
+	if err = scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if eventType != "log" || data == "" {
+		t.Fatalf("unexpected SSE event type=%q data=%q", eventType, data)
+	}
+	var chunk liveLogChunk
+	if err = json.Unmarshal([]byte(data), &chunk); err != nil {
+		t.Fatal(err)
+	}
+	return chunk
 }

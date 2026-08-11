@@ -75,6 +75,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/jobs/{id}/events", a.withSession(false, false, a.jobEvents))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/stream", a.withSession(false, false, a.jobStream))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/logs/{stream}", a.withSession(false, false, a.getLogs))
+	mux.HandleFunc("GET /api/v1/jobs/{id}/logs/{stream}/tail", a.withSession(false, false, a.tailLogs))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/archive.zip", a.withSession(false, false, a.archive))
 	mux.HandleFunc("GET /api/v1/nodes", a.withSession(false, false, a.listNodes))
 	mux.HandleFunc("PATCH /api/v1/nodes/{id}", a.withSession(true, true, a.updateNodeMetadata))
