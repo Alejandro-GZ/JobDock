@@ -41,7 +41,7 @@ func TestLoginAndIdempotentJobCreation(t *testing.T) {
 	}
 	installer, _ := io.ReadAll(installerResponse.Body)
 	installerResponse.Body.Close()
-	if installerResponse.StatusCode != http.StatusOK || !bytes.Contains(installer, []byte("DEFAULT_VERSION=\"0.1.0\"")) {
+	if installerResponse.StatusCode != http.StatusOK || !bytes.Contains(installer, []byte("DEFAULT_VERSION=\"latest\"")) {
 		t.Fatalf("versioned installer endpoint: status=%d", installerResponse.StatusCode)
 	}
 	loginBody := bytes.NewBufferString(`{"username":"admin","password":"correct horse battery"}`)
