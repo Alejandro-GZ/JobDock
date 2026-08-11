@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -28,6 +29,61 @@ func (s *Store) CreateBuild(ctx context.Context, build domain.Build) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Store) SaveBuildPlan(ctx context.Context, plan domain.BuildPlan) error {
+	if err := domain.ValidateBuildPlan(plan); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var status domain.BuildStatus
+	if err = tx.QueryRowContext(ctx, `SELECT status FROM builds WHERE id=?`, plan.BuildID).Scan(&status); errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if status != domain.BuildAnalyzing {
+		return ErrConflict
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO build_plans(build_id,provider,runtime,package_manager,entrypoint,railpack_version,plan_json,info_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, plan.BuildID, plan.Provider, plan.Runtime, plan.PackageManager, plan.Entrypoint, plan.RailpackVersion, string(plan.Plan), string(plan.Info), formatTime(plan.CreatedAt))
+	if err != nil {
+		return mapConstraint(err)
+	}
+	return tx.Commit()
+}
+
+func (s *Store) BuildPlan(ctx context.Context, buildID string) (domain.BuildPlan, error) {
+	var plan domain.BuildPlan
+	var planJSON, infoJSON, created string
+	var confirmed sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT build_id,provider,runtime,package_manager,entrypoint,railpack_version,plan_json,info_json,created_at,confirmed_at FROM build_plans WHERE build_id=?`, buildID).Scan(&plan.BuildID, &plan.Provider, &plan.Runtime, &plan.PackageManager, &plan.Entrypoint, &plan.RailpackVersion, &planJSON, &infoJSON, &created, &confirmed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return plan, ErrNotFound
+	}
+	if err != nil {
+		return plan, err
+	}
+	plan.Plan, plan.Info = json.RawMessage(planJSON), json.RawMessage(infoJSON)
+	plan.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	plan.ConfirmedAt = parseNullTime(confirmed)
+	return plan, nil
+}
+
+func (s *Store) ConfirmBuildPlan(ctx context.Context, buildID string) (domain.BuildPlan, error) {
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx, `UPDATE build_plans SET confirmed_at=COALESCE(confirmed_at,?) WHERE build_id=? AND EXISTS(SELECT 1 FROM builds WHERE builds.id=build_plans.build_id AND builds.status='ANALYZING')`, formatTime(now), buildID)
+	if err != nil {
+		return domain.BuildPlan{}, err
+	}
+	changed, _ := result.RowsAffected()
+	if changed != 1 {
+		return domain.BuildPlan{}, ErrConflict
+	}
+	return s.BuildPlan(ctx, buildID)
 }
 
 func (s *Store) Build(ctx context.Context, id string) (domain.Build, error) {

@@ -45,6 +45,12 @@ analysis or execution records a visible reason without creating an invalid job.
 This boundary allows the build executor to evolve independently while the job
 runtime continues to accept only OCI images.
 
+Railpack mode expands ZIP or compressed TAR sources into a temporary confined
+workspace and invokes the pinned `railpack prepare` CLI. JobDock persists both
+Railpack JSON outputs plus a normalized provider, runtime, package-manager and
+entrypoint summary. Confirmation records user intent but does not start image
+construction; the isolated BuildKit executor owns that later lifecycle step.
+
 Job inputs are committed to central storage before `QUEUED` is persisted. Their
 relative paths, sizes, and SHA-256 digests become part of the immutable job
 specification. The assigned agent downloads and verifies that exact manifest,

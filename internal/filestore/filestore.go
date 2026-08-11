@@ -1,7 +1,9 @@
 package filestore
 
 import (
+	"archive/tar"
 	"archive/zip"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 )
+
+const maxBuildSourceEntries = 10000
 
 var ErrOffsetMismatch = errors.New("upload offset does not match stored size")
 var ErrLimitExceeded = errors.New("storage limit exceeded")
@@ -99,6 +103,201 @@ func (s *Store) DeleteBuild(buildID string) error {
 		return errors.New("invalid build ID")
 	}
 	return os.RemoveAll(filepath.Join(s.root, "builds", buildID))
+}
+
+// PrepareBuildSource expands a supported source archive into a temporary,
+// path-confined workspace. Callers must invoke cleanup when analysis ends.
+func (s *Store) PrepareBuildSource(buildID, filename string) (projectDir string, cleanup func(), err error) {
+	if !safeSegment(buildID) {
+		return "", nil, errors.New("invalid build ID")
+	}
+	buildDir := filepath.Join(s.root, "builds", buildID)
+	workspace, err := os.MkdirTemp(buildDir, ".analysis-")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup = func() { _ = os.RemoveAll(workspace) }
+	fail := func(cause error) (string, func(), error) {
+		cleanup()
+		return "", nil, cause
+	}
+	sourcePath := filepath.Join(buildDir, "source", "source.archive")
+	lowerName := strings.ToLower(filename)
+	switch {
+	case strings.HasSuffix(lowerName, ".zip"):
+		if err = s.extractBuildZip(sourcePath, workspace); err != nil {
+			return fail(err)
+		}
+	case strings.HasSuffix(lowerName, ".tar.gz"), strings.HasSuffix(lowerName, ".tgz"):
+		if err = s.extractBuildTarGzip(sourcePath, workspace); err != nil {
+			return fail(err)
+		}
+	default:
+		return fail(errors.New("unsupported source archive; upload a .zip, .tar.gz, or .tgz project"))
+	}
+	projectDir, err = singleProjectRoot(workspace)
+	if err != nil {
+		return fail(err)
+	}
+	return projectDir, cleanup, nil
+}
+
+func (s *Store) extractBuildZip(sourcePath, destination string) error {
+	file, err := os.Open(sourcePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	archive, err := zip.NewReader(file, info.Size())
+	if err != nil {
+		return fmt.Errorf("invalid ZIP project archive: %w", err)
+	}
+	if len(archive.File) == 0 || len(archive.File) > maxBuildSourceEntries {
+		return errors.New("project archive must contain between 1 and 10000 entries")
+	}
+	var expanded int64
+	for _, entry := range archive.File {
+		if entry.Name == "." || entry.Name == "./" {
+			continue
+		}
+		clean, cleanErr := safeRelativePath(entry.Name)
+		if cleanErr != nil {
+			return fmt.Errorf("unsafe project archive path %q", entry.Name)
+		}
+		mode := entry.Mode()
+		if mode&os.ModeSymlink != 0 || (!mode.IsRegular() && !mode.IsDir()) {
+			return fmt.Errorf("project archive entry %q is not a regular file or directory", entry.Name)
+		}
+		target := filepath.Join(destination, clean)
+		if !within(destination, target) {
+			return fmt.Errorf("project archive path %q escapes its workspace", entry.Name)
+		}
+		if mode.IsDir() {
+			if err = os.MkdirAll(target, 0o750); err != nil {
+				return err
+			}
+			continue
+		}
+		reader, openErr := entry.Open()
+		if openErr != nil {
+			return openErr
+		}
+		expanded, err = writeBuildSourceFile(destination, target, mode, reader, expanded, s.maxInputBytes)
+		reader.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) extractBuildTarGzip(sourcePath, destination string) error {
+	file, err := os.Open(sourcePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	compressed, err := gzip.NewReader(file)
+	if err != nil {
+		return fmt.Errorf("invalid gzip project archive: %w", err)
+	}
+	defer compressed.Close()
+	archive := tar.NewReader(compressed)
+	var expanded int64
+	entries := 0
+	for {
+		header, nextErr := archive.Next()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			return fmt.Errorf("invalid tar project archive: %w", nextErr)
+		}
+		if header.Name == "." || header.Name == "./" {
+			continue
+		}
+		entries++
+		if entries > maxBuildSourceEntries {
+			return errors.New("project archive contains more than 10000 entries")
+		}
+		clean, cleanErr := safeRelativePath(header.Name)
+		if cleanErr != nil {
+			return fmt.Errorf("unsafe project archive path %q", header.Name)
+		}
+		target := filepath.Join(destination, clean)
+		if !within(destination, target) {
+			return fmt.Errorf("project archive path %q escapes its workspace", header.Name)
+		}
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err = os.MkdirAll(target, 0o750); err != nil {
+				return err
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			expanded, err = writeBuildSourceFile(destination, target, fs.FileMode(header.Mode), io.LimitReader(archive, header.Size), expanded, s.maxInputBytes)
+			if err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("project archive entry %q is not a regular file or directory", header.Name)
+		}
+	}
+	if entries == 0 {
+		return errors.New("project archive is empty")
+	}
+	return nil
+}
+
+func writeBuildSourceFile(root, target string, mode fs.FileMode, source io.Reader, expanded, limit int64) (int64, error) {
+	if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+		return expanded, err
+	}
+	if _, err := os.Lstat(target); err == nil {
+		return expanded, errors.New("project archive contains duplicate paths")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return expanded, err
+	}
+	fileMode := fs.FileMode(0o640)
+	if mode&0o111 != 0 {
+		fileMode = 0o750
+	}
+	file, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, fileMode)
+	if err != nil {
+		return expanded, err
+	}
+	written, copyErr := io.Copy(file, io.LimitReader(source, limit-expanded+1))
+	if closeErr := file.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	expanded += written
+	if copyErr != nil {
+		return expanded, copyErr
+	}
+	if expanded > limit {
+		return expanded, ErrLimitExceeded
+	}
+	if !within(root, target) {
+		return expanded, errors.New("project archive path escapes its workspace")
+	}
+	return expanded, nil
+}
+
+func singleProjectRoot(workspace string) (string, error) {
+	entries, err := os.ReadDir(workspace)
+	if err != nil {
+		return "", err
+	}
+	if len(entries) == 0 {
+		return "", errors.New("project archive is empty")
+	}
+	if len(entries) == 1 && entries[0].IsDir() {
+		return filepath.Join(workspace, entries[0].Name()), nil
+	}
+	return workspace, nil
 }
 
 func (s *Store) AppendBuildLog(buildID string, offset int64, source io.Reader) (int64, error) {

@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type Role string
 
@@ -87,6 +90,19 @@ type BuildEvent struct {
 	Status    BuildStatus `json:"status"`
 	Message   string      `json:"message,omitempty"`
 	CreatedAt time.Time   `json:"created_at"`
+}
+
+type BuildPlan struct {
+	BuildID         string          `json:"build_id"`
+	Provider        string          `json:"provider"`
+	Runtime         string          `json:"runtime"`
+	PackageManager  string          `json:"package_manager"`
+	Entrypoint      string          `json:"entrypoint"`
+	RailpackVersion string          `json:"railpack_version"`
+	Plan            json.RawMessage `json:"plan"`
+	Info            json.RawMessage `json:"info"`
+	CreatedAt       time.Time       `json:"created_at"`
+	ConfirmedAt     *time.Time      `json:"confirmed_at,omitempty"`
 }
 
 type GPURequest struct {

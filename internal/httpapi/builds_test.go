@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jobdock/jobdock/internal/auth"
+	"github.com/jobdock/jobdock/internal/buildanalysis"
 	"github.com/jobdock/jobdock/internal/config"
 	"github.com/jobdock/jobdock/internal/domain"
 	"github.com/jobdock/jobdock/internal/filestore"
@@ -20,6 +22,15 @@ import (
 	"github.com/jobdock/jobdock/internal/secretbox"
 	"github.com/jobdock/jobdock/internal/store"
 )
+
+type fakeBuildAnalyzer struct {
+	result buildanalysis.Result
+	err    error
+}
+
+func (f fakeBuildAnalyzer) Analyze(context.Context, string) (buildanalysis.Result, error) {
+	return f.result, f.err
+}
 
 func TestSourceBuildAPIIsReproducibleAuthorizedAndIndependentFromJobs(t *testing.T) {
 	root := t.TempDir()
@@ -33,7 +44,8 @@ func TestSourceBuildAPIIsReproducibleAuthorizedAndIndependentFromJobs(t *testing
 		t.Fatal(err)
 	}
 	box, _ := secretbox.New(bytes.Repeat([]byte{7}, 32))
-	api := New(config.Server{AllowInsecureHTTP: true, SessionTTL: time.Hour, MaxInputBytes: 1 << 20}, repository, files, box, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	analyzer := fakeBuildAnalyzer{result: buildanalysis.Result{Provider: "node", Runtime: "node", PackageManager: "npm", Entrypoint: "npm run start", RailpackVersion: "0.36.0", Plan: json.RawMessage(`{"deploy":{"startCommand":"npm run start"}}`), Info: json.RawMessage(`{"success":true,"detectedProviders":["node"]}`), Logs: []byte("Railpack detected Node with npm")}}
+	api := NewWithBuildAnalyzer(config.Server{AllowInsecureHTTP: true, SessionTTL: time.Hour, MaxInputBytes: 1 << 20}, repository, files, box, slog.New(slog.NewTextHandler(io.Discard, nil)), analyzer)
 	server := httptest.NewServer(api.Handler())
 	defer server.Close()
 
@@ -76,8 +88,13 @@ func TestSourceBuildAPIIsReproducibleAuthorizedAndIndependentFromJobs(t *testing
 	writer := multipart.NewWriter(&requestBody)
 	metadata, _ := writer.CreateFormField("metadata")
 	_, _ = metadata.Write([]byte(`{"name":"training source","mode":"RAILPACK"}`))
-	source, _ := writer.CreateFormFile("source", "project.tar.gz")
-	_, _ = source.Write([]byte("immutable source"))
+	var project bytes.Buffer
+	projectArchive := zip.NewWriter(&project)
+	manifest, _ := projectArchive.Create("project/package.json")
+	_, _ = manifest.Write([]byte(`{"name":"example","scripts":{"start":"node index.js"}}`))
+	_ = projectArchive.Close()
+	source, _ := writer.CreateFormFile("source", "project.zip")
+	_, _ = source.Write(project.Bytes())
 	_ = writer.Close()
 	request, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/builds", &requestBody)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
@@ -91,8 +108,33 @@ func TestSourceBuildAPIIsReproducibleAuthorizedAndIndependentFromJobs(t *testing
 	var build domain.Build
 	decodeErr := json.NewDecoder(response.Body).Decode(&build)
 	response.Body.Close()
-	if response.StatusCode != http.StatusCreated || decodeErr != nil || build.Status != domain.BuildCreated || build.Source.Size != 16 || build.Source.SHA256 != "fc17afe4af56fca9d2943b7901e7517611b37a36db7a7775b3e341e7d20a6ba0" {
+	if response.StatusCode != http.StatusCreated || decodeErr != nil || build.Status != domain.BuildAnalyzing || build.Source.Size != int64(project.Len()) || len(build.Source.SHA256) != 64 {
 		t.Fatalf("create build status=%d build=%#v error=%v", response.StatusCode, build, decodeErr)
+	}
+	planRequest, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/builds/"+build.ID+"/plan", nil)
+	planRequest.AddCookie(ownerCookie)
+	planResponse, err := server.Client().Do(planRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan domain.BuildPlan
+	_ = json.NewDecoder(planResponse.Body).Decode(&plan)
+	planResponse.Body.Close()
+	if planResponse.StatusCode != http.StatusOK || plan.Provider != "node" || plan.PackageManager != "npm" || plan.Entrypoint != "npm run start" || plan.ConfirmedAt != nil {
+		t.Fatalf("detected plan status=%d plan=%#v", planResponse.StatusCode, plan)
+	}
+	confirm, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/builds/"+build.ID+"/confirm", nil)
+	confirm.Header.Set("X-CSRF-Token", ownerCSRF)
+	confirm.Header.Set("Idempotency-Key", "build-confirm-123456789")
+	confirm.AddCookie(ownerCookie)
+	confirmResponse, err := server.Client().Do(confirm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = json.NewDecoder(confirmResponse.Body).Decode(&plan)
+	confirmResponse.Body.Close()
+	if confirmResponse.StatusCode != http.StatusOK || plan.ConfirmedAt == nil {
+		t.Fatalf("confirm status=%d plan=%#v", confirmResponse.StatusCode, plan)
 	}
 
 	forbidden, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/builds/"+build.ID, nil)
@@ -105,9 +147,6 @@ func TestSourceBuildAPIIsReproducibleAuthorizedAndIndependentFromJobs(t *testing
 	if forbiddenResponse.StatusCode != http.StatusForbidden {
 		t.Fatalf("cross-owner build status=%d", forbiddenResponse.StatusCode)
 	}
-	if _, err = files.AppendBuildLog(build.ID, 0, bytes.NewBufferString("build output")); err != nil {
-		t.Fatal(err)
-	}
 	logs, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/builds/"+build.ID+"/logs?offset=0&limit=5", nil)
 	logs.AddCookie(ownerCookie)
 	logResponse, err := server.Client().Do(logs)
@@ -116,7 +155,7 @@ func TestSourceBuildAPIIsReproducibleAuthorizedAndIndependentFromJobs(t *testing
 	}
 	logData, _ := io.ReadAll(logResponse.Body)
 	logResponse.Body.Close()
-	if logResponse.StatusCode != http.StatusOK || string(logData) != "build" || logResponse.Header.Get("X-JobDock-Next-Offset") != "5" {
+	if logResponse.StatusCode != http.StatusOK || string(logData) != "Railp" || logResponse.Header.Get("X-JobDock-Next-Offset") != "5" {
 		t.Fatalf("build logs status=%d body=%q headers=%v", logResponse.StatusCode, logData, logResponse.Header)
 	}
 
@@ -135,7 +174,7 @@ func TestSourceBuildAPIIsReproducibleAuthorizedAndIndependentFromJobs(t *testing
 		t.Fatalf("cancel build status=%d build=%#v", cancelResponse.StatusCode, cancelled)
 	}
 	events, err := repository.BuildEvents(context.Background(), build.ID)
-	if err != nil || len(events) != 2 || events[0].Status != domain.BuildCreated || events[1].Status != domain.BuildCancelled {
+	if err != nil || len(events) != 3 || events[0].Status != domain.BuildCreated || events[1].Status != domain.BuildAnalyzing || events[2].Status != domain.BuildCancelled {
 		t.Fatalf("build events=%#v error=%v", events, err)
 	}
 	jobs, err := repository.ListJobs(context.Background(), false)

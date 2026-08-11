@@ -13,10 +13,15 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/jobdock-server ./cmd/jobdock-server
 
+FROM golang:1.26-bookworm AS railpack-build
+ARG RAILPACK_VERSION=v0.36.0
+RUN GOBIN=/out go install -ldflags="-X main.version=${RAILPACK_VERSION}" github.com/railwayapp/railpack/cmd/cli@${RAILPACK_VERSION} && mv /out/cli /out/railpack
+
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && rm -rf /var/lib/apt/lists/*
 RUN useradd --system --uid 10001 --home /var/lib/jobdock jobdock && mkdir -p /var/lib/jobdock /app/web && chown -R jobdock:jobdock /var/lib/jobdock /app
 COPY --from=go-build /out/jobdock-server /usr/local/bin/jobdock-server
+COPY --from=railpack-build /out/railpack /usr/local/bin/railpack
 COPY --from=web-build /src/web/dist /app/web
 USER 10001:10001
 ENV JOBDOCK_WEB_DIR=/app/web JOBDOCK_DATA_DIR=/var/lib/jobdock JOBDOCK_DATABASE_PATH=/var/lib/jobdock/jobdock.db

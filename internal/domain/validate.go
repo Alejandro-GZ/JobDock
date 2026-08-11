@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -36,6 +37,22 @@ func ValidateBuild(build Build) error {
 	}
 	if build.Status == BuildFailed && strings.TrimSpace(build.FailureReason) == "" {
 		return errors.New("failed builds require a failure reason")
+	}
+	return nil
+}
+
+func ValidateBuildPlan(plan BuildPlan) error {
+	if strings.TrimSpace(plan.BuildID) == "" {
+		return errors.New("build plan requires a build ID")
+	}
+	if strings.TrimSpace(plan.Provider) == "" || len(plan.Provider) > 128 {
+		return errors.New("build plan requires a detected provider")
+	}
+	if len(plan.Runtime) > 256 || len(plan.PackageManager) > 256 || len(plan.Entrypoint) > 8192 || len(plan.RailpackVersion) > 128 {
+		return errors.New("build plan summary exceeds its allowed size")
+	}
+	if !json.Valid(plan.Plan) || !json.Valid(plan.Info) {
+		return errors.New("build plan and build info must be valid JSON")
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -34,6 +35,18 @@ func TestBuildLifecyclePersistsSourceResultAndFailureHistory(t *testing.T) {
 	}
 	if _, err = repository.UpdateBuildStatus(ctx, success.ID, domain.BuildAnalyzing, "", "Source accepted"); err != nil {
 		t.Fatal(err)
+	}
+	plan := domain.BuildPlan{BuildID: success.ID, Provider: "python", Runtime: "python", PackageManager: "uv", Entrypoint: "python main.py", RailpackVersion: "0.36.0", Plan: json.RawMessage(`{"deploy":{"startCommand":"python main.py"}}`), Info: json.RawMessage(`{"success":true}`), CreatedAt: time.Now().UTC()}
+	if err = repository.SaveBuildPlan(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	confirmed, err := repository.ConfirmBuildPlan(ctx, success.ID)
+	if err != nil || confirmed.ConfirmedAt == nil || confirmed.Provider != "python" {
+		t.Fatalf("confirmed build plan: %#v %v", confirmed, err)
+	}
+	confirmedAgain, err := repository.ConfirmBuildPlan(ctx, success.ID)
+	if err != nil || !confirmedAgain.ConfirmedAt.Equal(*confirmed.ConfirmedAt) {
+		t.Fatalf("idempotent confirmation: %#v %v", confirmedAgain, err)
 	}
 	if _, err = repository.UpdateBuildStatus(ctx, success.ID, domain.BuildBuilding, "", "Build started"); err != nil {
 		t.Fatal(err)

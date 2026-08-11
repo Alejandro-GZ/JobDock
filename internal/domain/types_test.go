@@ -1,6 +1,9 @@
 package domain
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestJobStateTransitions(t *testing.T) {
 	tests := []struct {
@@ -62,5 +65,20 @@ func TestBuildLifecycleAndValidation(t *testing.T) {
 	build.Status, build.OCIDigest, build.FailureReason = BuildFailed, "", ""
 	if err := ValidateBuild(build); err == nil {
 		t.Fatal("failed build without visible failure reason was accepted")
+	}
+}
+
+func TestBuildPlanRequiresRailpackDetectionAndValidJSON(t *testing.T) {
+	plan := BuildPlan{BuildID: "build-one", Provider: "python", Runtime: "python 3.13", PackageManager: "uv", Entrypoint: "python main.py", RailpackVersion: "0.36.0", Plan: json.RawMessage(`{"deploy":{}}`), Info: json.RawMessage(`{"success":true}`)}
+	if err := ValidateBuildPlan(plan); err != nil {
+		t.Fatal(err)
+	}
+	plan.Provider = ""
+	if err := ValidateBuildPlan(plan); err == nil {
+		t.Fatal("plan without detected provider was accepted")
+	}
+	plan.Provider, plan.Plan = "python", json.RawMessage(`not-json`)
+	if err := ValidateBuildPlan(plan); err == nil {
+		t.Fatal("invalid Railpack JSON was accepted")
 	}
 }

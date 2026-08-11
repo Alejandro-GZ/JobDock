@@ -56,7 +56,7 @@ paths:
         '200': {description: Visible builds, content: {application/json: {schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Build'}}}}}}}
     post:
       operationId: createBuild
-      description: Persist one immutable source archive and create its independent build lifecycle.
+      description: Persist one immutable source archive and, in RAILPACK mode, analyze it with Railpack prepare.
       parameters: [{$ref: '#/components/parameters/CSRFToken'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody:
         required: true
@@ -71,7 +71,7 @@ paths:
                   type: string
                   contentMediaType: application/json
                   description: JSON containing name and mode (RAILPACK or DOCKERFILE).
-                source: {type: string, format: binary, description: Immutable source archive bytes.}
+                source: {type: string, format: binary, description: Immutable .zip, .tar.gz, or .tgz source archive bytes.}
       responses:
         '201': {description: Created source build, content: {application/json: {schema: {$ref: '#/components/schemas/Build'}}}}
         '413': {$ref: '#/components/responses/Problem'}
@@ -90,6 +90,15 @@ paths:
       parameters: [{$ref: '#/components/parameters/BuildID'}]
       responses:
         '200': {description: Ordered build lifecycle history, content: {application/json: {schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/BuildEvent'}}}}}}}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+  /builds/{buildId}/plan:
+    get:
+      operationId: getBuildPlan
+      description: Return the persisted Railpack plan, build information and normalized detected summary.
+      parameters: [{$ref: '#/components/parameters/BuildID'}]
+      responses:
+        '200': {description: Detected build plan, content: {application/json: {schema: {$ref: '#/components/schemas/BuildPlan'}}}}
         '403': {$ref: '#/components/responses/Problem'}
         '404': {$ref: '#/components/responses/Problem'}
   /builds/{buildId}/logs:
@@ -115,6 +124,16 @@ paths:
       parameters: [{$ref: '#/components/parameters/BuildID'}, {$ref: '#/components/parameters/CSRFToken'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       responses:
         '202': {description: Build cancelled, content: {application/json: {schema: {$ref: '#/components/schemas/Build'}}}}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+  /builds/{buildId}/confirm:
+    post:
+      operationId: confirmBuildPlan
+      description: Confirm the detected immutable build plan without starting BuildKit execution.
+      parameters: [{$ref: '#/components/parameters/BuildID'}, {$ref: '#/components/parameters/CSRFToken'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {description: Confirmed build plan, content: {application/json: {schema: {$ref: '#/components/schemas/BuildPlan'}}}}
         '403': {$ref: '#/components/responses/Problem'}
         '404': {$ref: '#/components/responses/Problem'}
         '409': {$ref: '#/components/responses/Problem'}
@@ -645,6 +664,21 @@ components:
         status: {$ref: '#/components/schemas/BuildStatus'}
         message: {type: string}
         created_at: {type: string, format: date-time}
+    BuildPlan:
+      type: object
+      additionalProperties: false
+      required: [build_id, provider, runtime, package_manager, entrypoint, railpack_version, plan, info, created_at]
+      properties:
+        build_id: {type: string, format: uuid}
+        provider: {type: string}
+        runtime: {type: string}
+        package_manager: {type: string}
+        entrypoint: {type: string}
+        railpack_version: {type: string}
+        plan: {type: object, additionalProperties: true}
+        info: {type: object, additionalProperties: true}
+        created_at: {type: string, format: date-time}
+        confirmed_at: {type: string, format: date-time}
     JobSpec:
       type: object
       additionalProperties: false

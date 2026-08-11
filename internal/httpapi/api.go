@@ -20,6 +20,7 @@ import (
 
 	deployassets "github.com/jobdock/jobdock/deploy"
 	"github.com/jobdock/jobdock/internal/auth"
+	"github.com/jobdock/jobdock/internal/buildanalysis"
 	"github.com/jobdock/jobdock/internal/capacity"
 	"github.com/jobdock/jobdock/internal/config"
 	"github.com/jobdock/jobdock/internal/domain"
@@ -40,12 +41,17 @@ type API struct {
 	webDir        string
 	loginMu       sync.Mutex
 	loginAttempts map[string][]time.Time
+	buildAnalyzer buildanalysis.Analyzer
 }
 
 type userContextKey struct{}
 
 func New(cfg config.Server, repository *store.Store, files *filestore.Store, box *secretbox.Box, logger *slog.Logger) *API {
-	return &API{config: cfg, store: repository, files: files, box: box, log: logger, webDir: os.Getenv("JOBDOCK_WEB_DIR"), loginAttempts: map[string][]time.Time{}}
+	return NewWithBuildAnalyzer(cfg, repository, files, box, logger, buildanalysis.NewRailpack(cfg.RailpackBinary, cfg.BuildAnalysisTimeout).WithHome(filepath.Join(cfg.DataDir, "railpack")))
+}
+
+func NewWithBuildAnalyzer(cfg config.Server, repository *store.Store, files *filestore.Store, box *secretbox.Box, logger *slog.Logger, analyzer buildanalysis.Analyzer) *API {
+	return &API{config: cfg, store: repository, files: files, box: box, log: logger, webDir: os.Getenv("JOBDOCK_WEB_DIR"), loginAttempts: map[string][]time.Time{}, buildAnalyzer: analyzer}
 }
 
 func (a *API) Handler() http.Handler {
@@ -72,7 +78,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/builds", a.withSession(false, true, a.createBuild))
 	mux.HandleFunc("GET /api/v1/builds/{id}", a.withSession(false, false, a.getBuild))
 	mux.HandleFunc("GET /api/v1/builds/{id}/events", a.withSession(false, false, a.getBuildEvents))
+	mux.HandleFunc("GET /api/v1/builds/{id}/plan", a.withSession(false, false, a.getBuildPlan))
 	mux.HandleFunc("GET /api/v1/builds/{id}/logs", a.withSession(false, false, a.getBuildLogs))
+	mux.HandleFunc("POST /api/v1/builds/{id}/confirm", a.withSession(false, true, a.confirmBuild))
 	mux.HandleFunc("POST /api/v1/builds/{id}/cancel", a.withSession(false, true, a.cancelBuild))
 	mux.HandleFunc("GET /api/v1/jobs", a.withSession(false, false, a.listJobs))
 	mux.HandleFunc("POST /api/v1/jobs", a.withSession(false, true, a.createJob))

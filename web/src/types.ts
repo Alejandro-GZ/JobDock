@@ -1,5 +1,9 @@
 export type Role="admin"|"member";
 export type User={id:string;username:string;role:Role;created_at:string};
+export type BuildStatus="CREATED"|"ANALYZING"|"BUILDING"|"SUCCEEDED"|"FAILED"|"CANCELLED";
+export type BuildSource={filename:string;size:number;sha256:string};
+export type Build={id:string;owner_id:string;name:string;mode:"RAILPACK"|"DOCKERFILE";status:BuildStatus;source:BuildSource;oci_digest?:string;failure_reason?:string;created_at:string;started_at?:string;finished_at?:string;version:number};
+export type BuildPlan={build_id:string;provider:string;runtime:string;package_manager:string;entrypoint:string;railpack_version:string;plan:Record<string,unknown>;info:Record<string,unknown>;created_at:string;confirmed_at?:string};
 export type GPU={uuid:string;model:string;vram_bytes:number;allocated:boolean};
 export type GPUDiscovery={status:"available"|"unavailable"|"disabled"|"unknown";error_code?:string;message?:string};
 export type Node={id:string;name:string;status:string;agent_version:string;architecture:string;docker_version:string;cpu_total_millis:number;cpu_allocated_millis:number;memory_total_bytes:number;memory_allocated_bytes:number;workspace_free_bytes:number;labels:Record<string,string>;gpus:GPU[];gpu_discovery:GPUDiscovery;last_heartbeat:string};

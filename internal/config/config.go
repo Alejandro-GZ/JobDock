@@ -28,6 +28,8 @@ type Server struct {
 	MaxInputBytes         int64
 	TelemetryRawRetention time.Duration
 	TelemetryRetention    time.Duration
+	BuildAnalysisTimeout  time.Duration
+	RailpackBinary        string
 }
 
 type Agent struct {
@@ -60,12 +62,17 @@ func LoadServer() (Server, error) {
 		MaxInputBytes:         envInt64("JOBDOCK_MAX_INPUT_BYTES", 10<<30),
 		TelemetryRawRetention: envDuration("JOBDOCK_TELEMETRY_RAW_RETENTION", 24*time.Hour),
 		TelemetryRetention:    envDuration("JOBDOCK_TELEMETRY_RETENTION", 30*24*time.Hour),
+		BuildAnalysisTimeout:  envDuration("JOBDOCK_BUILD_ANALYSIS_TIMEOUT", 2*time.Minute),
+		RailpackBinary:        env("JOBDOCK_RAILPACK_BINARY", "railpack"),
 	}
 	if c.MaxLogBytes <= 0 || c.MaxOutputBytes <= 0 || c.MaxInputBytes <= 0 {
 		return c, errors.New("log, output, and input limits must be positive")
 	}
 	if c.TelemetryRawRetention <= 0 || c.TelemetryRetention < c.TelemetryRawRetention {
 		return c, errors.New("telemetry retention must be positive and at least as long as raw retention")
+	}
+	if c.BuildAnalysisTimeout <= 0 {
+		return c, errors.New("build analysis timeout must be positive")
 	}
 	password, err := valueOrFile("JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD", "JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD_FILE")
 	if err != nil {

@@ -79,6 +79,45 @@ func TestBuildSourceIsImmutableAndLogsAreOffsetBounded(t *testing.T) {
 	}
 }
 
+func TestBuildSourceExtractionIsConfinedAndCollapsesProjectRoot(t *testing.T) {
+	root := t.TempDir()
+	store, err := New(root, 1<<20, 1<<20, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var source bytes.Buffer
+	archive := zip.NewWriter(&source)
+	file, _ := archive.Create("example/package.json")
+	_, _ = file.Write([]byte(`{"name":"example"}`))
+	_ = archive.Close()
+	if _, err = store.StoreBuildSource("safe-build", "project.zip", &source); err != nil {
+		t.Fatal(err)
+	}
+	project, cleanup, err := store.PrepareBuildSource("safe-build", "project.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if filepath.Base(project) != "example" {
+		t.Fatalf("project root = %s", project)
+	}
+	if contents, readErr := os.ReadFile(filepath.Join(project, "package.json")); readErr != nil || string(contents) != `{"name":"example"}` {
+		t.Fatalf("extracted manifest=%q error=%v", contents, readErr)
+	}
+
+	var unsafe bytes.Buffer
+	unsafeArchive := zip.NewWriter(&unsafe)
+	escape, _ := unsafeArchive.Create("../escape")
+	_, _ = escape.Write([]byte("bad"))
+	_ = unsafeArchive.Close()
+	if _, err = store.StoreBuildSource("unsafe-build", "project.zip", &unsafe); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = store.PrepareBuildSource("unsafe-build", "project.zip"); err == nil {
+		t.Fatal("archive traversal was accepted")
+	}
+}
+
 func TestCheckpointUploadResumesAndPromotionPreservesLastConfirmed(t *testing.T) {
 	store, err := New(t.TempDir(), 1<<20, 10<<20, 1<<20)
 	if err != nil {

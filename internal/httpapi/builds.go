@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jobdock/jobdock/internal/buildanalysis"
 	"github.com/jobdock/jobdock/internal/domain"
 	"github.com/jobdock/jobdock/internal/filestore"
 	"github.com/jobdock/jobdock/internal/ids"
@@ -115,7 +117,51 @@ func (a *API) createBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = a.store.Audit(r.Context(), user.ID, "build.create", "build", build.ID, map[string]any{"mode": build.Mode, "source_sha256": build.Source.SHA256})
+	if build.Mode == domain.BuildModeRailpack {
+		build = a.analyzeBuild(context.WithoutCancel(r.Context()), build)
+	}
 	idem.write(w, r.Context(), http.StatusCreated, build)
+}
+
+func (a *API) analyzeBuild(ctx context.Context, build domain.Build) domain.Build {
+	updated, err := a.store.UpdateBuildStatus(ctx, build.ID, domain.BuildAnalyzing, "", "Analyzing source with Railpack")
+	if err != nil {
+		return build
+	}
+	build = updated
+	projectDir, cleanup, err := a.files.PrepareBuildSource(build.ID, build.Source.Filename)
+	if err != nil {
+		failed, updateErr := a.store.UpdateBuildStatus(ctx, build.ID, domain.BuildFailed, "", err.Error())
+		if updateErr == nil {
+			return failed
+		}
+		return build
+	}
+	defer cleanup()
+	result, err := a.buildAnalyzer.Analyze(ctx, projectDir)
+	logs := result.Logs
+	var analysisErr *buildanalysis.AnalysisError
+	if errors.As(err, &analysisErr) {
+		logs = analysisErr.Logs
+	}
+	if len(logs) > 0 {
+		_, _ = a.files.AppendBuildLog(build.ID, 0, bytes.NewReader(logs))
+	}
+	if err != nil {
+		failed, updateErr := a.store.UpdateBuildStatus(ctx, build.ID, domain.BuildFailed, "", err.Error())
+		if updateErr == nil {
+			return failed
+		}
+		return build
+	}
+	plan := domain.BuildPlan{BuildID: build.ID, Provider: result.Provider, Runtime: result.Runtime, PackageManager: result.PackageManager, Entrypoint: result.Entrypoint, RailpackVersion: result.RailpackVersion, Plan: result.Plan, Info: result.Info, CreatedAt: time.Now().UTC()}
+	if err = a.store.SaveBuildPlan(ctx, plan); err != nil {
+		failed, updateErr := a.store.UpdateBuildStatus(ctx, build.ID, domain.BuildFailed, "", "Unable to persist the Railpack build plan: "+err.Error())
+		if updateErr == nil {
+			return failed
+		}
+	}
+	return build
 }
 
 func (a *API) listBuilds(w http.ResponseWriter, r *http.Request) {
@@ -150,6 +196,38 @@ func (a *API) getBuildEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (a *API) getBuildPlan(w http.ResponseWriter, r *http.Request) {
+	build, ok := a.authorizeBuild(w, r)
+	if !ok {
+		return
+	}
+	plan, err := a.store.BuildPlan(r.Context(), build.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, plan)
+}
+
+func (a *API) confirmBuild(w http.ResponseWriter, r *http.Request) {
+	build, ok := a.authorizeBuild(w, r)
+	if !ok {
+		return
+	}
+	idem, proceed := a.beginIdempotency(w, r, currentUser(r).ID)
+	if !proceed {
+		return
+	}
+	plan, err := a.store.ConfirmBuildPlan(r.Context(), build.ID)
+	if err != nil {
+		idem.abort(r.Context())
+		writeStoreError(w, err)
+		return
+	}
+	_ = a.store.Audit(r.Context(), currentUser(r).ID, "build.confirm", "build", build.ID, map[string]any{"provider": plan.Provider, "railpack_version": plan.RailpackVersion})
+	idem.write(w, r.Context(), http.StatusOK, plan)
 }
 
 func (a *API) getBuildLogs(w http.ResponseWriter, r *http.Request) {

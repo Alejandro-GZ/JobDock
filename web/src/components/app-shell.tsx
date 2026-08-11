@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { Activity, Boxes, ChevronDown, KeyRound, LayoutDashboard, Menu, Moon, ScrollText, Server, Sun, Users } from "lucide-react";
+import { Activity, Boxes, ChevronDown, KeyRound, LayoutDashboard, Menu, Moon, PackageSearch, ScrollText, Server, Sun, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -8,7 +8,7 @@ import { Separator } from "@/components/ui/separator";
 import { useTheme } from "@/components/theme-provider";
 import { cn } from "@/lib/utils";
 import type { User } from "@/types";
-const nav = [{ to: "/", label: "Overview", icon: LayoutDashboard }, { to: "/jobs", label: "Jobs", icon: Boxes }, { to: "/nodes", label: "Nodes", icon: Server }, { to: "/secrets", label: "Secrets", icon: KeyRound }, { to: "/users", label: "Users", icon: Users, admin: true }, { to: "/audit", label: "Audit", icon: ScrollText, admin: true }];
+const nav = [{ to: "/", label: "Overview", icon: LayoutDashboard }, { to: "/jobs", label: "Jobs", icon: Boxes }, { to: "/builds", label: "Builds", icon: PackageSearch }, { to: "/nodes", label: "Nodes", icon: Server }, { to: "/secrets", label: "Secrets", icon: KeyRound }, { to: "/users", label: "Users", icon: Users, admin: true }, { to: "/audit", label: "Audit", icon: ScrollText, admin: true }];
 function Navigation({ user, close, collapsed = false }: { user: User; close?: () => void; collapsed?: boolean }) { return <nav className="space-y-1 px-2">{nav.filter((item) => !item.admin || user.role === "admin").map(({ to, label, icon: Icon }) => <NavLink key={to} end={to === "/"} onClick={close} to={to} aria-label={collapsed ? label : undefined} title={collapsed ? label : undefined} className={({ isActive }) => cn("flex h-9 items-center gap-3 overflow-hidden rounded-md px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground", collapsed && "justify-center gap-0 group-hover:justify-start group-hover:gap-3", isActive && "bg-accent font-medium text-foreground")}><Icon className="size-4 shrink-0"/><span className={cn(collapsed && "w-0 -translate-x-2 whitespace-nowrap opacity-0 transition-all duration-200 group-hover:w-auto group-hover:translate-x-0 group-hover:opacity-100")}>{label}</span></NavLink>)}</nav>; }
 export function AppShell({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [mobile, setMobile] = useState(false), { setTheme } = useTheme(), location = useLocation(), overview = location.pathname === "/";
