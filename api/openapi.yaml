@@ -183,6 +183,17 @@ paths:
         '204': {description: Ordered log chunk acknowledged, headers: {X-JobDock-Next-Offset: {schema: {type: integer, format: int64}}}}
         '409': {$ref: '#/components/responses/Problem'}
         '413': {$ref: '#/components/responses/Problem'}
+  /builder/assignments/{assignmentId}/artifact:
+    put:
+      security: [{bearerToken: []}]
+      operationId: publishManagedBuildArtifact
+      parameters: [{$ref: '#/components/parameters/BuildAssignmentID'}, {$ref: '#/components/parameters/BuilderID'}]
+      requestBody: {required: true, content: {application/vnd.jobdock.image.archive.v1+tar: {schema: {type: string, format: binary}}}}
+      responses:
+        '200': {description: Existing identical managed artifact confirmed, content: {application/json: {schema: {$ref: '#/components/schemas/ManagedArtifact'}}}}
+        '201': {description: Managed artifact stored atomically, content: {application/json: {schema: {$ref: '#/components/schemas/ManagedArtifact'}}}}
+        '409': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
   /builder/assignments/{assignmentId}/complete:
     post:
       security: [{bearerToken: []}]
@@ -202,6 +213,14 @@ paths:
       responses:
         '200': {description: Terminal result committed idempotently, content: {application/json: {schema: {$ref: '#/components/schemas/Build'}}}}
         '409': {$ref: '#/components/responses/Problem'}
+  /agent/assignments/{assignmentId}/artifact:
+    get:
+      security: [{bearerToken: []}]
+      operationId: downloadManagedArtifact
+      parameters: [{$ref: '#/components/parameters/BuildAssignmentID'}]
+      responses:
+        '200': {description: Authorized immutable image archive for the assigned job, content: {application/vnd.jobdock.image.archive.v1+tar: {schema: {type: string, format: binary}}}}
+        '404': {$ref: '#/components/responses/Problem'}
   /jobs:
     get:
       operationId: listJobs
@@ -706,7 +725,7 @@ components:
     Build:
       type: object
       additionalProperties: false
-      required: [id, owner_id, name, mode, status, source, created_at, version]
+      required: [id, owner_id, name, mode, status, source, artifact_available, created_at, version]
       properties:
         id: {type: string, format: uuid}
         owner_id: {type: string, format: uuid}
@@ -715,6 +734,8 @@ components:
         status: {$ref: '#/components/schemas/BuildStatus'}
         source: {$ref: '#/components/schemas/BuildSource'}
         oci_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        artifact_reference: {type: string, pattern: '^jobdock://build/[^/@]+@sha256:[0-9a-f]{64}$'}
+        artifact_available: {type: boolean}
         failure_reason: {type: string}
         created_at: {type: string, format: date-time}
         started_at: {type: string, format: date-time}
@@ -767,6 +788,20 @@ components:
         assignment: {$ref: '#/components/schemas/BuildAssignment'}
         build: {$ref: '#/components/schemas/Build'}
         plan: {$ref: '#/components/schemas/BuildPlan'}
+    ManagedArtifact:
+      type: object
+      additionalProperties: false
+      required: [build_id, digest, sha256, size, media_type, created_at, last_referenced_at]
+      properties:
+        build_id: {type: string, format: uuid}
+        owner_id: {type: string, format: uuid}
+        digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        size: {type: integer, format: int64, minimum: 1}
+        media_type: {type: string}
+        runtime_image: {type: string}
+        created_at: {type: string, format: date-time}
+        last_referenced_at: {type: string, format: date-time}
     JobSpec:
       type: object
       additionalProperties: false
@@ -1052,6 +1087,7 @@ components:
         job_token: {type: string, writeOnly: true}
         secrets: {type: object, writeOnly: true, additionalProperties: {type: string}}
         registry_auth: {type: string, writeOnly: true}
+        managed_artifact: {$ref: '#/components/schemas/ManagedArtifact'}
         created_at: {type: string, format: date-time}
         event_sequence: {type: integer, format: int64, minimum: 0}
     AssignmentPoll:

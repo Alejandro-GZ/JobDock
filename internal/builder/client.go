@@ -137,6 +137,37 @@ func (c *client) complete(ctx context.Context, assignmentID string, status domai
 	return c.json(ctx, http.MethodPost, "/api/v1/builder/assignments/"+assignmentID+"/complete", map[string]any{"status": status, "digest": digest, "message": message}, nil)
 }
 
+func (c *client) uploadArtifact(ctx context.Context, assignmentID, artifactPath, digest, runtimeImage string) (domain.ManagedArtifact, error) {
+	file, err := os.Open(artifactPath)
+	if err != nil {
+		return domain.ManagedArtifact{}, err
+	}
+	defer file.Close()
+	request, err := c.request(ctx, http.MethodPut, "/api/v1/builder/assignments/"+assignmentID+"/artifact", file)
+	if err != nil {
+		return domain.ManagedArtifact{}, err
+	}
+	request.Header.Set("Content-Type", domain.ManagedImageMediaType)
+	request.Header.Set("X-JobDock-OCI-Digest", digest)
+	request.Header.Set("X-JobDock-Runtime-Image", runtimeImage)
+	response, err := (&http.Client{}).Do(request)
+	if err != nil {
+		return domain.ManagedArtifact{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusCreated && response.StatusCode != http.StatusOK {
+		return domain.ManagedArtifact{}, readAPIError(response)
+	}
+	var artifact domain.ManagedArtifact
+	if err = json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&artifact); err != nil {
+		return artifact, err
+	}
+	if artifact.Digest != digest {
+		return artifact, errors.New("server confirmed a different OCI digest")
+	}
+	return artifact, nil
+}
+
 func (c *client) json(ctx context.Context, method, path string, body, destination any) error {
 	data, err := json.Marshal(body)
 	if err != nil {

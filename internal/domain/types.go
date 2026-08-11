@@ -70,18 +70,32 @@ type BuildSource struct {
 }
 
 type Build struct {
-	ID            string      `json:"id"`
-	OwnerID       string      `json:"owner_id"`
-	Name          string      `json:"name"`
-	Mode          BuildMode   `json:"mode"`
-	Status        BuildStatus `json:"status"`
-	Source        BuildSource `json:"source"`
-	OCIDigest     string      `json:"oci_digest,omitempty"`
-	FailureReason string      `json:"failure_reason,omitempty"`
-	CreatedAt     time.Time   `json:"created_at"`
-	StartedAt     *time.Time  `json:"started_at,omitempty"`
-	FinishedAt    *time.Time  `json:"finished_at,omitempty"`
-	Version       int64       `json:"version"`
+	ID                string      `json:"id"`
+	OwnerID           string      `json:"owner_id"`
+	Name              string      `json:"name"`
+	Mode              BuildMode   `json:"mode"`
+	Status            BuildStatus `json:"status"`
+	Source            BuildSource `json:"source"`
+	OCIDigest         string      `json:"oci_digest,omitempty"`
+	ArtifactReference string      `json:"artifact_reference,omitempty"`
+	ArtifactAvailable bool        `json:"artifact_available"`
+	FailureReason     string      `json:"failure_reason,omitempty"`
+	CreatedAt         time.Time   `json:"created_at"`
+	StartedAt         *time.Time  `json:"started_at,omitempty"`
+	FinishedAt        *time.Time  `json:"finished_at,omitempty"`
+	Version           int64       `json:"version"`
+}
+
+type ManagedArtifact struct {
+	BuildID          string    `json:"build_id"`
+	OwnerID          string    `json:"owner_id,omitempty"`
+	Digest           string    `json:"digest"`
+	SHA256           string    `json:"sha256"`
+	Size             int64     `json:"size"`
+	MediaType        string    `json:"media_type"`
+	RuntimeImage     string    `json:"runtime_image,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	LastReferencedAt time.Time `json:"last_referenced_at"`
 }
 
 type BuildEvent struct {
@@ -254,6 +268,7 @@ type Assignment struct {
 	JobTokenEncrypted []byte            `json:"-"`
 	Secrets           map[string]string `json:"secrets,omitempty"`
 	RegistryAuth      string            `json:"registry_auth,omitempty"`
+	ManagedArtifact   *ManagedArtifact  `json:"managed_artifact,omitempty"`
 	CreatedAt         time.Time         `json:"created_at"`
 	EventSequence     int64             `json:"event_sequence"`
 }

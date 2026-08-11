@@ -92,17 +92,23 @@ func (b *Builder) execute(parent context.Context, work domain.BuildWork) {
 	projectDir, cleanup, err := b.prepareSource(buildCtx, work)
 	if err == nil {
 		defer cleanup()
-		artifactPath := filepath.Join(b.config.StateDir, "artifacts", work.Build.ID+".oci.tar")
+		artifactPath := filepath.Join(b.config.StateDir, "artifacts", work.Build.ID+".image.tar")
 		_, _ = fmt.Fprintf(writer, "\nJobDock builder %s started %s build\n", b.client.builderID, work.Build.Mode)
 		var digest string
 		digest, err = b.executor.Build(buildCtx, work, projectDir, artifactPath, writer)
 		if err == nil {
-			_, _ = fmt.Fprintf(writer, "\nBuild completed with digest %s\n", digest)
-			cancel()
-			<-uploadDone
-			_ = logFile.Close()
-			b.finish(parent, work, domain.BuildAssignmentSucceeded, digest, "BuildKit completed the OCI build")
-			return
+			_, _ = fmt.Fprintf(writer, "\nBuild completed with digest %s; publishing managed artifact\n", digest)
+			publishCtx, publishCancel := context.WithTimeout(context.WithoutCancel(parent), b.config.BuildTimeout)
+			_, err = b.client.uploadArtifact(publishCtx, work.Assignment.ID, artifactPath, digest, managedRuntimeImage(work.Build.ID))
+			publishCancel()
+			if err == nil {
+				_, _ = fmt.Fprintln(writer, "Managed artifact published and verified")
+				cancel()
+				<-uploadDone
+				_ = logFile.Close()
+				b.finish(parent, work, domain.BuildAssignmentSucceeded, digest, "BuildKit completed and published the managed image artifact")
+				return
+			}
 		}
 	}
 	status, message := domain.BuildAssignmentFailed, err.Error()
@@ -214,6 +220,7 @@ func (b *Builder) finish(ctx context.Context, work domain.BuildWork, status doma
 		cancel()
 		if err == nil {
 			_ = os.Remove(filepath.Join(b.config.StateDir, "current.json"))
+			_ = os.Remove(filepath.Join(b.config.StateDir, "artifacts", work.Build.ID+".image.tar"))
 			b.log.Info("build_completed", "build_id", work.Build.ID, "status", status, "digest", digest)
 			return
 		}

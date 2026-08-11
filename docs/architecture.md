@@ -62,8 +62,18 @@ Build assignments, desired cancellation, ownership and leases live in SQLite.
 The builder identity and current assignment are persisted in its own volume.
 Consequently, a server restart leaves confirmed work unchanged and a builder
 restart reclaims the same assignment; BuildKit's persistent cache makes the
-repeated solve safe. P1.12 retains the OCI archive in the builder volume. The
-managed distribution and garbage-collection contract is introduced by P1.13.
+repeated solve safe. After a successful solve, the builder publishes a
+Docker-compatible image archive to central storage before it confirms the
+build. JobDock persists its OCI digest, archive SHA-256, size and owner.
+
+Jobs address managed images as
+`jobdock://build/<build-id>@sha256:<digest>`. Assigned agents download the
+archive with their scoped node credential, verify its bytes and import it into
+their local Docker Engine. Internal Docker names are never part of the public
+API or UI. Job creation validates artifact ownership and the exact digest in
+the same database transaction, which also prevents races with garbage
+collection. Reruns retain the same reference; creating a new build generation
+is the explicit rebuild boundary.
 
 Job inputs are committed to central storage before `QUEUED` is persisted. Their
 relative paths, sizes, and SHA-256 digests become part of the immutable job

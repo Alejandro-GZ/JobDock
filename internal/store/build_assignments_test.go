@@ -55,6 +55,10 @@ func TestBuildAssignmentsSurviveRestartAndCompleteByDigest(t *testing.T) {
 		t.Fatalf("recovered work=%#v error=%v", recovered, err)
 	}
 	digest := "sha256:abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	now := time.Now().UTC()
+	if err = repository.SaveManagedArtifact(ctx, domain.ManagedArtifact{BuildID: build.ID, OwnerID: owner.ID, Digest: digest, SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", Size: 42, MediaType: domain.ManagedImageMediaType, RuntimeImage: "jobdock.local/managed/" + build.ID + ":artifact", CreatedAt: now, LastReferencedAt: now}); err != nil {
+		t.Fatal(err)
+	}
 	completed, err := repository.CompleteBuildAssignment(ctx, recovered.Assignment.ID, "builder-one", domain.BuildAssignmentSucceeded, digest, "BuildKit completed")
 	if err != nil || completed.Status != domain.BuildSucceeded || completed.OCIDigest != digest {
 		t.Fatalf("completed build=%#v error=%v", completed, err)

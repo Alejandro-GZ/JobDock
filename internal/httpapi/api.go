@@ -88,6 +88,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/builder/assignments/{id}/heartbeat", a.withBuilder(a.heartbeatBuildAssignment))
 	mux.HandleFunc("GET /api/v1/builder/assignments/{id}/source", a.withBuilder(a.getBuildSource))
 	mux.HandleFunc("PUT /api/v1/builder/assignments/{id}/logs", a.withBuilder(a.putBuildLog))
+	mux.HandleFunc("PUT /api/v1/builder/assignments/{id}/artifact", a.withBuilder(a.putBuildArtifact))
 	mux.HandleFunc("POST /api/v1/builder/assignments/{id}/complete", a.withBuilder(a.completeBuildAssignment))
 	mux.HandleFunc("GET /api/v1/jobs", a.withSession(false, false, a.listJobs))
 	mux.HandleFunc("POST /api/v1/jobs", a.withSession(false, true, a.createJob))
@@ -119,6 +120,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agent/heartbeat", a.withAgent(a.agentHeartbeat))
 	mux.HandleFunc("POST /api/v1/agent/credential/rotate", a.withAgent(a.rotateAgentCredential))
 	mux.HandleFunc("GET /api/v1/agent/assignments/next", a.withAgent(a.nextAssignment))
+	mux.HandleFunc("GET /api/v1/agent/assignments/{id}/artifact", a.withAgent(a.getManagedArtifact))
 	mux.HandleFunc("POST /api/v1/agent/assignments/{id}/accept", a.withAgent(a.acceptAssignment))
 	mux.HandleFunc("POST /api/v1/agent/jobs/{id}/events", a.withAgent(a.agentEvent))
 	mux.HandleFunc("POST /api/v1/agent/jobs/{id}/telemetry", a.withAgent(a.agentTelemetry))
@@ -275,6 +277,19 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, 422, "invalid_job_spec", err.Error())
 		return
 	}
+	buildID, digest, managed, referenceErr := domain.ParseManagedArtifactReference(spec.Image)
+	if referenceErr != nil {
+		idem.abort(r.Context())
+		_ = a.files.DeleteJob(jobID)
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_managed_artifact", referenceErr.Error())
+		return
+	}
+	if managed && spec.RegistrySecret != "" {
+		idem.abort(r.Context())
+		_ = a.files.DeleteJob(jobID)
+		writeProblem(w, http.StatusUnprocessableEntity, "managed_artifact_registry_forbidden", "Managed artifacts do not use user registry credentials")
+		return
+	}
 	for _, ref := range spec.SecretRefs {
 		if _, _, err := a.store.SecretCiphertext(r.Context(), user.ID, ref.Name); err != nil {
 			idem.abort(r.Context())
@@ -283,7 +298,7 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if spec.RegistrySecret != "" {
+	if !managed && spec.RegistrySecret != "" {
 		if _, kind, err := a.store.SecretCiphertext(r.Context(), user.ID, spec.RegistrySecret); err != nil || kind != "registry" {
 			idem.abort(r.Context())
 			_ = a.files.DeleteJob(jobID)
@@ -292,10 +307,20 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	job := domain.Job{ID: jobID, OwnerID: user.ID, Spec: spec, Status: domain.JobQueued, DesiredStatus: domain.JobRunning, ObservedStatus: domain.JobQueued, CreatedAt: time.Now().UTC(), Version: 1}
-	if err := a.store.CreateJob(r.Context(), job); err != nil {
+	var createErr error
+	if managed {
+		createErr = a.store.CreateJobWithManagedArtifact(r.Context(), job, buildID, digest)
+	} else {
+		createErr = a.store.CreateJob(r.Context(), job)
+	}
+	if createErr != nil {
 		idem.abort(r.Context())
 		_ = a.files.DeleteJob(jobID)
-		writeStoreError(w, err)
+		if managed && errors.Is(createErr, store.ErrNotFound) {
+			writeProblem(w, http.StatusUnprocessableEntity, "managed_artifact_unavailable", "Managed artifact is unavailable or belongs to another user")
+		} else {
+			writeStoreError(w, createErr)
+		}
 		return
 	}
 	_ = a.store.AppendServerEvent(r.Context(), job.ID, "queued", map[string]any{})
@@ -764,6 +789,14 @@ func (a *API) nextAssignment(w http.ResponseWriter, r *http.Request) {
 			}
 			assignment.JobToken = string(plain)
 			job, _ := a.store.Job(r.Context(), assignment.JobID)
+			if _, _, managed, _ := domain.ParseManagedArtifactReference(assignment.Spec.Image); managed {
+				artifact, artifactErr := a.store.ManagedArtifactForAssignment(r.Context(), assignment.ID, node.ID)
+				if artifactErr != nil {
+					writeProblem(w, http.StatusInternalServerError, "managed_artifact_unavailable", "Assigned managed artifact is unavailable")
+					return
+				}
+				assignment.ManagedArtifact = &artifact
+			}
 			assignment.Secrets = map[string]string{}
 			for _, ref := range assignment.Spec.SecretRefs {
 				ciphertext, _, secretErr := a.store.SecretCiphertext(r.Context(), job.OwnerID, ref.Name)

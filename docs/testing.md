@@ -63,3 +63,13 @@ The agent has host-equivalent Docker control during this test. Use only an
 isolated development or CI Docker Engine. Cleanup targets only containers whose
 exact JobDock job IDs were created by the current test run. On failure, server
 and agent logs are emitted into the Go test output.
+
+## Managed image acceptance
+
+Confirm that the builder publishes its image archive before reporting
+`SUCCEEDED`. Create a job with the returned
+`jobdock://build/...@sha256:...` reference and verify that the assigned agent
+downloads it with its node credential, checks its size and SHA-256, imports it
+through Docker's image-load API and runs without registry authentication.
+Rerunning the job must preserve the digest. GC tests must retain referenced
+artifacts and remove only expired, unreferenced records and files.

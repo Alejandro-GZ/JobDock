@@ -7,7 +7,7 @@ JobDock is a lightweight, self-hosted control plane for running containerized ba
 The repository contains:
 
 - `jobdock-server`: the API, scheduler, persistent state, artifact store, and web application.
-- `jobdock-builder`: an isolated source-build worker that drives a dedicated rootless BuildKit service.
+- `jobdock-builder`: an isolated source-build worker that drives rootless BuildKit and publishes managed images without a user registry.
 - `jobdock-agent`: a trusted per-host Docker executor.
 - `jobdock-sdk`: an optional Python telemetry SDK for running jobs.
 

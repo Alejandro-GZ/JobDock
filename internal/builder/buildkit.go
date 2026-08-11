@@ -57,7 +57,7 @@ func (b *BuildKit) Build(ctx context.Context, work domain.BuildWork, projectDir,
 	default:
 		return "", fmt.Errorf("unsupported build mode %q", work.Build.Mode)
 	}
-	args = append(args, "--output", "type=oci,dest="+partialPath, "--metadata-file", metadataPath)
+	args = append(args, "--output", "type=docker,name="+managedRuntimeImage(work.Build.ID)+",dest="+partialPath, "--metadata-file", metadataPath)
 	command := exec.CommandContext(ctx, b.config.BuildctlBinary, args...)
 	command.Stdout, command.Stderr = logs, logs
 	command.Env = minimalEnvironment()
@@ -85,6 +85,10 @@ func (b *BuildKit) Build(ctx context.Context, work domain.BuildWork, projectDir,
 		return "", err
 	}
 	return digest, nil
+}
+
+func managedRuntimeImage(buildID string) string {
+	return "jobdock.local/managed/" + buildID + ":artifact"
 }
 
 func readBuildDigest(path string) (string, error) {

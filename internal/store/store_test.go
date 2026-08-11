@@ -143,6 +143,10 @@ func TestRerunCreatesNumberedTraceableAttempts(t *testing.T) {
 	if err = repository.ReserveJob(ctx, job.ID, node.ID, attemptTwo, ids.New(), "token-two", []byte("cipher"), nil); err != nil {
 		t.Fatal(err)
 	}
+	currentAssignment, err := repository.AssignmentForNode(ctx, node.ID)
+	if err != nil || currentAssignment.AttemptID != attemptTwo {
+		t.Fatalf("rerun delivered stale assignment: %#v %v", currentAssignment, err)
+	}
 	if err = repository.RerunJob(ctx, job.ID); err != store.ErrConflict {
 		t.Fatalf("active job rerun = %v, want conflict", err)
 	}

@@ -20,6 +20,7 @@ services:
       JOBDOCK_BUILDER_TOKEN: "${JOBDOCK_BUILDER_TOKEN:?Set a random builder token of at least 32 characters}"
       JOBDOCK_BUILDER_LEASE: "${JOBDOCK_BUILDER_LEASE:-30s}"
       JOBDOCK_MAX_BUILD_ARTIFACT_BYTES: "${JOBDOCK_MAX_BUILD_ARTIFACT_BYTES:-21474836480}"
+      JOBDOCK_BUILD_ARTIFACT_RETENTION: "${JOBDOCK_BUILD_ARTIFACT_RETENTION:-720h}"
     volumes:
       - jobdock-data:/var/lib/jobdock
     read_only: true

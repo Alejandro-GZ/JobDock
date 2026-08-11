@@ -75,6 +75,7 @@ func main() {
 	go scheduler.New(repository, box).Run(ctx)
 	go monitorNodes(ctx, repository, cfg)
 	go maintainTelemetry(ctx, repository, cfg, logger)
+	go maintainManagedArtifacts(ctx, repository, files, cfg, logger)
 	httpServer := &http.Server{Addr: cfg.ListenAddr, Handler: api.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20}
 	go func() {
 		logger.Info("server_started", "address", cfg.ListenAddr, "public_url", cfg.PublicURL)
@@ -88,6 +89,27 @@ func main() {
 	defer shutdownCancel()
 	if err = httpServer.Shutdown(shutdownCtx); err != nil {
 		logger.Error("shutdown_failed", "error", err)
+	}
+}
+
+func maintainManagedArtifacts(ctx context.Context, repository *store.Store, files *filestore.Store, cfg config.Server, logger *slog.Logger) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		artifacts, err := repository.GarbageCollectManagedArtifacts(ctx, time.Now().UTC().Add(-cfg.BuildArtifactRetention))
+		if err != nil && !errors.Is(err, context.Canceled) {
+			logger.Warn("managed_artifact_gc_failed", "error", err)
+		}
+		for _, artifact := range artifacts {
+			if deleteErr := files.DeleteBuildArtifact(artifact.BuildID); deleteErr != nil {
+				logger.Warn("managed_artifact_file_gc_failed", "build_id", artifact.BuildID, "error", deleteErr)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }
 

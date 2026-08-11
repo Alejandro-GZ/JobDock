@@ -72,6 +72,25 @@ func ValidateBuildAssignment(assignment BuildAssignment) error {
 	return nil
 }
 
+func ValidateManagedArtifact(artifact ManagedArtifact) error {
+	if strings.TrimSpace(artifact.BuildID) == "" || strings.TrimSpace(artifact.OwnerID) == "" {
+		return errors.New("managed artifact requires build and owner IDs")
+	}
+	if !ociDigest.MatchString(artifact.Digest) || !lowercaseSHA256.MatchString(artifact.SHA256) {
+		return errors.New("managed artifact requires immutable OCI and archive SHA-256 digests")
+	}
+	if artifact.Size <= 0 || artifact.MediaType != ManagedImageMediaType {
+		return errors.New("managed artifact size or media type is invalid")
+	}
+	if artifact.RuntimeImage != "jobdock.local/managed/"+artifact.BuildID+":artifact" {
+		return errors.New("managed artifact runtime image does not match its build")
+	}
+	if artifact.CreatedAt.IsZero() || artifact.LastReferencedAt.IsZero() {
+		return errors.New("managed artifact timestamps are required")
+	}
+	return nil
+}
+
 func ValidateJobSpec(spec JobSpec) error {
 	if n := len(strings.TrimSpace(spec.Name)); n < 3 || n > 120 {
 		return errors.New("name must contain between 3 and 120 characters")

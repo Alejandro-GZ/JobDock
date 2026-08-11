@@ -189,6 +189,17 @@ func (s *Store) CompleteBuildAssignment(ctx context.Context, id, builderID strin
 	if assignment.CancelRequested || build.Status == domain.BuildCancelled {
 		status, digest, message = domain.BuildAssignmentCancelled, "", "Build cancelled"
 	}
+	if status == domain.BuildAssignmentSucceeded {
+		var artifactDigest string
+		if err = tx.QueryRowContext(ctx, `SELECT digest FROM managed_build_artifacts WHERE build_id=?`, build.ID).Scan(&artifactDigest); errors.Is(err, sql.ErrNoRows) {
+			return domain.Build{}, ErrConflict
+		} else if err != nil {
+			return domain.Build{}, err
+		}
+		if artifactDigest != digest {
+			return domain.Build{}, ErrConflict
+		}
+	}
 	now := time.Now().UTC()
 	if build.Status == domain.BuildBuilding {
 		buildStatus := domain.BuildSucceeded

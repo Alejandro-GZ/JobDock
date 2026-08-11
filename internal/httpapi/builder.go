@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jobdock/jobdock/internal/domain"
 	"github.com/jobdock/jobdock/internal/filestore"
@@ -27,6 +28,52 @@ func (a *API) nextBuildAssignment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, work)
+}
+
+func (a *API) putBuildArtifact(w http.ResponseWriter, r *http.Request) {
+	assignment, ok := a.authorizeBuildAssignment(w, r)
+	if !ok {
+		return
+	}
+	build, err := a.store.Build(r.Context(), assignment.BuildID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	digest := strings.TrimSpace(r.Header.Get("X-JobDock-OCI-Digest"))
+	runtimeImage := strings.TrimSpace(r.Header.Get("X-JobDock-Runtime-Image"))
+	_, parsedDigest, managed, parseErr := domain.ParseManagedArtifactReference(domain.ManagedArtifactReference(build.ID, digest))
+	if parseErr != nil || !managed || parsedDigest != digest {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_artifact_digest", "X-JobDock-OCI-Digest must be an immutable sha256 digest")
+		return
+	}
+	if runtimeImage != "jobdock.local/managed/"+build.ID+":artifact" {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_runtime_image", "Managed artifact runtime image does not match its build")
+		return
+	}
+	metadata, err := a.files.StoreBuildArtifact(build.ID, r.Body, a.config.MaxBuildArtifactBytes)
+	if errors.Is(err, filestore.ErrLimitExceeded) {
+		writeProblem(w, http.StatusRequestEntityTooLarge, "build_artifact_limit_exceeded", "Managed build artifact exceeds the configured size limit")
+		return
+	}
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "build_artifact_unavailable", err.Error())
+		return
+	}
+	now := time.Now().UTC()
+	artifact := domain.ManagedArtifact{BuildID: build.ID, OwnerID: build.OwnerID, Digest: digest, SHA256: metadata.SHA256, Size: metadata.Size, MediaType: domain.ManagedImageMediaType, RuntimeImage: runtimeImage, CreatedAt: now, LastReferencedAt: now}
+	if err = a.store.SaveManagedArtifact(r.Context(), artifact); err != nil {
+		if metadata.Created {
+			_ = a.files.DeleteBuildArtifact(build.ID)
+		}
+		writeStoreError(w, err)
+		return
+	}
+	status := http.StatusOK
+	if metadata.Created {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, artifact)
 }
 
 func (a *API) getBuildAssignment(w http.ResponseWriter, r *http.Request) {

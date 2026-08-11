@@ -68,6 +68,21 @@ func TestBuildLifecycleAndValidation(t *testing.T) {
 	}
 }
 
+func TestManagedArtifactReferenceIsImmutableAndStrict(t *testing.T) {
+	digest := "sha256:abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	reference := ManagedArtifactReference("build-id", digest)
+	buildID, parsedDigest, managed, err := ParseManagedArtifactReference(reference)
+	if err != nil || !managed || buildID != "build-id" || parsedDigest != digest {
+		t.Fatalf("parsed managed reference = %q %q %v %v", buildID, parsedDigest, managed, err)
+	}
+	if _, _, managed, err = ParseManagedArtifactReference("alpine:3.21"); err != nil || managed {
+		t.Fatalf("external OCI reference classified as managed: %v %v", managed, err)
+	}
+	if _, _, managed, err = ParseManagedArtifactReference("jobdock://build/build-id:latest"); err == nil || !managed {
+		t.Fatalf("mutable managed reference was accepted: %v %v", managed, err)
+	}
+}
+
 func TestBuildPlanRequiresRailpackDetectionAndValidJSON(t *testing.T) {
 	plan := BuildPlan{BuildID: "build-one", Provider: "python", Runtime: "python 3.13", PackageManager: "uv", Entrypoint: "python main.py", RailpackVersion: "0.36.0", Plan: json.RawMessage(`{"deploy":{}}`), Info: json.RawMessage(`{"success":true}`)}
 	if err := ValidateBuildPlan(plan); err != nil {

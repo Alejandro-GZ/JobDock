@@ -12,27 +12,28 @@ import (
 )
 
 type Server struct {
-	ListenAddr            string
-	DataDir               string
-	DatabasePath          string
-	PublicURL             string
-	AllowInsecureHTTP     bool
-	BootstrapUsername     string
-	BootstrapPassword     string
-	MasterKey             []byte
-	SessionTTL            time.Duration
-	HeartbeatOfflineAfter time.Duration
-	JobLostAfter          time.Duration
-	MaxLogBytes           int64
-	MaxOutputBytes        int64
-	MaxInputBytes         int64
-	TelemetryRawRetention time.Duration
-	TelemetryRetention    time.Duration
-	BuildAnalysisTimeout  time.Duration
-	RailpackBinary        string
-	BuilderToken          string
-	BuilderLease          time.Duration
-	MaxBuildArtifactBytes int64
+	ListenAddr             string
+	DataDir                string
+	DatabasePath           string
+	PublicURL              string
+	AllowInsecureHTTP      bool
+	BootstrapUsername      string
+	BootstrapPassword      string
+	MasterKey              []byte
+	SessionTTL             time.Duration
+	HeartbeatOfflineAfter  time.Duration
+	JobLostAfter           time.Duration
+	MaxLogBytes            int64
+	MaxOutputBytes         int64
+	MaxInputBytes          int64
+	TelemetryRawRetention  time.Duration
+	TelemetryRetention     time.Duration
+	BuildAnalysisTimeout   time.Duration
+	RailpackBinary         string
+	BuilderToken           string
+	BuilderLease           time.Duration
+	MaxBuildArtifactBytes  int64
+	BuildArtifactRetention time.Duration
 }
 
 type Agent struct {
@@ -67,24 +68,25 @@ type Builder struct {
 func LoadServer() (Server, error) {
 	dataDir := env("JOBDOCK_DATA_DIR", ".jobdock/server")
 	c := Server{
-		ListenAddr:            env("JOBDOCK_LISTEN_ADDR", ":8080"),
-		DataDir:               dataDir,
-		DatabasePath:          env("JOBDOCK_DATABASE_PATH", filepath.Join(dataDir, "jobdock.db")),
-		PublicURL:             strings.TrimRight(env("JOBDOCK_PUBLIC_URL", "http://localhost:8080"), "/"),
-		AllowInsecureHTTP:     envBool("JOBDOCK_ALLOW_INSECURE_HTTP", false),
-		BootstrapUsername:     env("JOBDOCK_BOOTSTRAP_ADMIN_USERNAME", "admin"),
-		SessionTTL:            envDuration("JOBDOCK_SESSION_TTL", 24*time.Hour),
-		HeartbeatOfflineAfter: envDuration("JOBDOCK_HEARTBEAT_OFFLINE_AFTER", 30*time.Second),
-		JobLostAfter:          envDuration("JOBDOCK_JOB_LOST_AFTER", 5*time.Minute),
-		MaxLogBytes:           envInt64("JOBDOCK_MAX_LOG_BYTES", 10<<30),
-		MaxOutputBytes:        envInt64("JOBDOCK_MAX_OUTPUT_BYTES", 100<<30),
-		MaxInputBytes:         envInt64("JOBDOCK_MAX_INPUT_BYTES", 10<<30),
-		TelemetryRawRetention: envDuration("JOBDOCK_TELEMETRY_RAW_RETENTION", 24*time.Hour),
-		TelemetryRetention:    envDuration("JOBDOCK_TELEMETRY_RETENTION", 30*24*time.Hour),
-		BuildAnalysisTimeout:  envDuration("JOBDOCK_BUILD_ANALYSIS_TIMEOUT", 2*time.Minute),
-		RailpackBinary:        env("JOBDOCK_RAILPACK_BINARY", "railpack"),
-		BuilderLease:          envDuration("JOBDOCK_BUILDER_LEASE", 30*time.Second),
-		MaxBuildArtifactBytes: envInt64("JOBDOCK_MAX_BUILD_ARTIFACT_BYTES", 20<<30),
+		ListenAddr:             env("JOBDOCK_LISTEN_ADDR", ":8080"),
+		DataDir:                dataDir,
+		DatabasePath:           env("JOBDOCK_DATABASE_PATH", filepath.Join(dataDir, "jobdock.db")),
+		PublicURL:              strings.TrimRight(env("JOBDOCK_PUBLIC_URL", "http://localhost:8080"), "/"),
+		AllowInsecureHTTP:      envBool("JOBDOCK_ALLOW_INSECURE_HTTP", false),
+		BootstrapUsername:      env("JOBDOCK_BOOTSTRAP_ADMIN_USERNAME", "admin"),
+		SessionTTL:             envDuration("JOBDOCK_SESSION_TTL", 24*time.Hour),
+		HeartbeatOfflineAfter:  envDuration("JOBDOCK_HEARTBEAT_OFFLINE_AFTER", 30*time.Second),
+		JobLostAfter:           envDuration("JOBDOCK_JOB_LOST_AFTER", 5*time.Minute),
+		MaxLogBytes:            envInt64("JOBDOCK_MAX_LOG_BYTES", 10<<30),
+		MaxOutputBytes:         envInt64("JOBDOCK_MAX_OUTPUT_BYTES", 100<<30),
+		MaxInputBytes:          envInt64("JOBDOCK_MAX_INPUT_BYTES", 10<<30),
+		TelemetryRawRetention:  envDuration("JOBDOCK_TELEMETRY_RAW_RETENTION", 24*time.Hour),
+		TelemetryRetention:     envDuration("JOBDOCK_TELEMETRY_RETENTION", 30*24*time.Hour),
+		BuildAnalysisTimeout:   envDuration("JOBDOCK_BUILD_ANALYSIS_TIMEOUT", 2*time.Minute),
+		RailpackBinary:         env("JOBDOCK_RAILPACK_BINARY", "railpack"),
+		BuilderLease:           envDuration("JOBDOCK_BUILDER_LEASE", 30*time.Second),
+		MaxBuildArtifactBytes:  envInt64("JOBDOCK_MAX_BUILD_ARTIFACT_BYTES", 20<<30),
+		BuildArtifactRetention: envDuration("JOBDOCK_BUILD_ARTIFACT_RETENTION", 30*24*time.Hour),
 	}
 	if c.MaxLogBytes <= 0 || c.MaxOutputBytes <= 0 || c.MaxInputBytes <= 0 {
 		return c, errors.New("log, output, and input limits must be positive")
@@ -92,7 +94,7 @@ func LoadServer() (Server, error) {
 	if c.TelemetryRawRetention <= 0 || c.TelemetryRetention < c.TelemetryRawRetention {
 		return c, errors.New("telemetry retention must be positive and at least as long as raw retention")
 	}
-	if c.BuildAnalysisTimeout <= 0 || c.BuilderLease <= 0 || c.MaxBuildArtifactBytes <= 0 {
+	if c.BuildAnalysisTimeout <= 0 || c.BuilderLease <= 0 || c.MaxBuildArtifactBytes <= 0 || c.BuildArtifactRetention <= 0 {
 		return c, errors.New("build analysis timeout, builder lease, and build artifact limit must be positive")
 	}
 	password, err := valueOrFile("JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD", "JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD_FILE")

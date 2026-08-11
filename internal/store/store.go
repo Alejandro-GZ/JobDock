@@ -569,7 +569,7 @@ func (s *Store) MarkStaleNodes(ctx context.Context, offlineBefore, lostBefore ti
 func (s *Store) AssignmentForNode(ctx context.Context, nodeID string) (domain.Assignment, error) {
 	var assignment domain.Assignment
 	var specJSON, gpusJSON, created string
-	err := s.db.QueryRowContext(ctx, `SELECT a.id,a.job_id,a.attempt_id,j.spec_json,a.gpu_uuids_json,a.job_token_ciphertext,a.created_at,COALESCE((SELECT MAX(sequence) FROM job_events WHERE job_id=a.job_id),0) FROM assignments a JOIN jobs j ON j.id=a.job_id WHERE a.node_id=? AND a.accepted_at IS NULL AND j.status IN ('ASSIGNED','PULLING_IMAGE','STARTING') ORDER BY a.created_at LIMIT 1`, nodeID).Scan(&assignment.ID, &assignment.JobID, &assignment.AttemptID, &specJSON, &gpusJSON, &assignment.JobTokenEncrypted, &created, &assignment.EventSequence)
+	err := s.db.QueryRowContext(ctx, `SELECT a.id,a.job_id,a.attempt_id,j.spec_json,a.gpu_uuids_json,a.job_token_ciphertext,a.created_at,COALESCE((SELECT MAX(sequence) FROM job_events WHERE job_id=a.job_id),0) FROM assignments a JOIN jobs j ON j.id=a.job_id WHERE a.node_id=? AND a.attempt_id=j.attempt_id AND a.accepted_at IS NULL AND j.status IN ('ASSIGNED','PULLING_IMAGE','STARTING') ORDER BY a.created_at LIMIT 1`, nodeID).Scan(&assignment.ID, &assignment.JobID, &assignment.AttemptID, &specJSON, &gpusJSON, &assignment.JobTokenEncrypted, &created, &assignment.EventSequence)
 	if errors.Is(err, sql.ErrNoRows) {
 		return assignment, ErrNotFound
 	}

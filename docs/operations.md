@@ -26,10 +26,12 @@ the execution boundary with:
 - `JOBDOCK_BUILD_PID_LIMIT` (default `1024`);
 - `JOBDOCK_BUILD_CACHE_LIMIT_MB` (default `20480` MiB, enforced by BuildKit GC);
 - `JOBDOCK_BUILD_TIMEOUT` (default `30m`);
-- `JOBDOCK_MAX_BUILD_ARTIFACT_BYTES` (default `20 GiB`).
+- `JOBDOCK_MAX_BUILD_ARTIFACT_BYTES` (default `20 GiB`);
+- `JOBDOCK_BUILD_ARTIFACT_RETENTION` (default `30 days` for unreferenced artifacts).
 
-The builder volume stores its stable identity, current assignment and completed
-OCI archives. The BuildKit volume stores cache and in-progress solve state.
+The builder volume stores its stable identity and current assignment. A local
+image archive is removed only after the server confirms its managed copy. The
+BuildKit volume stores cache and in-progress solve state.
 Keep both persistent across ordinary restarts. If the server restarts, the
 assignment lease and build status remain in SQLite. If the builder restarts, it
 reclaims its assignment and repeats the BuildKit solve against the persistent
@@ -46,6 +48,11 @@ The first output must not contain `/var/run/docker.sock`. Build cancellation is
 cooperative at the control plane and forceful at the builder: the next lease
 heartbeat cancels `buildctl`, while a late success is discarded in favor of the
 persisted cancellation request.
+
+Managed artifacts live in the server data volume. The hourly collector removes
+metadata only when its retention window has elapsed and no non-deleted job
+references the exact digest, then removes the archive. Back up the SQLite
+database and server data directory together.
 
 ## Backup and restore
 

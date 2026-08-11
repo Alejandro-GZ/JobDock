@@ -49,6 +49,89 @@ type BuildSourceMetadata struct {
 	SHA256   string
 }
 
+type BuildArtifactMetadata struct {
+	Size    int64
+	SHA256  string
+	Created bool
+}
+
+// StoreBuildArtifact atomically persists one immutable Docker-compatible
+// image archive. Repeated identical publications are idempotent.
+func (s *Store) StoreBuildArtifact(buildID string, source io.Reader, limit int64) (BuildArtifactMetadata, error) {
+	if !safeSegment(buildID) || limit <= 0 {
+		return BuildArtifactMetadata{}, errors.New("invalid build artifact request")
+	}
+	dir := filepath.Join(s.root, "builds", buildID, "artifact")
+	destination := filepath.Join(dir, "image.tar")
+	if info, err := os.Lstat(destination); err == nil {
+		if !info.Mode().IsRegular() {
+			return BuildArtifactMetadata{}, errors.New("build artifact is not a regular file")
+		}
+		file, openErr := os.Open(destination)
+		if openErr != nil {
+			return BuildArtifactMetadata{}, openErr
+		}
+		defer file.Close()
+		hash := sha256.New()
+		size, hashErr := io.Copy(hash, file)
+		return BuildArtifactMetadata{Size: size, SHA256: hex.EncodeToString(hash.Sum(nil)), Created: false}, hashErr
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return BuildArtifactMetadata{}, err
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return BuildArtifactMetadata{}, err
+	}
+	temporary, err := os.CreateTemp(dir, ".jobdock-artifact-*")
+	if err != nil {
+		return BuildArtifactMetadata{}, err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	hash := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(temporary, hash), io.LimitReader(source, limit+1))
+	if copyErr == nil && written > limit {
+		copyErr = ErrLimitExceeded
+	}
+	if copyErr == nil {
+		copyErr = temporary.Sync()
+	}
+	if closeErr := temporary.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr != nil {
+		return BuildArtifactMetadata{}, copyErr
+	}
+	if err = os.Chmod(temporaryPath, 0o440); err != nil {
+		return BuildArtifactMetadata{}, err
+	}
+	if err = os.Rename(temporaryPath, destination); err != nil {
+		return BuildArtifactMetadata{}, err
+	}
+	return BuildArtifactMetadata{Size: written, SHA256: hex.EncodeToString(hash.Sum(nil)), Created: true}, nil
+}
+
+func (s *Store) OpenBuildArtifact(buildID string) (*os.File, error) {
+	if !safeSegment(buildID) {
+		return nil, errors.New("invalid build ID")
+	}
+	path := filepath.Join(s.root, "builds", buildID, "artifact", "image.tar")
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("build artifact is not a regular file")
+	}
+	return os.Open(path)
+}
+
+func (s *Store) DeleteBuildArtifact(buildID string) error {
+	if !safeSegment(buildID) {
+		return errors.New("invalid build ID")
+	}
+	return os.RemoveAll(filepath.Join(s.root, "builds", buildID, "artifact"))
+}
+
 // StoreBuildSource persists the exact uploaded source bytes once. The digest
 // identifies a reproducible source generation; existing sources are immutable.
 func (s *Store) StoreBuildSource(buildID, filename string, source io.Reader) (BuildSourceMetadata, error) {

@@ -318,15 +318,25 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 		if !a.sendEvent(record, "image_pull_started", domain.JobPullingImage, nil, "", "", nil) {
 			return
 		}
-		if err := a.docker.Pull(ctx, record.Spec.Image, record.RegistryAuth); err != nil {
+		runtimeImage := record.Spec.Image
+		digest := ""
+		var err error
+		if _, _, managed, _ := domain.ParseManagedArtifactReference(record.Spec.Image); managed {
+			runtimeImage, digest, err = a.loadManagedArtifact(ctx, record, jobDir)
+		} else {
+			err = a.docker.Pull(ctx, record.Spec.Image, record.RegistryAuth)
+			if err == nil {
+				digest = a.docker.ImageDigest(ctx, record.Spec.Image)
+			}
+		}
+		if err != nil {
 			a.fail(record, "image_pull_failed", err)
 			return
 		}
-		digest := a.docker.ImageDigest(ctx, record.Spec.Image)
 		if !a.sendEvent(record, "image_pull_finished", domain.JobStarting, nil, "", digest, nil) {
 			return
 		}
-		containerID, err := a.docker.Create(ctx, dockerengine.CreateOptions{Name: "jobdock-" + strings.ReplaceAll(record.JobID, "-", "")[:12], JobID: record.JobID, AttemptID: record.AttemptID, Image: record.Spec.Image, Command: record.Spec.Command, WorkingDirectory: record.Spec.WorkingDirectory, Environment: environment, Binds: binds, CPUMillis: record.Spec.Resources.CPUMillis, MemoryBytes: record.Spec.Resources.MemoryBytes, GPUUUIDs: record.GPUUUIDs})
+		containerID, err := a.docker.Create(ctx, dockerengine.CreateOptions{Name: "jobdock-" + strings.ReplaceAll(record.JobID, "-", "")[:12], JobID: record.JobID, AttemptID: record.AttemptID, Image: runtimeImage, Command: record.Spec.Command, WorkingDirectory: record.Spec.WorkingDirectory, Environment: environment, Binds: binds, CPUMillis: record.Spec.Resources.CPUMillis, MemoryBytes: record.Spec.Resources.MemoryBytes, GPUUUIDs: record.GPUUUIDs})
 		if err != nil {
 			a.fail(record, "container_create_failed", err)
 			return
@@ -712,9 +722,14 @@ func (a *Agent) reconcile(ctx context.Context) error {
 		if json.Unmarshal(data, record) != nil || record.Completed {
 			continue
 		}
-		if container, ok := byJob[record.JobID]; ok {
-			record.ContainerID = container.ID
+		container, ok := byJob[record.JobID]
+		if !ok {
+			// An unaccepted assignment is redelivered by the server. Waiting for
+			// that authoritative copy avoids replaying a stale local attempt after
+			// the job has already failed or been rerun.
+			continue
 		}
+		record.ContainerID = container.ID
 		a.mu.Lock()
 		a.running[record.JobID] = record
 		a.mu.Unlock()

@@ -10,7 +10,7 @@ import (
 	"github.com/jobdock/jobdock/internal/domain"
 )
 
-const buildSelect = `SELECT id,owner_id,name,mode,status,source_filename,source_size_bytes,source_sha256,oci_digest,failure_reason,created_at,started_at,finished_at,version FROM builds`
+const buildSelect = `SELECT id,owner_id,name,mode,status,source_filename,source_size_bytes,source_sha256,oci_digest,failure_reason,created_at,started_at,finished_at,version,EXISTS(SELECT 1 FROM managed_build_artifacts WHERE build_id=builds.id) FROM builds`
 
 func (s *Store) CreateBuild(ctx context.Context, build domain.Build) error {
 	if err := domain.ValidateBuild(build); err != nil {
@@ -189,7 +189,7 @@ func scanBuild(row scanner) (domain.Build, error) {
 	var build domain.Build
 	var created string
 	var started, finished sql.NullString
-	err := row.Scan(&build.ID, &build.OwnerID, &build.Name, &build.Mode, &build.Status, &build.Source.Filename, &build.Source.Size, &build.Source.SHA256, &build.OCIDigest, &build.FailureReason, &created, &started, &finished, &build.Version)
+	err := row.Scan(&build.ID, &build.OwnerID, &build.Name, &build.Mode, &build.Status, &build.Source.Filename, &build.Source.Size, &build.Source.SHA256, &build.OCIDigest, &build.FailureReason, &created, &started, &finished, &build.Version, &build.ArtifactAvailable)
 	if errors.Is(err, sql.ErrNoRows) {
 		return build, ErrNotFound
 	}
@@ -199,5 +199,8 @@ func scanBuild(row scanner) (domain.Build, error) {
 	build.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	build.StartedAt = parseNullTime(started)
 	build.FinishedAt = parseNullTime(finished)
+	if build.ArtifactAvailable {
+		build.ArtifactReference = domain.ManagedArtifactReference(build.ID, build.OCIDigest)
+	}
 	return build, nil
 }

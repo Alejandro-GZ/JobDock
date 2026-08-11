@@ -133,6 +133,29 @@ func (c *Client) Pull(ctx context.Context, image string, registryAuth string) er
 	return scanner.Err()
 }
 
+func (c *Client) Load(ctx context.Context, archive io.Reader) error {
+	response, err := c.request(ctx, "POST", "/images/load?quiet=1", archive, http.Header{"Content-Type": []string{"application/x-tar"}})
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return apiError(response)
+	}
+	scanner := bufio.NewScanner(response.Body)
+	buffer := make([]byte, 64*1024)
+	scanner.Buffer(buffer, 2<<20)
+	for scanner.Scan() {
+		var item struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(scanner.Bytes(), &item) == nil && item.Error != "" {
+			return errors.New(item.Error)
+		}
+	}
+	return scanner.Err()
+}
+
 func (c *Client) ImageDigest(ctx context.Context, image string) string {
 	response, err := c.request(ctx, "GET", "/images/"+url.PathEscape(image)+"/json", nil, nil)
 	if err != nil {
