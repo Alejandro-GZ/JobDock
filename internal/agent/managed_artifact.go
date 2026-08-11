@@ -23,7 +23,10 @@ func (a *Agent) loadManagedArtifact(ctx context.Context, record *runtimeAssignme
 	}
 	request.Header.Set("Authorization", "Bearer "+a.credential)
 	request.Header.Set("X-JobDock-Protocol-Version", "1")
-	response, err := a.http.Do(request)
+	artifactClient := *a.http
+	artifactClient.Timeout = 0
+
+	response, err := artifactClient.Do(request)
 	if err != nil {
 		return "", "", err
 	}
