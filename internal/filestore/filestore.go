@@ -2,6 +2,8 @@ package filestore
 
 import (
 	"archive/zip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,13 +21,103 @@ type Store struct {
 	root           string
 	maxLogBytes    int64
 	maxOutputBytes int64
+	maxInputBytes  int64
 }
 
-func New(root string, maxLogBytes, maxOutputBytes int64) (*Store, error) {
+func New(root string, maxLogBytes, maxOutputBytes, maxInputBytes int64) (*Store, error) {
 	if err := os.MkdirAll(filepath.Join(root, "jobs"), 0o750); err != nil {
 		return nil, err
 	}
-	return &Store{root: root, maxLogBytes: maxLogBytes, maxOutputBytes: maxOutputBytes}, nil
+	return &Store{root: root, maxLogBytes: maxLogBytes, maxOutputBytes: maxOutputBytes, maxInputBytes: maxInputBytes}, nil
+}
+
+type InputMetadata struct {
+	Path   string
+	Size   int64
+	SHA256 string
+}
+
+func (s *Store) StoreInput(jobID, relativePath string, source io.Reader) (InputMetadata, error) {
+	clean, err := safeRelativePath(relativePath)
+	if err != nil {
+		return InputMetadata{}, err
+	}
+	jobDir, err := s.JobDir(jobID)
+	if err != nil {
+		return InputMetadata{}, err
+	}
+	root := filepath.Join(jobDir, "inputs")
+	destination := filepath.Join(root, clean)
+	if !within(root, destination) {
+		return InputMetadata{}, errors.New("input path escapes job directory")
+	}
+	if _, err = os.Lstat(destination); err == nil {
+		return InputMetadata{}, errors.New("duplicate input path")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return InputMetadata{}, err
+	}
+	used, err := directorySize(root)
+	if err != nil {
+		return InputMetadata{}, err
+	}
+	remaining := s.maxInputBytes - used
+	if remaining < 0 {
+		return InputMetadata{}, ErrLimitExceeded
+	}
+	if err = os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
+		return InputMetadata{}, err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(destination), ".jobdock-input-*")
+	if err != nil {
+		return InputMetadata{}, err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	hash := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(temporary, hash), io.LimitReader(source, remaining+1))
+	if copyErr == nil && written > remaining {
+		copyErr = ErrLimitExceeded
+	}
+	if copyErr == nil {
+		copyErr = temporary.Sync()
+	}
+	if closeErr := temporary.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr != nil {
+		return InputMetadata{}, copyErr
+	}
+	if err = os.Chmod(temporaryPath, 0o440); err != nil {
+		return InputMetadata{}, err
+	}
+	if err = os.Rename(temporaryPath, destination); err != nil {
+		return InputMetadata{}, err
+	}
+	return InputMetadata{Path: filepath.ToSlash(clean), Size: written, SHA256: hex.EncodeToString(hash.Sum(nil))}, nil
+}
+
+func (s *Store) OpenInput(jobID, relativePath string) (*os.File, error) {
+	clean, err := safeRelativePath(relativePath)
+	if err != nil {
+		return nil, err
+	}
+	jobDir, err := s.JobDir(jobID)
+	if err != nil {
+		return nil, err
+	}
+	root := filepath.Join(jobDir, "inputs")
+	path := filepath.Join(root, clean)
+	if !within(root, path) {
+		return nil, errors.New("input path escapes job directory")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("input is not a regular file")
+	}
+	return os.Open(path)
 }
 
 func (s *Store) JobDir(jobID string) (string, error) {

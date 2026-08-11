@@ -31,6 +31,14 @@ Scheduling first removes offline/draining nodes, label mismatches, and nodes wit
 - Server filesystem: ordered stdout/stderr files, outputs, and generated metadata.
 - Agent filesystem: assignment journal, bounded log spool, job token files, secret files, and output workspaces.
 
+Job inputs are committed to central storage before `QUEUED` is persisted. Their
+relative paths, sizes, and SHA-256 digests become part of the immutable job
+specification. The assigned agent downloads and verifies that exact manifest,
+materializes it beneath its workspace, and bind-mounts it at `/jobdock/input`
+with Docker read-only semantics. Failed staging and completed local execution
+remove partial/materialized input copies; explicit job deletion removes the
+central generation.
+
 Storage access is behind package boundaries so PostgreSQL and object storage can be implemented without changing the domain model.
 
 Metrics reported by `job.metric()` are not generic lifecycle events. They are

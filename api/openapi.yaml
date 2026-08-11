@@ -58,9 +58,19 @@ paths:
       parameters: [{$ref: '#/components/parameters/CSRFToken'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody:
         required: true
-        content: {application/json: {schema: {$ref: '#/components/schemas/JobSpec'}}}
+        content:
+          application/json: {schema: {$ref: '#/components/schemas/JobSpec'}}
+          multipart/form-data:
+            schema:
+              type: object
+              description: The spec field contains JobSpec JSON. Each file field is named input:<relative-path>.
+              required: [spec]
+              properties:
+                spec: {type: string, contentMediaType: application/json}
+              additionalProperties: {type: string, format: binary}
       responses:
         '201': {description: Queued job, content: {application/json: {schema: {$ref: '#/components/schemas/Job'}}}}
+        '413': {$ref: '#/components/responses/Problem'}
         '422': {$ref: '#/components/responses/Problem'}
   /jobs/{jobId}:
     parameters: [{$ref: '#/components/parameters/JobID'}]
@@ -379,6 +389,18 @@ paths:
         '200': {description: Chunk acknowledged, content: {application/json: {schema: {$ref: '#/components/schemas/UploadAcknowledgement'}}}}
         '409': {description: Offset conflict with durable next offset, content: {application/json: {schema: {$ref: '#/components/schemas/UploadAcknowledgement'}}}}
         '413': {$ref: '#/components/responses/Problem'}
+  /agent/jobs/{jobId}/inputs/{path}:
+    get:
+      security: [{bearerToken: []}]
+      operationId: downloadJobInput
+      description: Download one immutable manifest input for the node currently assigned to the job.
+      parameters:
+        - {$ref: '#/components/parameters/JobID'}
+        - {name: path, in: path, required: true, description: Slash-separated path from the immutable input manifest, schema: {type: string}}
+      responses:
+        '200': {description: Verified input bytes, headers: {X-JobDock-Content-SHA256: {schema: {type: string, pattern: '^[0-9a-f]{64}$'}}}, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
   /job-context/progress:
     post:
       security: [{bearerToken: []}]
@@ -505,6 +527,15 @@ components:
         resources: {$ref: '#/components/schemas/Resources'}
         labels: {type: object, additionalProperties: {type: string}}
         node_selector: {type: object, additionalProperties: {type: string}}
+        inputs: {type: array, readOnly: true, maxItems: 1024, items: {$ref: '#/components/schemas/InputFile'}}
+    InputFile:
+      type: object
+      additionalProperties: false
+      required: [path, size, sha256]
+      properties:
+        path: {type: string, description: Slash-separated path relative to /jobdock/input}
+        size: {type: integer, format: int64, minimum: 0}
+        sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
     SecretRef:
       type: object
       required: [name, target, mode]

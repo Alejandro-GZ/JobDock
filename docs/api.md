@@ -35,6 +35,13 @@ Metric queries accept repeated `name` filters and
 validated against the job, which prevents series from different reruns being
 combined.
 
+Jobs without inputs use the regular JSON create request. To attach reproducible
+inputs, `POST /api/v1/jobs` accepts `multipart/form-data` with one `spec` JSON
+field and file fields named `input:<relative-path>`. The server stores every
+file before the job becomes visible to the scheduler, generates an immutable
+size/SHA-256 manifest, and rejects client-supplied manifests. Assigned agents
+may download only paths present in that manifest.
+
 Each JSON snapshot includes a common, attempt-scoped `cursor`. Supplying that
 cursor back to either query fixes the result to the same persistence boundary.
 `GET /api/v1/jobs/{jobId}/series/stream?after=<cursor>` then emits only metric

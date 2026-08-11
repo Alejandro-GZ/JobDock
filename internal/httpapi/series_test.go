@@ -55,7 +55,7 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 	if err = repository.AppendResourceSample(ctx, domain.ResourceSample{JobID: job.ID, AttemptID: attemptID, CapturedAt: base.Add(10 * time.Second), CPUMillis: 1250, MemoryBytes: 512 << 20, GPUUtilizationBasisPoints: &gpuUtilization, GPUMemoryBytes: &gpuMemory}); err != nil {
 		t.Fatal(err)
 	}
-	files, _ := filestore.New(root, 1<<20, 1<<20)
+	files, _ := filestore.New(root, 1<<20, 1<<20, 1<<20)
 	box, _ := secretbox.New(bytes.Repeat([]byte{8}, 32))
 	api := New(config.Server{AllowInsecureHTTP: true, SessionTTL: time.Hour}, repository, files, box, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	server := httptest.NewServer(api.Handler())

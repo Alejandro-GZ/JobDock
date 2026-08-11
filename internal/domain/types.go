@@ -59,6 +59,12 @@ type SecretRef struct {
 	Mode   string `json:"mode"`
 }
 
+type InputFile struct {
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
+}
+
 type JobSpec struct {
 	Name             string            `json:"name"`
 	Image            string            `json:"image"`
@@ -70,6 +76,7 @@ type JobSpec struct {
 	Resources        Resources         `json:"resources"`
 	Labels           map[string]string `json:"labels,omitempty"`
 	NodeSelector     map[string]string `json:"node_selector,omitempty"`
+	Inputs           []InputFile       `json:"inputs,omitempty"`
 }
 
 type Job struct {

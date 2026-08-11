@@ -253,8 +253,18 @@ func (a *Agent) startAssignment(ctx context.Context, assignment domain.Assignmen
 func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 	jobDir := filepath.Join(a.config.WorkspaceDir, record.JobID)
 	outputDir := filepath.Join(jobDir, "output")
+	inputDir := filepath.Join(jobDir, "input")
 	logsDir := filepath.Join(jobDir, "logs")
 	secretsDir := filepath.Join(jobDir, "secrets")
+	if !workspaceChild(a.config.WorkspaceDir, inputDir) {
+		a.fail(record, "input_workspace_invalid", errors.New("input workspace escapes the configured job workspace"))
+		return
+	}
+	defer func() {
+		if err := removeMaterializedInputs(inputDir); err != nil {
+			a.log.Warn("input_cleanup_failed", "error", err, "job_id", record.JobID)
+		}
+	}()
 	for _, dir := range []string{jobDir, logsDir, secretsDir} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			a.fail(record, "workspace_create_failed", err)
@@ -278,8 +288,8 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 	for key, value := range record.Spec.Environment {
 		environment = append(environment, key+"="+value)
 	}
-	environment = append(environment, "JOBDOCK_JOB_ID="+record.JobID, "JOBDOCK_ATTEMPT_ID="+record.AttemptID, "JOBDOCK_API_URL="+a.config.ServerURL, "JOBDOCK_OUTPUT_DIR=/jobdock/output", "JOBDOCK_JOB_TOKEN_FILE=/run/secrets/jobdock/token")
-	binds := []string{outputDir + ":/jobdock/output", tokenFile + ":/run/secrets/jobdock/token:ro"}
+	environment = append(environment, "JOBDOCK_JOB_ID="+record.JobID, "JOBDOCK_ATTEMPT_ID="+record.AttemptID, "JOBDOCK_API_URL="+a.config.ServerURL, "JOBDOCK_INPUT_DIR=/jobdock/input", "JOBDOCK_OUTPUT_DIR=/jobdock/output", "JOBDOCK_JOB_TOKEN_FILE=/run/secrets/jobdock/token")
+	binds := []string{outputDir + ":/jobdock/output", inputDir + ":/jobdock/input:ro", tokenFile + ":/run/secrets/jobdock/token:ro"}
 	for _, ref := range record.Spec.SecretRefs {
 		value, ok := record.Secrets[ref.Name]
 		if !ok {
@@ -299,6 +309,10 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 		binds = append(binds, path+":/run/secrets/jobdock/"+target+":ro")
 	}
 	if record.ContainerID == "" {
+		if err := a.materializeInputs(ctx, record.JobID, record.Spec.Inputs, inputDir); err != nil {
+			a.fail(record, "input_materialization_failed", err)
+			return
+		}
 		if !a.sendEvent(record, "image_pull_started", domain.JobPullingImage, nil, "", "", nil) {
 			return
 		}

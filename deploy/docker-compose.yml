@@ -15,6 +15,7 @@ services:
       JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD: "${JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD:?Set a bootstrap password of at least 12 characters}"
       JOBDOCK_TELEMETRY_RAW_RETENTION: "${JOBDOCK_TELEMETRY_RAW_RETENTION:-24h}"
       JOBDOCK_TELEMETRY_RETENTION: "${JOBDOCK_TELEMETRY_RETENTION:-720h}"
+      JOBDOCK_MAX_INPUT_BYTES: "${JOBDOCK_MAX_INPUT_BYTES:-10737418240}"
     volumes:
       - jobdock-data:/var/lib/jobdock
     read_only: true

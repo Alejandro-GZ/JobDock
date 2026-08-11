@@ -60,7 +60,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer repository.Close()
-	files, err := filestore.New(cfg.DataDir, cfg.MaxLogBytes, cfg.MaxOutputBytes)
+	files, err := filestore.New(cfg.DataDir, cfg.MaxLogBytes, cfg.MaxOutputBytes, cfg.MaxInputBytes)
 	if err != nil {
 		logger.Error("open file store", "error", err)
 		os.Exit(1)

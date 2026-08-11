@@ -25,6 +25,7 @@ type Server struct {
 	JobLostAfter          time.Duration
 	MaxLogBytes           int64
 	MaxOutputBytes        int64
+	MaxInputBytes         int64
 	TelemetryRawRetention time.Duration
 	TelemetryRetention    time.Duration
 }
@@ -56,8 +57,12 @@ func LoadServer() (Server, error) {
 		JobLostAfter:          envDuration("JOBDOCK_JOB_LOST_AFTER", 5*time.Minute),
 		MaxLogBytes:           envInt64("JOBDOCK_MAX_LOG_BYTES", 10<<30),
 		MaxOutputBytes:        envInt64("JOBDOCK_MAX_OUTPUT_BYTES", 100<<30),
+		MaxInputBytes:         envInt64("JOBDOCK_MAX_INPUT_BYTES", 10<<30),
 		TelemetryRawRetention: envDuration("JOBDOCK_TELEMETRY_RAW_RETENTION", 24*time.Hour),
 		TelemetryRetention:    envDuration("JOBDOCK_TELEMETRY_RETENTION", 30*24*time.Hour),
+	}
+	if c.MaxLogBytes <= 0 || c.MaxOutputBytes <= 0 || c.MaxInputBytes <= 0 {
+		return c, errors.New("log, output, and input limits must be positive")
 	}
 	if c.TelemetryRawRetention <= 0 || c.TelemetryRetention < c.TelemetryRawRetention {
 		return c, errors.New("telemetry retention must be positive and at least as long as raw retention")

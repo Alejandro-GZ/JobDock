@@ -26,7 +26,7 @@ func TestLoginAndIdempotentJobCreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repository.Close()
-	files, _ := filestore.New(root, 1<<20, 1<<20)
+	files, _ := filestore.New(root, 1<<20, 1<<20, 1<<20)
 	box, _ := secretbox.New(bytes.Repeat([]byte{5}, 32))
 	cfg := config.Server{AllowInsecureHTTP: true, BootstrapUsername: "admin", BootstrapPassword: "correct horse battery", SessionTTL: 24 * 60 * 60 * 1e9}
 	api := New(cfg, repository, files, box, slog.New(slog.NewTextHandler(io.Discard, nil)))

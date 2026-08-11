@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
 )
@@ -41,6 +42,28 @@ func ValidateJobSpec(spec JobSpec) error {
 		}
 		if ref.Mode != "file" && ref.Mode != "env" {
 			return errors.New("secret mode must be file or env")
+		}
+	}
+	if len(spec.Inputs) > 1024 {
+		return errors.New("jobs may contain at most 1024 input files")
+	}
+	inputPaths := map[string]bool{}
+	for _, input := range spec.Inputs {
+		normalized := strings.ReplaceAll(input.Path, "\\", "/")
+		if normalized == "" || path.IsAbs(normalized) || path.Clean(normalized) != normalized || normalized == "." || strings.HasPrefix(normalized, "../") {
+			return fmt.Errorf("invalid input path %q", input.Path)
+		}
+		if inputPaths[normalized] {
+			return fmt.Errorf("duplicate input path %q", input.Path)
+		}
+		inputPaths[normalized] = true
+		if input.Size < 0 || len(input.SHA256) != 64 {
+			return fmt.Errorf("input %q requires a non-negative size and SHA-256 digest", input.Path)
+		}
+		for _, character := range input.SHA256 {
+			if !strings.ContainsRune("0123456789abcdef", character) {
+				return fmt.Errorf("input %q has an invalid SHA-256 digest", input.Path)
+			}
 		}
 	}
 	return nil

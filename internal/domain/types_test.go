@@ -25,6 +25,15 @@ func TestValidateJobSpec(t *testing.T) {
 	if err := ValidateJobSpec(valid); err != nil {
 		t.Fatal(err)
 	}
+	valid.Inputs = []InputFile{{Path: "dataset/value.txt", Size: 5, SHA256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"}}
+	if err := ValidateJobSpec(valid); err != nil {
+		t.Fatal(err)
+	}
+	valid.Inputs[0].Path = "../escape"
+	if err := ValidateJobSpec(valid); err == nil {
+		t.Fatal("expected input traversal to be rejected")
+	}
+	valid.Inputs = nil
 	valid.Environment = map[string]string{"JOBDOCK_JOB_ID": "spoof"}
 	if err := ValidateJobSpec(valid); err == nil {
 		t.Fatal("expected reserved environment variable to be rejected")

@@ -100,6 +100,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agent/jobs/{id}/telemetry", a.withAgent(a.agentTelemetry))
 	mux.HandleFunc("PUT /api/v1/agent/jobs/{id}/logs/{stream}", a.withAgent(a.putLog))
 	mux.HandleFunc("PUT /api/v1/agent/jobs/{id}/outputs/{path...}", a.withAgent(a.putOutput))
+	mux.HandleFunc("GET /api/v1/agent/jobs/{id}/inputs/{path...}", a.withAgent(a.getInput))
 	mux.HandleFunc("PUT /api/v1/agent/checkpoint-syncs/{sync}/files/{path...}", a.withAgent(a.putCheckpoint))
 	mux.HandleFunc("POST /api/v1/agent/checkpoint-syncs/{sync}/complete", a.withAgent(a.completeCheckpoint))
 	mux.HandleFunc("POST /api/v1/job-context/progress", a.withJob(a.sdkProgress))
@@ -233,33 +234,43 @@ func (a *API) listAudit(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 	user := currentUser(r)
-	var spec domain.JobSpec
-	if !decodeJSON(w, r, &spec) {
+	idem, proceed := a.beginIdempotency(w, r, user.ID)
+	if !proceed {
+		return
+	}
+	jobID := ids.New()
+	spec, ok := a.decodeJobRequest(w, r, jobID)
+	if !ok {
+		idem.abort(r.Context())
+		_ = a.files.DeleteJob(jobID)
 		return
 	}
 	if err := domain.ValidateJobSpec(spec); err != nil {
+		idem.abort(r.Context())
+		_ = a.files.DeleteJob(jobID)
 		writeProblem(w, 422, "invalid_job_spec", err.Error())
 		return
 	}
 	for _, ref := range spec.SecretRefs {
 		if _, _, err := a.store.SecretCiphertext(r.Context(), user.ID, ref.Name); err != nil {
+			idem.abort(r.Context())
+			_ = a.files.DeleteJob(jobID)
 			writeProblem(w, 422, "secret_not_found", fmt.Sprintf("Secret %q is not available", ref.Name))
 			return
 		}
 	}
 	if spec.RegistrySecret != "" {
 		if _, kind, err := a.store.SecretCiphertext(r.Context(), user.ID, spec.RegistrySecret); err != nil || kind != "registry" {
+			idem.abort(r.Context())
+			_ = a.files.DeleteJob(jobID)
 			writeProblem(w, 422, "registry_secret_not_found", "Registry secret is unavailable or has the wrong kind")
 			return
 		}
 	}
-	idem, proceed := a.beginIdempotency(w, r, user.ID)
-	if !proceed {
-		return
-	}
-	job := domain.Job{ID: ids.New(), OwnerID: user.ID, Spec: spec, Status: domain.JobQueued, DesiredStatus: domain.JobRunning, ObservedStatus: domain.JobQueued, CreatedAt: time.Now().UTC(), Version: 1}
+	job := domain.Job{ID: jobID, OwnerID: user.ID, Spec: spec, Status: domain.JobQueued, DesiredStatus: domain.JobRunning, ObservedStatus: domain.JobQueued, CreatedAt: time.Now().UTC(), Version: 1}
 	if err := a.store.CreateJob(r.Context(), job); err != nil {
 		idem.abort(r.Context())
+		_ = a.files.DeleteJob(jobID)
 		writeStoreError(w, err)
 		return
 	}

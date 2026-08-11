@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -36,6 +37,13 @@ type job struct {
 	ID        string `json:"id"`
 	Status    string `json:"status"`
 	AttemptID string `json:"attempt_id"`
+	Spec      struct {
+		Inputs []struct {
+			Path   string `json:"path"`
+			Size   int64  `json:"size"`
+			SHA256 string `json:"sha256"`
+		} `json:"inputs"`
+	} `json:"spec"`
 }
 
 type event struct {
@@ -77,6 +85,7 @@ func TestDistributedDockerLifecycle(t *testing.T) {
 	h.waitNodeOnline(30 * time.Second)
 
 	h.run("submit run logs output archive", h.testHappyPath)
+	h.run("immutable read-only job inputs", h.testInputs)
 	h.run("SDK metrics and resource series", h.testObservableSeries)
 	h.run("cooperative stop", h.testStop)
 	h.run("server restart", h.testServerRestart)
@@ -143,6 +152,7 @@ func (h *harness) startServer() {
 		"JOBDOCK_JOB_LOST_AFTER=3s",
 		"JOBDOCK_MAX_LOG_BYTES=1048576",
 		"JOBDOCK_MAX_OUTPUT_BYTES=512",
+		"JOBDOCK_MAX_INPUT_BYTES=1024",
 	}
 	h.server = h.startProcess("server", h.serverBin, env)
 }
@@ -267,6 +277,39 @@ func (h *harness) submit(name, image string, command []string) job {
 	return created
 }
 
+func (h *harness) submitWithInput(name, path string, content []byte, expectedStatus int) job {
+	h.t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	specPart, _ := writer.CreateFormField("spec")
+	spec := map[string]any{"name": name, "image": "alpine:3.20", "command": []string{"sh", "-c", `value=$(cat /jobdock/input/dataset/value.txt) || exit 2; [ "$value" = "immutable-input" ] || exit 3; if printf changed > /jobdock/input/dataset/value.txt 2>/dev/null; then exit 4; fi; printf %s "$value" > /jobdock/output/copied.txt`}, "resources": map[string]any{"cpu_millis": 100, "memory_bytes": 32 << 20, "gpu": map[string]any{"count": 0, "min_vram_bytes": 0}}}
+	_ = json.NewEncoder(specPart).Encode(spec)
+	inputPart, _ := writer.CreateFormFile("input:"+path, filepath.Base(path))
+	_, _ = inputPart.Write(content)
+	_ = writer.Close()
+	request, _ := http.NewRequest(http.MethodPost, h.serverURL+"/api/v1/jobs", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("X-CSRF-Token", h.csrf)
+	request.Header.Set("Idempotency-Key", fmt.Sprintf("e2e-input-%d", time.Now().UnixNano()))
+	response, err := h.client.Do(request)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer response.Body.Close()
+	data, _ := io.ReadAll(response.Body)
+	if response.StatusCode != expectedStatus {
+		h.t.Fatalf("input job returned %d, expected %d: %s", response.StatusCode, expectedStatus, data)
+	}
+	var created job
+	if expectedStatus == http.StatusCreated {
+		if err = json.Unmarshal(data, &created); err != nil {
+			h.t.Fatal(err)
+		}
+		h.jobs = append(h.jobs, created.ID)
+	}
+	return created
+}
+
 func (h *harness) currentJob(id string) (job, error) {
 	var current job
 	err := h.requestOptional(http.MethodGet, "/api/v1/jobs/"+id, nil, &current, false)
@@ -336,6 +379,50 @@ func (h *harness) testHappyPath(t *testing.T) {
 	}
 	if len(wanted) != 0 {
 		t.Fatalf("archive entries missing: %v", wanted)
+	}
+}
+
+func (h *harness) testInputs(t *testing.T) {
+	created := h.submitWithInput("e2e-inputs", "dataset/value.txt", []byte("immutable-input"), http.StatusCreated)
+	if len(created.Spec.Inputs) != 1 || created.Spec.Inputs[0].Path != "dataset/value.txt" || created.Spec.Inputs[0].Size != int64(len("immutable-input")) || len(created.Spec.Inputs[0].SHA256) != 64 {
+		t.Fatalf("input manifest missing: %#v", created.Spec.Inputs)
+	}
+	h.waitJob(created.ID, 60*time.Second, "SUCCEEDED")
+	archiveData := h.raw(http.MethodGet, "/api/v1/jobs/"+created.ID+"/archive.zip", nil, http.StatusOK, false)
+	archive, err := zip.NewReader(bytes.NewReader(archiveData), int64(len(archiveData)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundInput := false
+	for _, item := range archive.File {
+		if item.Name != "inputs/dataset/value.txt" {
+			continue
+		}
+		reader, openErr := item.Open()
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		data, _ := io.ReadAll(reader)
+		_ = reader.Close()
+		foundInput = string(data) == "immutable-input"
+	}
+	if !foundInput {
+		t.Fatal("job archive does not retain the reproducible input generation")
+	}
+	h.eventually(10*time.Second, func() bool {
+		_, err := os.Stat(filepath.Join(h.root, "agent-workspace", created.ID, "input"))
+		return os.IsNotExist(err)
+	}, "agent input workspace cleanup")
+	h.request(http.MethodDelete, "/api/v1/jobs/"+created.ID, nil, nil, http.StatusAccepted, true)
+	h.eventually(10*time.Second, func() bool {
+		_, err := os.Stat(filepath.Join(h.root, "server", "jobs", created.ID, "inputs"))
+		return os.IsNotExist(err)
+	}, "central input cleanup")
+	before, _ := os.ReadDir(filepath.Join(h.root, "server", "jobs"))
+	h.submitWithInput("e2e-input-limit", "oversized.bin", bytes.Repeat([]byte("x"), 2048), http.StatusRequestEntityTooLarge)
+	after, _ := os.ReadDir(filepath.Join(h.root, "server", "jobs"))
+	if len(after) != len(before) {
+		t.Fatalf("failed input staging was not cleaned: before=%d after=%d", len(before), len(after))
 	}
 }
 

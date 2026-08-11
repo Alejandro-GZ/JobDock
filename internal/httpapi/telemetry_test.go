@@ -47,7 +47,7 @@ func TestAgentTelemetryPersistsOnlyNormalizedScalars(t *testing.T) {
 	if _, err = repository.DB().ExecContext(ctx, `UPDATE jobs SET assigned_node_id=?,attempt_id=?,status='RUNNING',observed_status='RUNNING' WHERE id=?`, node.ID, attemptID, job.ID); err != nil {
 		t.Fatal(err)
 	}
-	files, _ := filestore.New(root, 1024, 1024)
+	files, _ := filestore.New(root, 1024, 1024, 1024)
 	box, _ := secretbox.New(bytes.Repeat([]byte{3}, 32))
 	api := New(config.Server{AllowInsecureHTTP: true}, repository, files, box, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	server := httptest.NewServer(api.Handler())
