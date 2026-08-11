@@ -19,6 +19,22 @@ uploads, node enrollment/drain/resume/metadata operations, and every SDK
 job-context endpoint. Secret values and agent/job credentials are write-only and
 must not be emitted by generated clients in logs.
 
+## Time-series queries
+
+SDK metrics are stored as attempt-scoped structured samples and are available
+from `GET /api/v1/jobs/{jobId}/metrics`. Automatic CPU, memory, GPU utilization,
+and GPU memory samples are available from
+`GET /api/v1/jobs/{jobId}/resources`. Both endpoints enforce normal job
+authorization, accept RFC3339 `from`/`to` windows and bounded `limit` values,
+and return the effective resolution and a `truncated` indicator. Passing
+`format=csv` returns the same bounded selection as a CSV download.
+
+Metric queries accept repeated `name` filters and
+`resolution=auto|raw|1m|5m`. Resource queries accept
+`resolution=auto|5s|5m`. `attempt_id` defaults to the current attempt and is
+validated against the job, which prevents series from different reruns being
+combined.
+
 ## Drift protection
 
 `TestOpenAPICoversRegisteredAPI` extracts every literal `/api/v1` method and

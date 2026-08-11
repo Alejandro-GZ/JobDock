@@ -82,6 +82,39 @@ paths:
       operationId: listJobEvents
       parameters: [{$ref: '#/components/parameters/JobID'}, {name: after, in: query, schema: {type: integer, format: int64}}]
       responses: {'200': {description: Ordered job events}}
+  /jobs/{jobId}/metrics:
+    get:
+      operationId: getJobMetrics
+      description: Query bounded, attempt-scoped SDK metric series. Auto resolution downsamples on the server.
+      parameters:
+        - {$ref: '#/components/parameters/JobID'}
+        - {$ref: '#/components/parameters/AttemptIDQuery'}
+        - {$ref: '#/components/parameters/SeriesFrom'}
+        - {$ref: '#/components/parameters/SeriesTo'}
+        - {$ref: '#/components/parameters/SeriesLimit'}
+        - {name: name, in: query, description: Repeat to select up to 64 metric names, schema: {type: array, maxItems: 64, items: {type: string}}}
+        - {name: resolution, in: query, schema: {type: string, enum: [auto, raw, 1m, 5m], default: auto}}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv], default: json}}
+      responses:
+        '200': {description: Metric series or CSV export, content: {application/json: {schema: {$ref: '#/components/schemas/MetricSeriesResponse'}}, text/csv: {schema: {type: string}}}}
+        '404': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+  /jobs/{jobId}/resources:
+    get:
+      operationId: getJobResources
+      description: Query bounded CPU, memory, GPU utilization and GPU memory samples for one attempt.
+      parameters:
+        - {$ref: '#/components/parameters/JobID'}
+        - {$ref: '#/components/parameters/AttemptIDQuery'}
+        - {$ref: '#/components/parameters/SeriesFrom'}
+        - {$ref: '#/components/parameters/SeriesTo'}
+        - {$ref: '#/components/parameters/SeriesLimit'}
+        - {name: resolution, in: query, schema: {type: string, enum: [auto, 5s, 5m], default: auto}}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv], default: json}}
+      responses:
+        '200': {description: Resource samples or CSV export, content: {application/json: {schema: {$ref: '#/components/schemas/ResourceSeriesResponse'}}, text/csv: {schema: {type: string}}}}
+        '404': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
   /jobs/{jobId}/stream:
     get:
       operationId: streamJob
@@ -402,6 +435,10 @@ components:
     IdempotencyKey: {name: Idempotency-Key, in: header, required: false, schema: {type: string, minLength: 16, maxLength: 128}}
     LogStream: {name: stream, in: path, required: true, schema: {type: string, enum: [stdout, stderr]}}
     UploadOffset: {name: offset, in: query, required: true, schema: {type: integer, format: int64, minimum: 0}}
+    AttemptIDQuery: {name: attempt_id, in: query, description: Defaults to the current attempt, schema: {type: string, format: uuid}}
+    SeriesFrom: {name: from, in: query, description: Inclusive RFC3339 start, schema: {type: string, format: date-time}}
+    SeriesTo: {name: to, in: query, description: Inclusive RFC3339 end, schema: {type: string, format: date-time}}
+    SeriesLimit: {name: limit, in: query, description: Global maximum number of returned points, schema: {type: integer, minimum: 1, maximum: 10000, default: 2000}}
   responses:
     Problem:
       description: RFC 9457-style problem detail
@@ -539,10 +576,52 @@ components:
       additionalProperties: false
       required: [cpu_millis, memory_bytes]
       properties:
+        attempt_id: {type: string, format: uuid}
+        captured_at: {type: string, format: date-time}
+        resolution_seconds: {type: integer, enum: [5, 300]}
+        sample_count: {type: integer, minimum: 1}
         cpu_millis: {type: integer, format: int64, minimum: 0}
         memory_bytes: {type: integer, format: int64, minimum: 0}
         gpu_utilization_basis_points: {type: integer, format: int64, minimum: 0, maximum: 10000}
         gpu_memory_bytes: {type: integer, format: int64, minimum: 0}
+    MetricPoint:
+      type: object
+      required: [captured_at, value, sample_count]
+      properties:
+        captured_at: {type: string, format: date-time}
+        step: {type: integer, format: int64}
+        value: {type: number, format: double}
+        sample_count: {type: integer, format: int64, minimum: 1}
+    MetricSeries:
+      type: object
+      required: [name, points, last, min, max, sample_count]
+      properties:
+        name: {type: string}
+        points: {type: array, items: {$ref: '#/components/schemas/MetricPoint'}}
+        last: {type: number, format: double}
+        min: {type: number, format: double}
+        max: {type: number, format: double}
+        sample_count: {type: integer, format: int64, minimum: 1}
+    MetricSeriesResponse:
+      type: object
+      required: [attempt_id, from, to, resolution_seconds, truncated, series]
+      properties:
+        attempt_id: {type: string, format: uuid}
+        from: {type: string, format: date-time}
+        to: {type: string, format: date-time}
+        resolution_seconds: {type: integer, minimum: 0}
+        truncated: {type: boolean}
+        series: {type: array, items: {$ref: '#/components/schemas/MetricSeries'}}
+    ResourceSeriesResponse:
+      type: object
+      required: [attempt_id, from, to, resolution_seconds, truncated, points]
+      properties:
+        attempt_id: {type: string, format: uuid}
+        from: {type: string, format: date-time}
+        to: {type: string, format: date-time}
+        resolution_seconds: {type: integer, enum: [5, 300]}
+        truncated: {type: boolean}
+        points: {type: array, items: {$ref: '#/components/schemas/ResourceSample'}}
     AgentEnrollmentRequest:
       type: object
       additionalProperties: false

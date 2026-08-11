@@ -1,4 +1,4 @@
-import type{AuditEvent,Job,JobEvent,JobSpec,Node,Secret,User}from "./types";
+import type{AuditEvent,Job,JobEvent,JobSpec,MetricSeriesResponse,Node,ResourceSeriesResponse,Secret,User}from "./types";
 let csrfToken="";
 export class APIError extends Error{constructor(public status:number,public code:string,message:string){super(message)}}
 async function request<T>(path:string,options:RequestInit={}):Promise<T>{const headers=new Headers(options.headers);if(options.body)headers.set("Content-Type","application/json");if(options.method&&!['GET','HEAD'].includes(options.method)){headers.set("X-CSRF-Token",csrfToken);if(!headers.has("Idempotency-Key")&&(path==="/jobs"||path.endsWith("/stop")||options.method==="DELETE"))headers.set("Idempotency-Key",idempotencyKey())}const response=await fetch(`/api/v1${path}`,{...options,headers,credentials:"same-origin"});if(!response.ok){const problem=await response.json().catch(()=>({}));throw new APIError(response.status,problem.code??"request_failed",problem.detail??response.statusText)}if(response.status===204)return undefined as T;return response.json() as Promise<T>}
@@ -9,6 +9,10 @@ export const api={
   jobs:async()=> (await request<{items:Job[]|null}>("/jobs")).items??[],job:(id:string)=>request<Job>(`/jobs/${id}`),
   createJob:(spec:JobSpec)=>request<Job>("/jobs",{method:"POST",body:JSON.stringify(spec)}),stopJob:(id:string)=>request(`/jobs/${id}/stop`,{method:"POST"}),deleteJob:(id:string)=>request(`/jobs/${id}`,{method:"DELETE"}),
   events:async(id:string,after=0)=>(await request<{items:JobEvent[]|null}>(`/jobs/${id}/events?after=${after}`)).items??[],
+  metrics:(id:string,query:string)=>request<MetricSeriesResponse>(`/jobs/${id}/metrics?${query}`),
+  resources:(id:string,query:string)=>request<ResourceSeriesResponse>(`/jobs/${id}/resources?${query}`),
+  metricsCSV:(id:string,query:string)=>seriesCSV(id,"metrics",query),
+  resourcesCSV:(id:string,query:string)=>seriesCSV(id,"resources",query),
   openLogStream:(id:string,stream:"stdout"|"stderr")=>new EventSource(`/api/v1/jobs/${encodeURIComponent(id)}/logs/${stream}/tail?after=tail`),
   nodes:async()=> (await request<{items:Node[]|null}>("/nodes")).items??[],enrollmentToken:()=>request<{token:string;expires_at:string}>("/nodes/enrollment-tokens",{method:"POST"}),setNode:(id:string,action:"drain"|"resume")=>request(`/nodes/${id}/${action}`,{method:"POST"}),updateNode:(id:string,name:string,labels:Record<string,string>)=>request(`/nodes/${id}`,{method:"PATCH",body:JSON.stringify({name,labels})}),
   secrets:async()=> (await request<{items:Secret[]|null}>("/secrets")).items??[],createSecret:(name:string,value:string,kind:string)=>request<Secret>("/secrets",{method:"POST",body:JSON.stringify({name,value,kind})}),deleteSecret:(id:string)=>request<void>(`/secrets/${id}`,{method:"DELETE"}),
@@ -16,3 +20,4 @@ export const api={
   audit:async()=> (await request<{items:AuditEvent[]|null}>("/audit")).items??[],
 };
 function idempotencyKey(){if(typeof crypto.randomUUID==="function")return crypto.randomUUID();const bytes=crypto.getRandomValues(new Uint8Array(24));return Array.from(bytes,v=>v.toString(16).padStart(2,"0")).join("")}
+function seriesCSV(id:string,kind:"metrics"|"resources",query:string){const params=new URLSearchParams(query);params.set("format","csv");params.set("limit","10000");return `/api/v1/jobs/${encodeURIComponent(id)}/${kind}?${params}`}

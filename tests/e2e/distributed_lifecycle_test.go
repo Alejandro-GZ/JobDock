@@ -6,6 +6,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,6 +21,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/jobdock/jobdock/internal/secretbox"
+	_ "modernc.org/sqlite"
 )
 
 const (
@@ -71,6 +76,7 @@ func TestDistributedDockerLifecycle(t *testing.T) {
 	h.waitNodeOnline(30 * time.Second)
 
 	h.run("submit run logs output archive", h.testHappyPath)
+	h.run("SDK metrics and resource series", h.testObservableSeries)
 	h.run("cooperative stop", h.testStop)
 	h.run("server restart", h.testServerRestart)
 	h.run("agent restart", h.testAgentRestart)
@@ -330,6 +336,84 @@ func (h *harness) testHappyPath(t *testing.T) {
 	if len(wanted) != 0 {
 		t.Fatalf("archive entries missing: %v", wanted)
 	}
+}
+
+func (h *harness) testObservableSeries(t *testing.T) {
+	created := h.submit("e2e-observable-series", "alpine:3.20", []string{"sh", "-c", "i=0; while [ $i -lt 12 ]; do i=$((i+1)); dd if=/dev/zero of=/dev/null bs=1M count=8 2>/dev/null; sleep 1; done"})
+	h.waitJob(created.ID, 30*time.Second, "RUNNING")
+	token := h.jobToken(created.ID)
+	payload := []byte(`{"items":[{"name":"loss","value":0.75,"step":1},{"name":"accuracy","value":0.8,"step":1}]}`)
+	request, _ := http.NewRequest(http.MethodPost, h.serverURL+"/api/v1/job-context/metrics", bytes.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := h.client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("metric ingestion returned %d", response.StatusCode)
+	}
+	finished := h.waitJob(created.ID, 60*time.Second, "SUCCEEDED")
+	var metrics struct {
+		AttemptID string `json:"attempt_id"`
+		Series    []struct {
+			Name   string `json:"name"`
+			Points []any  `json:"points"`
+		} `json:"series"`
+	}
+	h.request(http.MethodGet, "/api/v1/jobs/"+created.ID+"/metrics?resolution=raw", nil, &metrics, http.StatusOK, false)
+	if metrics.AttemptID != finished.AttemptID || len(metrics.Series) != 2 || len(metrics.Series[0].Points) == 0 {
+		t.Fatalf("SDK metric series missing: %#v", metrics)
+	}
+	var resources struct {
+		AttemptID string `json:"attempt_id"`
+		Points    []struct {
+			SampleCount int64 `json:"sample_count"`
+			CPUMillis   int64 `json:"cpu_millis"`
+		} `json:"points"`
+	}
+	h.request(http.MethodGet, "/api/v1/jobs/"+created.ID+"/resources?resolution=5s", nil, &resources, http.StatusOK, false)
+	if resources.AttemptID != finished.AttemptID || len(resources.Points) == 0 || resources.Points[0].SampleCount < 1 {
+		t.Fatalf("resource series missing: %#v", resources)
+	}
+	for _, endpoint := range []string{"metrics", "resources"} {
+		data := h.raw(http.MethodGet, "/api/v1/jobs/"+created.ID+"/"+endpoint+"?format=csv", nil, http.StatusOK, false)
+		if !bytes.Contains(data, []byte(finished.AttemptID)) {
+			t.Fatalf("%s CSV is missing attempt identity: %s", endpoint, data)
+		}
+	}
+}
+
+func (h *harness) jobToken(jobID string) string {
+	h.t.Helper()
+	database, err := sql.Open("sqlite", filepath.Join(h.root, "server", "jobdock.db")+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer database.Close()
+	var assignmentID string
+	var ciphertext []byte
+	if err = database.QueryRow(`SELECT id,job_token_ciphertext FROM assignments WHERE job_id=? ORDER BY created_at DESC LIMIT 1`, jobID).Scan(&assignmentID, &ciphertext); err != nil {
+		h.t.Fatal(err)
+	}
+	encodedKey, err := os.ReadFile(filepath.Join(h.root, "server", "master.key"))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	key, err := base64.StdEncoding.DecodeString(string(encodedKey))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	box, err := secretbox.New(key)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	plaintext, err := box.Decrypt(ciphertext, []byte("assignment/"+assignmentID))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return string(plaintext)
 }
 
 func (h *harness) testStop(t *testing.T) {

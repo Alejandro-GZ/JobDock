@@ -75,6 +75,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/jobs/{id}/stop", a.withSession(false, true, a.stopJob))
 	mux.HandleFunc("DELETE /api/v1/jobs/{id}", a.withSession(false, true, a.deleteJob))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/events", a.withSession(false, false, a.jobEvents))
+	mux.HandleFunc("GET /api/v1/jobs/{id}/metrics", a.withSession(false, false, a.jobMetrics))
+	mux.HandleFunc("GET /api/v1/jobs/{id}/resources", a.withSession(false, false, a.jobResources))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/stream", a.withSession(false, false, a.jobStream))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/logs/{stream}", a.withSession(false, false, a.getLogs))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/logs/{stream}/tail", a.withSession(false, false, a.tailLogs))
@@ -822,6 +824,7 @@ func (a *API) agentTelemetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sample.JobID = job.ID
+	sample.AttemptID = job.AttemptID
 	sample.CapturedAt = time.Now().UTC()
 	if err = a.store.AppendResourceSample(r.Context(), sample); err != nil {
 		writeStoreError(w, err)
@@ -966,7 +969,7 @@ func (a *API) completeCheckpoint(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) sdkProgress(w http.ResponseWriter, r *http.Request) { a.sdkRecord(w, r, "progress") }
-func (a *API) sdkMetrics(w http.ResponseWriter, r *http.Request)  { a.sdkRecord(w, r, "metrics") }
+func (a *API) sdkMetrics(w http.ResponseWriter, r *http.Request)  { a.sdkMetricSamples(w, r) }
 func (a *API) sdkParams(w http.ResponseWriter, r *http.Request)   { a.sdkRecord(w, r, "params") }
 func (a *API) sdkEvents(w http.ResponseWriter, r *http.Request)   { a.sdkRecord(w, r, "sdk_event") }
 func (a *API) sdkRecord(w http.ResponseWriter, r *http.Request, eventType string) {

@@ -18,7 +18,7 @@ Stop the server or use SQLite's online backup mechanism, then copy the database,
 - An agent should stop accepting work below the greater of 10 GiB or 10% workspace free space.
 - Resource telemetry is sampled every five seconds.
 
-Resource telemetry stores only normalized CPU millicores, memory bytes, average GPU utilization, and GPU memory bytes. Full Docker Stats documents are discarded in the agent and rejected by the server. Five-second samples are retained for 24 hours, then averaged into five-minute buckets and retained for 30 days. Configure these windows with `JOBDOCK_TELEMETRY_RAW_RETENTION` and `JOBDOCK_TELEMETRY_RETENTION`; the final retention must not be shorter than the raw window.
+Resource telemetry stores only normalized CPU millicores, memory bytes, average GPU utilization, and GPU memory bytes. Full Docker Stats documents are discarded in the agent and rejected by the server. Five-second samples are retained for 24 hours, then averaged into five-minute buckets and retained for 30 days. Configure these windows with `JOBDOCK_TELEMETRY_RAW_RETENTION` and `JOBDOCK_TELEMETRY_RETENTION`; the final retention must not be shorter than the raw window. Public resource and SDK metric queries are attempt-scoped and capped at 10,000 returned points; the UI uses a 2,000-point window and server-selected resolution by default.
 
 Limits are controlled with `JOBDOCK_MAX_LOG_BYTES` and `JOBDOCK_MAX_OUTPUT_BYTES`. Limit events are visible in the job timeline; workloads are not killed merely because central collection reached a quota.
 

@@ -27,13 +27,18 @@ Scheduling first removes offline/draining nodes, label mismatches, and nodes wit
 
 ## Storage
 
-- SQLite WAL: users, sessions, node inventory, jobs, attempts, assignments, metadata, events, secrets, and audit records.
+- SQLite WAL: users, sessions, node inventory, jobs, attempts, assignments, metadata, structured SDK metric samples, compact resource samples, events, secrets, and audit records.
 - Server filesystem: ordered stdout/stderr files, outputs, and generated metadata.
 - Agent filesystem: assignment journal, bounded log spool, job token files, secret files, and output workspaces.
 
 Storage access is behind package boundaries so PostgreSQL and object storage can be implemented without changing the domain model.
 
+Metrics reported by `job.metric()` are not generic lifecycle events. They are
+stored in an attempt-aware time-series table with server-side aggregation and
+bounded queries. Normalized resource telemetry uses the same attempt identity;
+raw Docker Stats documents never enter persistence. This keeps future reruns
+unambiguous while allowing the UI to share one chart model for both channels.
+
 ## Protocol compatibility
 
 The MVP protocol version is `1`. Agents send `X-JobDock-Protocol-Version` and advertise their semantic software version. An incompatible protocol must fail visibly instead of silently degrading behavior.
-

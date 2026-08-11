@@ -14,15 +14,15 @@ const (
 )
 
 func (s *Store) AppendResourceSample(ctx context.Context, sample domain.ResourceSample) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO job_resource_samples(job_id,captured_at,resolution_seconds,sample_count,cpu_millis,memory_bytes,gpu_utilization_basis_points,gpu_memory_bytes) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(job_id,captured_at,resolution_seconds) DO NOTHING`,
-		sample.JobID, sample.CapturedAt.UTC().Unix(), int(TelemetryRawResolution/time.Second), 1, sample.CPUMillis, sample.MemoryBytes, sample.GPUUtilizationBasisPoints, sample.GPUMemoryBytes)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO job_resource_samples(job_id,attempt_id,captured_at,resolution_seconds,sample_count,cpu_millis,memory_bytes,gpu_utilization_basis_points,gpu_memory_bytes) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(attempt_id,captured_at,resolution_seconds) DO NOTHING`,
+		sample.JobID, sample.AttemptID, sample.CapturedAt.UTC().Unix(), int(TelemetryRawResolution/time.Second), 1, sample.CPUMillis, sample.MemoryBytes, sample.GPUUtilizationBasisPoints, sample.GPUMemoryBytes)
 	return mapConstraint(err)
 }
 
-func (s *Store) ResourceSamples(ctx context.Context, jobID string, from, to time.Time) ([]domain.ResourceSample, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT job_id,captured_at,resolution_seconds,sample_count,cpu_millis,memory_bytes,gpu_utilization_basis_points,gpu_memory_bytes FROM job_resource_samples WHERE job_id=? AND captured_at>=? AND captured_at<=? ORDER BY captured_at,resolution_seconds`, jobID, from.UTC().Unix(), to.UTC().Unix())
+func (s *Store) ResourceSamples(ctx context.Context, jobID, attemptID string, from, to time.Time, resolution, limit int) ([]domain.ResourceSample, bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT job_id,attempt_id,captured_at,resolution_seconds,sample_count,cpu_millis,memory_bytes,gpu_utilization_basis_points,gpu_memory_bytes FROM job_resource_samples WHERE job_id=? AND attempt_id=? AND captured_at>=? AND captured_at<=? AND resolution_seconds=? ORDER BY captured_at LIMIT ?`, jobID, attemptID, from.UTC().Unix(), to.UTC().Unix(), resolution, limit+1)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 	result := make([]domain.ResourceSample, 0)
@@ -30,8 +30,8 @@ func (s *Store) ResourceSamples(ctx context.Context, jobID string, from, to time
 		var sample domain.ResourceSample
 		var captured int64
 		var gpuUtilization, gpuMemory sql.NullInt64
-		if err = rows.Scan(&sample.JobID, &captured, &sample.ResolutionSeconds, &sample.SampleCount, &sample.CPUMillis, &sample.MemoryBytes, &gpuUtilization, &gpuMemory); err != nil {
-			return nil, err
+		if err = rows.Scan(&sample.JobID, &sample.AttemptID, &captured, &sample.ResolutionSeconds, &sample.SampleCount, &sample.CPUMillis, &sample.MemoryBytes, &gpuUtilization, &gpuMemory); err != nil {
+			return nil, false, err
 		}
 		sample.CapturedAt = time.Unix(captured, 0).UTC()
 		if gpuUtilization.Valid {
@@ -44,7 +44,14 @@ func (s *Store) ResourceSamples(ctx context.Context, jobID string, from, to time
 		}
 		result = append(result, sample)
 	}
-	return result, rows.Err()
+	if err = rows.Err(); err != nil {
+		return nil, false, err
+	}
+	truncated := len(result) > limit
+	if truncated {
+		result = result[:limit]
+	}
+	return result, truncated, nil
 }
 
 // MaintainResourceTelemetry keeps recent five-second samples, compacts older
@@ -57,16 +64,16 @@ func (s *Store) MaintainResourceTelemetry(ctx context.Context, now time.Time, ra
 	defer tx.Rollback()
 	rawCutoff := now.UTC().Add(-rawRetention).Unix()
 	retentionCutoff := now.UTC().Add(-retention).Unix()
-	_, err = tx.ExecContext(ctx, `INSERT INTO job_resource_samples(job_id,captured_at,resolution_seconds,sample_count,cpu_millis,memory_bytes,gpu_utilization_basis_points,gpu_memory_bytes)
-		SELECT job_id,(captured_at/300)*300,300,SUM(sample_count),
+	_, err = tx.ExecContext(ctx, `INSERT INTO job_resource_samples(job_id,attempt_id,captured_at,resolution_seconds,sample_count,cpu_millis,memory_bytes,gpu_utilization_basis_points,gpu_memory_bytes)
+		SELECT job_id,attempt_id,(captured_at/300)*300,300,SUM(sample_count),
 		       SUM(cpu_millis*sample_count)/SUM(sample_count),
 		       SUM(memory_bytes*sample_count)/SUM(sample_count),
 		       CASE WHEN COUNT(gpu_utilization_basis_points)>0 THEN SUM(gpu_utilization_basis_points*sample_count)/SUM(CASE WHEN gpu_utilization_basis_points IS NOT NULL THEN sample_count ELSE 0 END) END,
 		       CASE WHEN COUNT(gpu_memory_bytes)>0 THEN SUM(gpu_memory_bytes*sample_count)/SUM(CASE WHEN gpu_memory_bytes IS NOT NULL THEN sample_count ELSE 0 END) END
 		FROM job_resource_samples
 		WHERE resolution_seconds=5 AND captured_at<? AND captured_at>=?
-		GROUP BY job_id,(captured_at/300)*300
-		ON CONFLICT(job_id,captured_at,resolution_seconds) DO NOTHING`, rawCutoff, retentionCutoff)
+		GROUP BY job_id,attempt_id,(captured_at/300)*300
+		ON CONFLICT(attempt_id,captured_at,resolution_seconds) DO NOTHING`, rawCutoff, retentionCutoff)
 	if err != nil {
 		return err
 	}

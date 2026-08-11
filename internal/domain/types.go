@@ -170,13 +170,39 @@ type Event struct {
 // Docker Stats responses must never cross this boundary or reach persistence.
 type ResourceSample struct {
 	JobID                     string    `json:"-"`
-	CapturedAt                time.Time `json:"-"`
-	ResolutionSeconds         int       `json:"-"`
-	SampleCount               int       `json:"-"`
+	AttemptID                 string    `json:"attempt_id"`
+	CapturedAt                time.Time `json:"captured_at"`
+	ResolutionSeconds         int       `json:"resolution_seconds"`
+	SampleCount               int       `json:"sample_count"`
 	CPUMillis                 int64     `json:"cpu_millis"`
 	MemoryBytes               int64     `json:"memory_bytes"`
 	GPUUtilizationBasisPoints *int64    `json:"gpu_utilization_basis_points,omitempty"`
 	GPUMemoryBytes            *int64    `json:"gpu_memory_bytes,omitempty"`
+}
+
+type MetricSample struct {
+	JobID      string    `json:"-"`
+	AttemptID  string    `json:"attempt_id"`
+	Name       string    `json:"name"`
+	Step       *int64    `json:"step,omitempty"`
+	Value      float64   `json:"value"`
+	CapturedAt time.Time `json:"captured_at"`
+}
+
+type MetricPoint struct {
+	CapturedAt  time.Time `json:"captured_at"`
+	Step        *int64    `json:"step,omitempty"`
+	Value       float64   `json:"value"`
+	SampleCount int64     `json:"sample_count"`
+}
+
+type MetricSeries struct {
+	Name        string        `json:"name"`
+	Points      []MetricPoint `json:"points"`
+	Last        float64       `json:"last"`
+	Min         float64       `json:"min"`
+	Max         float64       `json:"max"`
+	SampleCount int64         `json:"sample_count"`
 }
 
 func IsActive(status JobStatus) bool {

@@ -40,7 +40,11 @@ func TestAgentTelemetryPersistsOnlyNormalizedScalars(t *testing.T) {
 	if err = repository.CreateJob(ctx, job); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = repository.DB().ExecContext(ctx, `UPDATE jobs SET assigned_node_id=?,status='RUNNING',observed_status='RUNNING' WHERE id=?`, node.ID, job.ID); err != nil {
+	attemptID := ids.New()
+	if _, err = repository.DB().ExecContext(ctx, `INSERT INTO job_attempts(id,job_id,attempt_number,node_id,assignment_id,status,job_token_hash,created_at) VALUES(?,?,1,?,?,?,?,?)`, attemptID, job.ID, node.ID, ids.New(), "RUNNING", ids.New(), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repository.DB().ExecContext(ctx, `UPDATE jobs SET assigned_node_id=?,attempt_id=?,status='RUNNING',observed_status='RUNNING' WHERE id=?`, node.ID, attemptID, job.ID); err != nil {
 		t.Fatal(err)
 	}
 	files, _ := filestore.New(root, 1024, 1024)
@@ -61,7 +65,7 @@ func TestAgentTelemetryPersistsOnlyNormalizedScalars(t *testing.T) {
 	if response.StatusCode != http.StatusNoContent {
 		t.Fatalf("telemetry status: %d", response.StatusCode)
 	}
-	samples, err := repository.ResourceSamples(ctx, job.ID, time.Now().Add(-time.Minute), time.Now().Add(time.Minute))
+	samples, _, err := repository.ResourceSamples(ctx, job.ID, attemptID, time.Now().Add(-time.Minute), time.Now().Add(time.Minute), 5, 100)
 	if err != nil || len(samples) != 1 || samples[0].CPUMillis != 1250 || samples[0].GPUUtilizationBasisPoints == nil || *samples[0].GPUUtilizationBasisPoints != 4200 {
 		t.Fatalf("normalized samples: %#v %v", samples, err)
 	}
