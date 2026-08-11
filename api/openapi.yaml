@@ -88,6 +88,26 @@ paths:
                 type: object
                 required: [items]
                 properties: {items: {type: array, items: {$ref: '#/components/schemas/Node'}}}
+  /nodes/{nodeId}:
+    patch:
+      operationId: updateNodeMetadata
+      parameters:
+        - {$ref: '#/components/parameters/NodeID'}
+        - {$ref: '#/components/parameters/CSRFToken'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, labels]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 128}
+                labels: {type: object, maxProperties: 64, additionalProperties: {type: string, maxLength: 256}}
+      responses:
+        '200': {description: Effective node metadata updated}
+        '403': {description: Administrator role required}
+        '422': {description: Invalid node metadata}
   /audit:
     get:
       operationId: listAuditEvents
@@ -131,6 +151,7 @@ components:
     bearerToken: {type: http, scheme: bearer}
   parameters:
     JobID: {name: jobId, in: path, required: true, schema: {type: string, format: uuid}}
+    NodeID: {name: nodeId, in: path, required: true, schema: {type: string, format: uuid}}
     CSRFToken: {name: X-CSRF-Token, in: header, required: true, schema: {type: string}}
     IdempotencyKey: {name: Idempotency-Key, in: header, required: false, schema: {type: string, minLength: 16, maxLength: 128}}
   responses:

@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/jobdock/jobdock/internal/config"
+	"github.com/jobdock/jobdock/internal/domain"
 	"github.com/jobdock/jobdock/internal/filestore"
 	"github.com/jobdock/jobdock/internal/secretbox"
 	"github.com/jobdock/jobdock/internal/store"
@@ -72,6 +74,64 @@ func TestLoginAndIdempotentJobCreation(t *testing.T) {
 		if result.StatusCode != http.StatusOK || decodeErr != nil || string(collection.Items) != "[]" {
 			t.Fatalf("empty collection %s: status=%d items=%s error=%v", path, result.StatusCode, collection.Items, decodeErr)
 		}
+	}
+	node := domain.Node{ID: "11111111-1111-4111-8111-111111111111", Name: "reported", Status: domain.NodeOnline, ProtocolVersion: 1, CPUTotalMillis: 1000, MemoryTotalBytes: 1024, WorkspaceFreeBytes: 1024, Labels: map[string]string{"source": "agent"}, LastHeartbeat: time.Now().UTC(), CreatedAt: time.Now().UTC()}
+	if err = repository.UpsertNode(context.Background(), node, "node-credential"); err != nil {
+		t.Fatal(err)
+	}
+	metadataRequest, _ := http.NewRequest("PATCH", server.URL+"/api/v1/nodes/"+node.ID, bytes.NewBufferString(`{"name":"GPU worker","labels":{"zone":"lab"}}`))
+	metadataRequest.Header.Set("Content-Type", "application/json")
+	metadataRequest.Header.Set("X-CSRF-Token", session.CSRF)
+	metadataRequest.AddCookie(cookie)
+	metadataResponse, err := http.DefaultClient.Do(metadataRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadataResponse.Body.Close()
+	if metadataResponse.StatusCode != http.StatusOK {
+		t.Fatalf("metadata update: %d", metadataResponse.StatusCode)
+	}
+	nodes, err := repository.ListNodes(context.Background())
+	if err != nil || len(nodes) != 1 || nodes[0].Name != "GPU worker" || nodes[0].Labels["zone"] != "lab" {
+		t.Fatalf("effective node metadata: %#v %v", nodes, err)
+	}
+	auditEvents, err := repository.ListAudit(context.Background(), 10)
+	if err != nil || len(auditEvents) == 0 || auditEvents[0].Action != "node.metadata.update" {
+		t.Fatalf("metadata audit event: %#v %v", auditEvents, err)
+	}
+	createMember, _ := http.NewRequest("POST", server.URL+"/api/v1/users", bytes.NewBufferString(`{"username":"member","password":"correct member battery","role":"member"}`))
+	createMember.Header.Set("Content-Type", "application/json")
+	createMember.Header.Set("X-CSRF-Token", session.CSRF)
+	createMember.AddCookie(cookie)
+	createdMember, err := http.DefaultClient.Do(createMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdMember.Body.Close()
+	memberLogin, err := http.Post(server.URL+"/api/v1/auth/login", "application/json", bytes.NewBufferString(`{"username":"member","password":"correct member battery"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var memberSession struct {
+		CSRF string `json:"csrf_token"`
+	}
+	if err = json.NewDecoder(memberLogin.Body).Decode(&memberSession); err != nil {
+		t.Fatal(err)
+	}
+	memberLogin.Body.Close()
+	memberPatch, _ := http.NewRequest("PATCH", server.URL+"/api/v1/nodes/"+node.ID, bytes.NewBufferString(`{"name":"forbidden","labels":{}}`))
+	memberPatch.Header.Set("Content-Type", "application/json")
+	memberPatch.Header.Set("X-CSRF-Token", memberSession.CSRF)
+	for _, memberCookie := range memberLogin.Cookies() {
+		memberPatch.AddCookie(memberCookie)
+	}
+	memberResult, err := http.DefaultClient.Do(memberPatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberResult.Body.Close()
+	if memberResult.StatusCode != http.StatusForbidden {
+		t.Fatalf("member metadata update status: %d", memberResult.StatusCode)
 	}
 	jobBody := `{"name":"test-job","image":"alpine:3","command":["echo","ok"],"resources":{"cpu_millis":100,"memory_bytes":1048576,"gpu":{"count":0,"min_vram_bytes":0}}}`
 	create := func() (int, string) {

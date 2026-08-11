@@ -77,6 +77,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/jobs/{id}/logs/{stream}", a.withSession(false, false, a.getLogs))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/archive.zip", a.withSession(false, false, a.archive))
 	mux.HandleFunc("GET /api/v1/nodes", a.withSession(false, false, a.listNodes))
+	mux.HandleFunc("PATCH /api/v1/nodes/{id}", a.withSession(true, true, a.updateNodeMetadata))
 	mux.HandleFunc("POST /api/v1/nodes/enrollment-tokens", a.withSession(true, true, a.createEnrollmentToken))
 	mux.HandleFunc("POST /api/v1/nodes/{id}/drain", a.withSession(true, true, a.drainNode))
 	mux.HandleFunc("POST /api/v1/nodes/{id}/resume", a.withSession(true, true, a.resumeNode))
@@ -472,6 +473,40 @@ func (a *API) listNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"items": nodes})
+}
+func (a *API) updateNodeMetadata(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name   string            `json:"name"`
+		Labels map[string]string `json:"labels"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	if body.Name == "" || len(body.Name) > 128 {
+		writeProblem(w, 422, "invalid_node_name", "Node name must contain between 1 and 128 characters")
+		return
+	}
+	if body.Labels == nil {
+		body.Labels = map[string]string{}
+	}
+	if len(body.Labels) > 64 {
+		writeProblem(w, 422, "invalid_node_labels", "A node can have at most 64 labels")
+		return
+	}
+	for key, value := range body.Labels {
+		if strings.TrimSpace(key) == "" || len(key) > 128 || len(value) > 256 {
+			writeProblem(w, 422, "invalid_node_labels", "Label keys must contain 1 to 128 characters and values at most 256 characters")
+			return
+		}
+	}
+	id := r.PathValue("id")
+	if err := a.store.UpdateNodeMetadata(r.Context(), id, body.Name, body.Labels); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	_ = a.store.Audit(r.Context(), currentUser(r).ID, "node.metadata.update", "node", id, map[string]any{"name": body.Name, "labels": body.Labels})
+	writeJSON(w, 200, map[string]any{"id": id, "name": body.Name, "labels": body.Labels})
 }
 func (a *API) createEnrollmentToken(w http.ResponseWriter, r *http.Request) {
 	user := currentUser(r)

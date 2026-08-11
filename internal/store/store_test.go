@@ -147,3 +147,32 @@ func TestJobUpdatesAreIsolatedByOwner(t *testing.T) {
 		t.Fatalf("unexpected private updates: %#v", updates)
 	}
 }
+
+func TestNodeMetadataOverridesSurviveHeartbeats(t *testing.T) {
+	ctx := context.Background()
+	repository, err := store.Open(t.TempDir() + "/jobdock.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	node := domain.Node{ID: ids.New(), Name: "reported", Status: domain.NodeOnline, ProtocolVersion: 1, CPUTotalMillis: 1000, MemoryTotalBytes: 1024, WorkspaceFreeBytes: 1024, Labels: map[string]string{"source": "agent"}, LastHeartbeat: time.Now().UTC(), CreatedAt: time.Now().UTC()}
+	if err = repository.UpsertNode(ctx, node, "credential"); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.UpdateNodeMetadata(ctx, node.ID, "effective", map[string]string{"zone": "lab"}); err != nil {
+		t.Fatal(err)
+	}
+	node.Name = "reported-again"
+	node.Labels = map[string]string{"source": "new-agent-value"}
+	node.LastHeartbeat = time.Now().UTC().Add(time.Second)
+	if err = repository.Heartbeat(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := repository.ListNodes(ctx)
+	if err != nil || len(nodes) != 1 {
+		t.Fatalf("nodes: %#v %v", nodes, err)
+	}
+	if nodes[0].Name != "effective" || nodes[0].Labels["zone"] != "lab" || len(nodes[0].Labels) != 1 {
+		t.Fatalf("heartbeat replaced effective metadata: %#v", nodes[0])
+	}
+}

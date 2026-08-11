@@ -385,7 +385,7 @@ func (s *Store) Heartbeat(ctx context.Context, node domain.Node) error {
 }
 
 func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,status,agent_version,protocol_version,architecture,docker_version,cpu_total_millis,memory_total_bytes,workspace_free_bytes,labels_json,last_heartbeat,created_at,gpu_discovery_status,gpu_error_code,gpu_error_message FROM nodes ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(name_override,name),status,agent_version,protocol_version,architecture,docker_version,cpu_total_millis,memory_total_bytes,workspace_free_bytes,COALESCE(labels_override_json,labels_json),last_heartbeat,created_at,gpu_discovery_status,gpu_error_code,gpu_error_message FROM nodes ORDER BY COALESCE(name_override,name)`)
 	if err != nil {
 		return nil, err
 	}
@@ -417,6 +417,22 @@ func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
 		nodes = append(nodes, node)
 	}
 	return nodes, rows.Err()
+}
+
+func (s *Store) UpdateNodeMetadata(ctx context.Context, id, name string, labels map[string]string) error {
+	data, err := json.Marshal(labels)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE nodes SET name_override=?,labels_override_json=? WHERE id=?`, name, data, id)
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) NodeByCredential(ctx context.Context, credentialHash string) (domain.Node, error) {
