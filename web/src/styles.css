@@ -44,3 +44,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 code, pre { font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: color-mix(in oklch, var(--muted-foreground) 32%, transparent); border: 3px solid transparent; background-clip: padding-box; border-radius: 99px; }
+@keyframes heartbeat { 0%,100% { transform:scale(1) } 18% { transform:scale(1.28) } 34% { transform:scale(.96) } 48% { transform:scale(1.16) } 70% { transform:scale(1) } }
+.animate-heartbeat { animation:heartbeat .75s ease-out 1; }
+.react-flow__node-topology { transition: transform .32s cubic-bezier(.2,.85,.35,1.25); }
+.react-flow__node-topology.dragging { transition: none; }
