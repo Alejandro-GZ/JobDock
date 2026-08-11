@@ -11,6 +11,8 @@ The repository contains:
 The versioned HTTP surface and client-generation contract are documented in
 [`api/openapi.yaml`](api/openapi.yaml); contributor guidance for keeping it in
 sync with the Go router is in [`docs/api.md`](docs/api.md).
+Real-Docker release verification is described in
+[`docs/testing.md`](docs/testing.md).
 
 ## Quick start
 

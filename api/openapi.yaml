@@ -227,7 +227,10 @@ paths:
     get:
       security: [{bearerToken: []}]
       operationId: nextAssignment
-      responses: {'200': {description: Assignment, cooperative stop requests, and pending checkpoint syncs}}
+      responses:
+        '200':
+          description: Assignment, cooperative stop requests, and pending checkpoint syncs
+          content: {application/json: {schema: {$ref: '#/components/schemas/AssignmentPoll'}}}
   /agent/assignments/{assignmentId}/accept:
     post:
       security: [{bearerToken: []}]
@@ -606,6 +609,30 @@ components:
         exit_code: {type: integer}
         reason: {type: string}
         payload: {type: object, additionalProperties: true}
+    Assignment:
+      type: object
+      required: [id, job_id, attempt_id, spec, gpu_uuids, job_token, created_at, event_sequence]
+      properties:
+        id: {type: string, format: uuid}
+        job_id: {type: string, format: uuid}
+        attempt_id: {type: string, format: uuid}
+        spec: {$ref: '#/components/schemas/JobSpec'}
+        gpu_uuids: {type: array, items: {type: string}}
+        job_token: {type: string, writeOnly: true}
+        secrets: {type: object, writeOnly: true, additionalProperties: {type: string}}
+        registry_auth: {type: string, writeOnly: true}
+        created_at: {type: string, format: date-time}
+        event_sequence: {type: integer, format: int64, minimum: 0}
+    AssignmentPoll:
+      type: object
+      required: [assignment, stop_job_ids, checkpoint_syncs]
+      properties:
+        assignment:
+          oneOf:
+            - {$ref: '#/components/schemas/Assignment'}
+            - {type: 'null'}
+        stop_job_ids: {type: array, items: {type: string, format: uuid}}
+        checkpoint_syncs: {type: array, items: {$ref: '#/components/schemas/CheckpointSync'}}
     UploadAcknowledgement:
       type: object
       required: [next_offset]

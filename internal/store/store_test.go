@@ -38,6 +38,9 @@ func TestSQLiteSchedulingRoundTrip(t *testing.T) {
 	if err = repository.CreateJob(ctx, job); err != nil {
 		t.Fatal(err)
 	}
+	if err = repository.AppendServerEvent(ctx, job.ID, "queued", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
 	box, _ := secretbox.New(bytes.Repeat([]byte{9}, 32))
 	if err = scheduler.New(repository, box).Schedule(ctx); err != nil {
 		t.Fatal(err)
@@ -56,8 +59,17 @@ func TestSQLiteSchedulingRoundTrip(t *testing.T) {
 	if len(assignment.GPUUUIDs) != 1 || assignment.GPUUUIDs[0] != "GPU-1" {
 		t.Fatalf("unexpected GPUs %#v", assignment.GPUUUIDs)
 	}
+	if assignment.EventSequence != 2 {
+		t.Fatalf("assignment must continue after queued and assigned events, got sequence %d", assignment.EventSequence)
+	}
 	if _, err = box.Decrypt(assignment.JobTokenEncrypted, []byte("assignment/"+assignment.ID)); err != nil {
 		t.Fatal(err)
+	}
+	if err = repository.UpdateJobStatus(ctx, job.ID, domain.JobFailed, nil, "", "pull failed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repository.AssignmentForNode(ctx, node.ID); err != store.ErrNotFound {
+		t.Fatalf("terminal assignment was redelivered: %v", err)
 	}
 }
 

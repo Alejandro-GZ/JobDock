@@ -20,6 +20,9 @@ func TestCheckpointUploadResumesFromDurableServerOffset(t *testing.T) {
 	stored := append([]byte(nil), content[:14]...)
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-JobDock-Protocol-Version") != "1" {
+			t.Error("binary upload omitted protocol version")
+		}
 		requests++
 		offset, _ := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
 		w.Header().Set("Content-Type", "application/json")
@@ -48,5 +51,19 @@ func TestCheckpointUploadResumesFromDurableServerOffset(t *testing.T) {
 	}
 	if len(manifest) != 1 || manifest[0].Path != "epoch-10.pt" || manifest[0].Size != int64(len(content)) {
 		t.Fatalf("unexpected manifest: %#v", manifest)
+	}
+}
+
+func TestWriteReadOnlyFileCanReplaceMountedCredential(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "job-token")
+	if err := writeReadOnlyFile(path, []byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeReadOnlyFile(path, []byte("rotated")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "rotated" {
+		t.Fatalf("credential = %q, err=%v", data, err)
 	}
 }

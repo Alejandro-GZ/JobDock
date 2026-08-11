@@ -40,3 +40,24 @@ jobs:
         working-directory: sdk/python
       - run: python -m pytest
         working-directory: sdk/python
+  docker-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.26.x', cache: true}
+      - name: Pre-pull the real workload image
+        run: docker pull alpine:3.20
+      - name: Build server and agent under test
+        run: |
+          mkdir -p "$RUNNER_TEMP/jobdock-e2e"
+          go build -o "$RUNNER_TEMP/jobdock-e2e/jobdock-server" ./cmd/jobdock-server
+          CGO_ENABLED=1 go build -o "$RUNNER_TEMP/jobdock-e2e/jobdock-agent" ./cmd/jobdock-agent
+      - name: Run distributed Docker lifecycle scenarios
+        env:
+          JOBDOCK_E2E: '1'
+          JOBDOCK_E2E_SERVER_BIN: ${{ runner.temp }}/jobdock-e2e/jobdock-server
+          JOBDOCK_E2E_AGENT_BIN: ${{ runner.temp }}/jobdock-e2e/jobdock-agent
+          JOBDOCK_E2E_DOCKER_SOCKET: /var/run/docker.sock
+        run: go test -tags=e2e ./tests/e2e -v -count=1 -timeout=12m

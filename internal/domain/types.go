@@ -137,6 +137,7 @@ type Assignment struct {
 	Secrets           map[string]string `json:"secrets,omitempty"`
 	RegistryAuth      string            `json:"registry_auth,omitempty"`
 	CreatedAt         time.Time         `json:"created_at"`
+	EventSequence     int64             `json:"event_sequence"`
 }
 
 type CheckpointSync struct {

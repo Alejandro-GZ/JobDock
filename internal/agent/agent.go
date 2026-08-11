@@ -239,7 +239,7 @@ func (a *Agent) startAssignment(ctx context.Context, assignment domain.Assignmen
 		a.mu.Unlock()
 		return
 	}
-	record := &runtimeAssignment{Assignment: assignment}
+	record := &runtimeAssignment{Assignment: assignment, Sequence: assignment.EventSequence}
 	a.running[assignment.JobID] = record
 	a.mu.Unlock()
 	if err := a.save(record); err != nil {
@@ -270,7 +270,7 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 		return
 	}
 	tokenFile := filepath.Join(secretsDir, "job-token")
-	if err := os.WriteFile(tokenFile, []byte(record.JobToken), 0o444); err != nil {
+	if err := writeReadOnlyFile(tokenFile, []byte(record.JobToken)); err != nil {
 		a.fail(record, "token_write_failed", err)
 		return
 	}
@@ -292,7 +292,7 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 		}
 		target := safeFilename(ref.Target)
 		path := filepath.Join(secretsDir, target)
-		if err := os.WriteFile(path, []byte(value), 0o444); err != nil {
+		if err := writeReadOnlyFile(path, []byte(value)); err != nil {
 			a.fail(record, "secret_write_failed", err)
 			return
 		}
@@ -334,9 +334,12 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 	}
 	logDone := make(chan struct{})
 	go func() { defer close(logDone); a.streamLogs(ctx, record, logsDir) }()
+	telemetryCtx, stopTelemetry := context.WithCancel(ctx)
 	statsDone := make(chan struct{})
-	go func() { defer close(statsDone); a.telemetry(ctx, record) }()
+	go func() { defer close(statsDone); a.telemetry(telemetryCtx, record) }()
 	exitCode, waitErr := a.docker.Wait(ctx, record.ContainerID)
+	stopTelemetry()
+	<-statsDone
 	<-logDone
 	if waitErr != nil {
 		a.fail(record, "container_wait_failed", waitErr)
@@ -453,6 +456,9 @@ func (a *Agent) telemetry(ctx context.Context, record *runtimeAssignment) {
 		case <-ticker.C:
 			stats, err := a.docker.Stats(ctx, record.ContainerID)
 			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
 				a.log.Warn("resource_sample_failed", "error", err, "job_id", record.JobID)
 				continue
 			}
@@ -726,7 +732,12 @@ func (a *Agent) sendEvent(record *runtimeAssignment, eventType string, status do
 }
 func (a *Agent) fail(record *runtimeAssignment, eventType string, err error) {
 	a.log.Error(eventType, "error", err, "job_id", record.JobID)
-	_ = a.sendEvent(record, eventType, domain.JobFailed, nil, err.Error(), "", nil)
+	if a.sendEvent(record, eventType, domain.JobFailed, nil, err.Error(), "", nil) {
+		record.mu.Lock()
+		record.Completed = true
+		record.mu.Unlock()
+		_ = a.save(record)
+	}
 	if record.ContainerID != "" {
 		_ = a.docker.Remove(context.Background(), record.ContainerID)
 	}
@@ -806,6 +817,7 @@ func (a *Agent) uploadBinary(ctx context.Context, method, path string, body io.R
 	}
 	request.Header.Set("Authorization", "Bearer "+a.credential)
 	request.Header.Set("Content-Type", "application/octet-stream")
+	request.Header.Set("X-JobDock-Protocol-Version", "1")
 	result, err := a.http.Do(request)
 	if err != nil {
 		return 0, err
@@ -821,6 +833,39 @@ func (a *Agent) uploadBinary(ctx context.Context, method, path string, body io.R
 		return response.NextOffset, fmt.Errorf("upload returned %s", result.Status)
 	}
 	return response.NextOffset, nil
+}
+
+func writeReadOnlyFile(path string, data []byte) error {
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".jobdock-secret-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err = temporary.Chmod(0o600); err == nil {
+		_, err = temporary.Write(data)
+	}
+	if err == nil {
+		err = temporary.Sync()
+	}
+	if closeErr := temporary.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if err = os.Chmod(temporaryPath, 0o444); err != nil {
+		return err
+	}
+	if err = os.Rename(temporaryPath, path); err == nil {
+		return nil
+	}
+	// Windows cannot atomically replace an existing file. The official agent is
+	// Linux-only, but this fallback keeps local cross-platform tests meaningful.
+	if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		return err
+	}
+	return os.Rename(temporaryPath, path)
 }
 func readAPIError(response *http.Response) error {
 	data, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
