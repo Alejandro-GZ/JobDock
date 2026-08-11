@@ -70,8 +70,6 @@ fi
 image="$IMAGE_REPOSITORY:$version"
 printf 'Pulling %s...\n' "$image"
 docker pull "$image"
-mkdir -p "$STATE_DIR"
-chmod 700 "$STATE_DIR"
 
 set -- docker run -d \
   --name "$CONTAINER_NAME" \
