@@ -1,6 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 286 64" role="img" aria-labelledby="title desc" style="color:#111827">
   <title id="title">JobDock logo</title>
   <desc id="desc">JobDock wordmark with a containerized job docking into a minimal control plane.</desc>
+  <rect width="286" height="64" rx="8" fill="#FFFFFF"/>
   <!-- Primary: change the root `color` value. Accent: change the rect `fill` value. -->
   <g aria-hidden="true">
     <path d="M12 18v20c0 9.4 7.6 17 17 17h6c9.4 0 17-7.6 17-17V18"
