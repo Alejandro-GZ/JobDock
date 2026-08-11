@@ -349,7 +349,12 @@ func (h *harness) waitJob(id string, timeout time.Duration, wanted ...string) jo
 			return true
 		}
 		if value.Status == "FAILED" && !wants["FAILED"] {
-			h.t.Fatalf("job %s failed unexpectedly", id)
+			attempts := h.jobAttempts(id)
+			h.t.Fatalf(
+				"job %s failed unexpectedly; attempts=%#v",
+				id,
+				attempts,
+			)
 		}
 		return false
 	}, "job "+id+" status "+strings.Join(wanted, "/"))
