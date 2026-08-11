@@ -4,7 +4,7 @@ set -eu
 DEFAULT_VERSION="latest"
 IMAGE_REPOSITORY="ghcr.io/alejandro-gz/jobdock-agent"
 CONTAINER_NAME="jobdock-agent"
-STATE_VOLUME="jobdock-agent-state"
+STATE_DIR="/var/lib/jobdock-agent"
 
 server=""
 token=""
@@ -70,7 +70,8 @@ fi
 image="$IMAGE_REPOSITORY:$version"
 printf 'Pulling %s...\n' "$image"
 docker pull "$image"
-docker volume create "$STATE_VOLUME" >/dev/null
+mkdir -p "$STATE_DIR"
+chmod 700 "$STATE_DIR"
 
 set -- docker run -d \
   --name "$CONTAINER_NAME" \
@@ -80,7 +81,7 @@ set -- docker run -d \
   --cap-drop ALL \
   --security-opt no-new-privileges:true \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$STATE_VOLUME:/var/lib/jobdock-agent" \
+  -v "$STATE_DIR:/var/lib/jobdock-agent" \
   -e "JOBDOCK_SERVER_URL=$server" \
   -e "JOBDOCK_ENROLLMENT_TOKEN=$token" \
   -e "JOBDOCK_NODE_NAME=$node_name" \
