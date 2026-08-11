@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-DEFAULT_VERSION="0.1.0"
+DEFAULT_VERSION="latest"
 IMAGE_REPOSITORY="ghcr.io/alejandro-gz/jobdock-agent"
 CONTAINER_NAME="jobdock-agent"
 STATE_VOLUME="jobdock-agent-state"
@@ -25,7 +25,7 @@ Options:
   --gpu                 Request all NVIDIA GPUs and require NVML discovery.
   --name NAME           Node name reported to JobDock (defaults to hostname).
   --labels KEY=VALUE    Comma-separated node labels.
-  --version VERSION     Immutable agent image version (defaults to 0.1.0).
+  --version VERSION     Immutable agent image version (defaults to latest).
   --allow-insecure-http Permit an http:// server URL for local development.
   --help                Show this help.
 EOF
