@@ -8,7 +8,7 @@ type ConnectionState = "connecting" | "live" | "reconnecting";
 type Chunk = { stream: StreamName; start_offset: number; next_offset: number; data: string };
 
 export function LiveLogs({ jobId, attemptId }: { jobId: string; attemptId: string }) {
-  return <div className="grid gap-3 xl:grid-cols-2"><LiveLog jobId={jobId} attemptId={attemptId} stream="stdout"/><LiveLog jobId={jobId} attemptId={attemptId} stream="stderr"/></div>;
+  return <div className="grid h-[calc(100dvh-13rem)] min-h-[430px] grid-rows-2 gap-3 overflow-hidden xl:grid-cols-2 xl:grid-rows-1"><LiveLog jobId={jobId} attemptId={attemptId} stream="stdout"/><LiveLog jobId={jobId} attemptId={attemptId} stream="stderr"/></div>;
 }
 
 function LiveLog({ jobId, attemptId, stream }: { jobId: string; attemptId: string; stream: StreamName }) {
@@ -42,7 +42,7 @@ function LiveLog({ jobId, attemptId, stream }: { jobId: string; attemptId: strin
 
   useEffect(() => { if (output.current) output.current.scrollTop = output.current.scrollHeight; }, [log.text]);
   const live = connection === "live";
-  return <div className="overflow-hidden rounded-md border">
+  return <div className="flex min-h-0 flex-col overflow-hidden rounded-md border">
     <div className="flex items-center justify-between border-b bg-muted/40 px-3 py-2 font-mono text-xs">
       <span>{stream}</span>
       <span className={live ? "flex items-center gap-1.5 text-emerald-600" : "flex items-center gap-1.5 text-amber-600"} title={live ? "Receiving incremental log updates" : "The stream will reconnect automatically"}>
@@ -50,6 +50,6 @@ function LiveLog({ jobId, attemptId, stream }: { jobId: string; attemptId: strin
       </span>
     </div>
     {log.truncated && <p className="border-b bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300">Earlier output is hidden to keep the browser responsive. The complete log remains available in the ZIP.</p>}
-    <pre ref={output} className="h-[55vh] overflow-auto bg-zinc-950 p-4 text-xs text-zinc-100">{log.text || "No output yet."}</pre>
+    <pre ref={output} className="min-h-0 flex-1 overflow-auto bg-zinc-950 p-4 text-xs text-zinc-100">{log.text || "No output yet."}</pre>
   </div>;
 }
