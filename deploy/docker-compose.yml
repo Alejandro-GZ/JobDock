@@ -13,6 +13,8 @@ services:
       JOBDOCK_ALLOW_INSECURE_HTTP: "${JOBDOCK_ALLOW_INSECURE_HTTP:-true}"
       JOBDOCK_BOOTSTRAP_ADMIN_USERNAME: "${JOBDOCK_BOOTSTRAP_ADMIN_USERNAME:-admin}"
       JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD: "${JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD:?Set a bootstrap password of at least 12 characters}"
+      JOBDOCK_TELEMETRY_RAW_RETENTION: "${JOBDOCK_TELEMETRY_RAW_RETENTION:-24h}"
+      JOBDOCK_TELEMETRY_RETENTION: "${JOBDOCK_TELEMETRY_RETENTION:-720h}"
     volumes:
       - jobdock-data:/var/lib/jobdock
     read_only: true
@@ -30,4 +32,3 @@ services:
 
 volumes:
   jobdock-data:
-

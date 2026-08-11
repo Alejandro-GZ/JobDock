@@ -93,6 +93,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/agent/assignments/next", a.withAgent(a.nextAssignment))
 	mux.HandleFunc("POST /api/v1/agent/assignments/{id}/accept", a.withAgent(a.acceptAssignment))
 	mux.HandleFunc("POST /api/v1/agent/jobs/{id}/events", a.withAgent(a.agentEvent))
+	mux.HandleFunc("POST /api/v1/agent/jobs/{id}/telemetry", a.withAgent(a.agentTelemetry))
 	mux.HandleFunc("PUT /api/v1/agent/jobs/{id}/logs/{stream}", a.withAgent(a.putLog))
 	mux.HandleFunc("PUT /api/v1/agent/jobs/{id}/outputs/{path...}", a.withAgent(a.putOutput))
 	mux.HandleFunc("POST /api/v1/job-context/progress", a.withJob(a.sdkProgress))
@@ -760,6 +761,10 @@ func (a *API) agentEvent(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
+	if body.Type == "resource_sample" {
+		writeProblem(w, http.StatusUnprocessableEntity, "raw_telemetry_rejected", "Raw Docker Stats events are not accepted; upgrade the agent")
+		return
+	}
 	event := domain.Event{JobID: job.ID, Sequence: body.Sequence, Type: body.Type, Status: body.Status, Payload: body.Payload, CreatedAt: time.Now().UTC()}
 	if err = a.store.AppendEvent(r.Context(), event); err != nil {
 		writeStoreError(w, err)
@@ -772,6 +777,34 @@ func (a *API) agentEvent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(204)
+}
+
+func (a *API) agentTelemetry(w http.ResponseWriter, r *http.Request) {
+	node := agentNode(r)
+	job, err := a.store.Job(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if job.AssignedNodeID != node.ID {
+		writeProblem(w, http.StatusForbidden, "forbidden", "Job is not assigned to this node")
+		return
+	}
+	var sample domain.ResourceSample
+	if !decodeJSON(w, r, &sample) {
+		return
+	}
+	if sample.CPUMillis < 0 || sample.MemoryBytes < 0 || (sample.GPUUtilizationBasisPoints != nil && (*sample.GPUUtilizationBasisPoints < 0 || *sample.GPUUtilizationBasisPoints > 10000)) || (sample.GPUMemoryBytes != nil && *sample.GPUMemoryBytes < 0) {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_resource_sample", "Resource telemetry values are outside their valid range")
+		return
+	}
+	sample.JobID = job.ID
+	sample.CapturedAt = time.Now().UTC()
+	if err = a.store.AppendResourceSample(r.Context(), sample); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 func (a *API) putLog(w http.ResponseWriter, r *http.Request) {
 	node := agentNode(r)

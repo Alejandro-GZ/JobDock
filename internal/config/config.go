@@ -25,6 +25,8 @@ type Server struct {
 	JobLostAfter          time.Duration
 	MaxLogBytes           int64
 	MaxOutputBytes        int64
+	TelemetryRawRetention time.Duration
+	TelemetryRetention    time.Duration
 }
 
 type Agent struct {
@@ -54,6 +56,11 @@ func LoadServer() (Server, error) {
 		JobLostAfter:          envDuration("JOBDOCK_JOB_LOST_AFTER", 5*time.Minute),
 		MaxLogBytes:           envInt64("JOBDOCK_MAX_LOG_BYTES", 10<<30),
 		MaxOutputBytes:        envInt64("JOBDOCK_MAX_OUTPUT_BYTES", 100<<30),
+		TelemetryRawRetention: envDuration("JOBDOCK_TELEMETRY_RAW_RETENTION", 24*time.Hour),
+		TelemetryRetention:    envDuration("JOBDOCK_TELEMETRY_RETENTION", 30*24*time.Hour),
+	}
+	if c.TelemetryRawRetention <= 0 || c.TelemetryRetention < c.TelemetryRawRetention {
+		return c, errors.New("telemetry retention must be positive and at least as long as raw retention")
 	}
 	password, err := valueOrFile("JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD", "JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD_FILE")
 	if err != nil {

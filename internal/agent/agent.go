@@ -447,10 +447,24 @@ func (a *Agent) telemetry(ctx context.Context, record *runtimeAssignment) {
 		case <-ticker.C:
 			stats, err := a.docker.Stats(ctx, record.ContainerID)
 			if err != nil {
-				return
+				a.log.Warn("resource_sample_failed", "error", err, "job_id", record.JobID)
+				continue
 			}
-			if !a.sendEvent(record, "resource_sample", "", nil, "", "", stats) {
-				return
+			sample := domain.ResourceSample{CPUMillis: stats.CPUMillis, MemoryBytes: stats.MemoryBytes}
+			if len(record.GPUUUIDs) > 0 {
+				usage, sampleErr := a.gpu.Sample(ctx, record.GPUUUIDs)
+				if sampleErr != nil {
+					a.log.Warn("gpu_sample_failed", "error", sampleErr, "job_id", record.JobID)
+				} else {
+					sample.GPUUtilizationBasisPoints = &usage.UtilizationBasisPoints
+					sample.GPUMemoryBytes = &usage.MemoryBytes
+				}
+			}
+			uploadCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err = a.apiJSON(uploadCtx, "POST", "/api/v1/agent/jobs/"+record.JobID+"/telemetry", sample, nil)
+			cancel()
+			if err != nil {
+				a.log.Warn("resource_sample_upload_failed", "error", err, "job_id", record.JobID)
 			}
 		}
 	}

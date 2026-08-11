@@ -151,6 +151,17 @@ paths:
       security: [{bearerToken: []}]
       operationId: rotateAgentCredential
       responses: {'200': {description: New revocable agent credential}}
+  /agent/jobs/{jobId}/telemetry:
+    post:
+      security: [{bearerToken: []}]
+      operationId: reportResourceTelemetry
+      parameters: [{$ref: '#/components/parameters/JobID'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/ResourceSample'}}}
+      responses:
+        '204': {description: Normalized resource sample accepted}
+        '422': {$ref: '#/components/responses/Problem'}
   /job-context/progress:
     post:
       security: [{bearerToken: []}]
@@ -281,6 +292,15 @@ components:
         status: {$ref: '#/components/schemas/JobStatus'}
         version: {type: integer, format: int64}
         created_at: {type: string, format: date-time}
+    ResourceSample:
+      type: object
+      additionalProperties: false
+      required: [cpu_millis, memory_bytes]
+      properties:
+        cpu_millis: {type: integer, format: int64, minimum: 0}
+        memory_bytes: {type: integer, format: int64, minimum: 0}
+        gpu_utilization_basis_points: {type: integer, format: int64, minimum: 0, maximum: 10000}
+        gpu_memory_bytes: {type: integer, format: int64, minimum: 0}
     Problem:
       type: object
       required: [type, title, status, code, detail]

@@ -28,6 +28,32 @@ type Info struct {
 	OperatingSystem string `json:"OperatingSystem"`
 }
 
+type ResourceStats struct {
+	CPUMillis   int64
+	MemoryBytes int64
+}
+
+type dockerStats struct {
+	CPUStats struct {
+		CPUUsage struct {
+			TotalUsage  uint64   `json:"total_usage"`
+			PercpuUsage []uint64 `json:"percpu_usage"`
+		} `json:"cpu_usage"`
+		SystemCPUUsage uint64 `json:"system_cpu_usage"`
+		OnlineCPUs     int    `json:"online_cpus"`
+	} `json:"cpu_stats"`
+	PreCPUStats struct {
+		CPUUsage struct {
+			TotalUsage uint64 `json:"total_usage"`
+		} `json:"cpu_usage"`
+		SystemCPUUsage uint64 `json:"system_cpu_usage"`
+	} `json:"precpu_stats"`
+	MemoryStats struct {
+		Usage uint64            `json:"usage"`
+		Stats map[string]uint64 `json:"stats"`
+	} `json:"memory_stats"`
+}
+
 type Container struct {
 	ID     string            `json:"Id"`
 	State  string            `json:"State"`
@@ -280,17 +306,43 @@ func (c *Client) ManagedContainers(ctx context.Context) ([]Container, error) {
 	return containers, json.NewDecoder(response.Body).Decode(&containers)
 }
 
-func (c *Client) Stats(ctx context.Context, id string) (map[string]any, error) {
+func (c *Client) Stats(ctx context.Context, id string) (ResourceStats, error) {
 	response, err := c.request(ctx, "GET", "/containers/"+id+"/stats?stream=false", nil, nil)
 	if err != nil {
-		return nil, err
+		return ResourceStats{}, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 200 {
-		return nil, apiError(response)
+		return ResourceStats{}, apiError(response)
 	}
-	var stats map[string]any
-	return stats, json.NewDecoder(response.Body).Decode(&stats)
+	var raw dockerStats
+	if err = json.NewDecoder(response.Body).Decode(&raw); err != nil {
+		return ResourceStats{}, err
+	}
+	return normalizeStats(raw), nil
+}
+
+func normalizeStats(raw dockerStats) ResourceStats {
+	result := ResourceStats{}
+	cores := raw.CPUStats.OnlineCPUs
+	if cores == 0 {
+		cores = len(raw.CPUStats.CPUUsage.PercpuUsage)
+	}
+	if cores > 0 && raw.CPUStats.CPUUsage.TotalUsage >= raw.PreCPUStats.CPUUsage.TotalUsage && raw.CPUStats.SystemCPUUsage > raw.PreCPUStats.SystemCPUUsage {
+		cpuDelta := raw.CPUStats.CPUUsage.TotalUsage - raw.PreCPUStats.CPUUsage.TotalUsage
+		systemDelta := raw.CPUStats.SystemCPUUsage - raw.PreCPUStats.SystemCPUUsage
+		result.CPUMillis = int64(float64(cpuDelta)/float64(systemDelta)*float64(cores)*1000 + 0.5)
+	}
+	memory := raw.MemoryStats.Usage
+	cache := raw.MemoryStats.Stats["inactive_file"]
+	if cache == 0 {
+		cache = raw.MemoryStats.Stats["total_inactive_file"]
+	}
+	if cache <= memory {
+		memory -= cache
+	}
+	result.MemoryBytes = int64(memory)
+	return result
 }
 
 func (c *Client) request(ctx context.Context, method, path string, body io.Reader, headers http.Header) (*http.Response, error) {

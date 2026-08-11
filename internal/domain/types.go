@@ -149,6 +149,19 @@ type Event struct {
 	CreatedAt time.Time      `json:"created_at"`
 }
 
+// ResourceSample is deliberately limited to normalized scalar resource data.
+// Docker Stats responses must never cross this boundary or reach persistence.
+type ResourceSample struct {
+	JobID                     string    `json:"-"`
+	CapturedAt                time.Time `json:"-"`
+	ResolutionSeconds         int       `json:"-"`
+	SampleCount               int       `json:"-"`
+	CPUMillis                 int64     `json:"cpu_millis"`
+	MemoryBytes               int64     `json:"memory_bytes"`
+	GPUUtilizationBasisPoints *int64    `json:"gpu_utilization_basis_points,omitempty"`
+	GPUMemoryBytes            *int64    `json:"gpu_memory_bytes,omitempty"`
+}
+
 func IsActive(status JobStatus) bool {
 	switch status {
 	case JobAssigned, JobPullingImage, JobStarting, JobRunning, JobStopping, JobLost:

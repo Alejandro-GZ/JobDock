@@ -8,6 +8,12 @@ import (
 
 type GPUDiscoverer interface {
 	Discover(context.Context) ([]domain.GPU, domain.GPUDiscovery)
+	Sample(context.Context, []string) (GPUUsage, error)
+}
+
+type GPUUsage struct {
+	UtilizationBasisPoints int64
+	MemoryBytes            int64
 }
 
 func resolveGPUInventory(ctx context.Context, mode string, discoverer GPUDiscoverer) ([]domain.GPU, domain.GPUDiscovery, bool) {

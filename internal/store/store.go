@@ -24,6 +24,7 @@ var migrations embed.FS
 
 var ErrNotFound = errors.New("not found")
 var ErrConflict = errors.New("conflict")
+var ErrRawTelemetry = errors.New("raw resource telemetry is not persisted")
 
 type Store struct {
 	db *sql.DB
@@ -577,6 +578,9 @@ func (s *Store) AcceptAssignment(ctx context.Context, nodeID, assignmentID, cont
 }
 
 func (s *Store) AppendEvent(ctx context.Context, event domain.Event) error {
+	if event.Type == "resource_sample" {
+		return ErrRawTelemetry
+	}
 	payload, _ := json.Marshal(event.Payload)
 	_, err := s.db.ExecContext(ctx, `INSERT INTO job_events(job_id,sequence,type,status,payload_json,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(job_id,sequence) DO NOTHING`, event.JobID, event.Sequence, event.Type, event.Status, payload, formatTime(event.CreatedAt))
 	return err

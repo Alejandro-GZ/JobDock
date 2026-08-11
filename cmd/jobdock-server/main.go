@@ -74,6 +74,7 @@ func main() {
 	defer cancel()
 	go scheduler.New(repository, box).Run(ctx)
 	go monitorNodes(ctx, repository, cfg)
+	go maintainTelemetry(ctx, repository, cfg, logger)
 	httpServer := &http.Server{Addr: cfg.ListenAddr, Handler: api.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20}
 	go func() {
 		logger.Info("server_started", "address", cfg.ListenAddr, "public_url", cfg.PublicURL)
@@ -87,6 +88,21 @@ func main() {
 	defer shutdownCancel()
 	if err = httpServer.Shutdown(shutdownCtx); err != nil {
 		logger.Error("shutdown_failed", "error", err)
+	}
+}
+
+func maintainTelemetry(ctx context.Context, repository *store.Store, cfg config.Server, logger *slog.Logger) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		if err := repository.MaintainResourceTelemetry(ctx, time.Now().UTC(), cfg.TelemetryRawRetention, cfg.TelemetryRetention); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Warn("telemetry_maintenance_failed", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }
 

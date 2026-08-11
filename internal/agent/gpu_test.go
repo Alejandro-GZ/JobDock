@@ -10,6 +10,12 @@ import (
 type fakeGPUDiscoverer struct {
 	gpus      []domain.GPU
 	discovery domain.GPUDiscovery
+	usage     GPUUsage
+	sampleErr error
+}
+
+func (f fakeGPUDiscoverer) Sample(context.Context, []string) (GPUUsage, error) {
+	return f.usage, f.sampleErr
 }
 
 func (f fakeGPUDiscoverer) Discover(context.Context) ([]domain.GPU, domain.GPUDiscovery) {
