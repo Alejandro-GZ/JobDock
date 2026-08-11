@@ -87,6 +87,13 @@ paths:
       operationId: downloadJobArchive
       parameters: [{$ref: '#/components/parameters/JobID'}]
       responses: {'200': {description: Streaming ZIP archive, content: {application/zip: {schema: {type: string, format: binary}}}}}
+  /jobs/{jobId}/checkpoints/latest.zip:
+    get:
+      operationId: downloadLatestCheckpoint
+      parameters: [{$ref: '#/components/parameters/JobID'}]
+      responses:
+        '200': {description: Latest fully confirmed checkpoint generation, content: {application/zip: {schema: {type: string, format: binary}}}}
+        '404': {$ref: '#/components/responses/Problem'}
   /nodes:
     get:
       operationId: listNodes
@@ -145,7 +152,25 @@ paths:
     get:
       security: [{bearerToken: []}]
       operationId: nextAssignment
-      responses: {'200': {description: Assignment and cooperative stop requests}}
+      responses: {'200': {description: Assignment, cooperative stop requests, and pending checkpoint syncs}}
+
+  /agent/checkpoint-syncs/{syncId}/files/{path}:
+    put:
+      security: [{bearerToken: []}]
+      operationId: uploadCheckpointChunk
+      parameters:
+        - {name: syncId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: path, in: path, required: true, schema: {type: string}}
+        - {name: offset, in: query, required: true, schema: {type: integer, format: int64, minimum: 0}}
+      responses:
+        '200': {description: Chunk durably acknowledged with next_offset}
+        '409': {description: Resume at returned next_offset}
+  /agent/checkpoint-syncs/{syncId}/complete:
+    post:
+      security: [{bearerToken: []}]
+      operationId: confirmCheckpointSync
+      parameters: [{name: syncId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses: {'204': {description: Immutable checkpoint generation confirmed}}
   /agent/credential/rotate:
     post:
       security: [{bearerToken: []}]
@@ -167,6 +192,17 @@ paths:
       security: [{bearerToken: []}]
       operationId: reportProgress
       responses: {'202': {description: Progress accepted}}
+  /job-context/checkpoints:
+    post:
+      security: [{bearerToken: []}]
+      operationId: requestCheckpointSync
+      responses: {'202': {description: Checkpoint synchronization requested}}
+  /job-context/checkpoints/{syncId}:
+    get:
+      security: [{bearerToken: []}]
+      operationId: getCheckpointSync
+      parameters: [{name: syncId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses: {'200': {description: PENDING or CONFIRMED checkpoint status}}
 components:
   securitySchemes:
     sessionCookie: {type: apiKey, in: cookie, name: jobdock_session}

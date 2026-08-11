@@ -139,6 +139,22 @@ type Assignment struct {
 	CreatedAt         time.Time         `json:"created_at"`
 }
 
+type CheckpointSync struct {
+	ID          string     `json:"id"`
+	JobID       string     `json:"job_id"`
+	AttemptID   string     `json:"attempt_id"`
+	Status      string     `json:"status"`
+	FileCount   int        `json:"file_count"`
+	ByteCount   int64      `json:"byte_count"`
+	RequestedAt time.Time  `json:"requested_at"`
+	ConfirmedAt *time.Time `json:"confirmed_at,omitempty"`
+}
+
+type CheckpointFile struct {
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+}
+
 type Event struct {
 	ID        int64          `json:"id"`
 	JobID     string         `json:"job_id"`

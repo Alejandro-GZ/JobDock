@@ -79,6 +79,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/jobs/{id}/logs/{stream}", a.withSession(false, false, a.getLogs))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/logs/{stream}/tail", a.withSession(false, false, a.tailLogs))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/archive.zip", a.withSession(false, false, a.archive))
+	mux.HandleFunc("GET /api/v1/jobs/{id}/checkpoints/latest.zip", a.withSession(false, false, a.latestCheckpointArchive))
 	mux.HandleFunc("GET /api/v1/nodes", a.withSession(false, false, a.listNodes))
 	mux.HandleFunc("PATCH /api/v1/nodes/{id}", a.withSession(true, true, a.updateNodeMetadata))
 	mux.HandleFunc("POST /api/v1/nodes/enrollment-tokens", a.withSession(true, true, a.createEnrollmentToken))
@@ -96,11 +97,15 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agent/jobs/{id}/telemetry", a.withAgent(a.agentTelemetry))
 	mux.HandleFunc("PUT /api/v1/agent/jobs/{id}/logs/{stream}", a.withAgent(a.putLog))
 	mux.HandleFunc("PUT /api/v1/agent/jobs/{id}/outputs/{path...}", a.withAgent(a.putOutput))
+	mux.HandleFunc("PUT /api/v1/agent/checkpoint-syncs/{sync}/files/{path...}", a.withAgent(a.putCheckpoint))
+	mux.HandleFunc("POST /api/v1/agent/checkpoint-syncs/{sync}/complete", a.withAgent(a.completeCheckpoint))
 	mux.HandleFunc("POST /api/v1/job-context/progress", a.withJob(a.sdkProgress))
 	mux.HandleFunc("POST /api/v1/job-context/metrics", a.withJob(a.sdkMetrics))
 	mux.HandleFunc("POST /api/v1/job-context/params", a.withJob(a.sdkParams))
 	mux.HandleFunc("POST /api/v1/job-context/events", a.withJob(a.sdkEvents))
 	mux.HandleFunc("GET /api/v1/job-context/stop", a.withJob(a.sdkStop))
+	mux.HandleFunc("POST /api/v1/job-context/checkpoints", a.withJob(a.sdkCheckpoint))
+	mux.HandleFunc("GET /api/v1/job-context/checkpoints/{sync}", a.withJob(a.sdkCheckpointStatus))
 	mux.HandleFunc("/", a.serveWeb)
 	return a.securityHeaders(a.requestLog(mux))
 }
@@ -391,6 +396,23 @@ func (a *API) archive(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (a *API) latestCheckpointArchive(w http.ResponseWriter, r *http.Request) {
+	job, ok := a.authorizeJob(w, r)
+	if !ok {
+		return
+	}
+	checkpoint, err := a.store.LatestConfirmedCheckpoint(r.Context(), job.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="job-%s-checkpoint-%s.zip"`, job.ID, checkpoint.ID))
+	if err = a.files.ArchiveCheckpoint(job.ID, checkpoint.ID, w); err != nil {
+		a.log.Error("checkpoint archive failed", "error", err, "job_id", job.ID, "sync_id", checkpoint.ID)
+	}
+}
+
 func (a *API) jobStream(w http.ResponseWriter, r *http.Request) {
 	job, ok := a.authorizeJob(w, r)
 	if !ok {
@@ -671,6 +693,7 @@ func (a *API) nextAssignment(w http.ResponseWriter, r *http.Request) {
 	for {
 		assignment, err := a.store.AssignmentForNode(r.Context(), node.ID)
 		stops, _ := a.store.StopRequestsForNode(r.Context(), node.ID)
+		checkpoints, _ := a.store.PendingCheckpointSyncsForNode(r.Context(), node.ID)
 		if err == nil {
 			plain, decryptErr := a.box.Decrypt(assignment.JobTokenEncrypted, []byte("assignment/"+assignment.ID))
 			if decryptErr != nil {
@@ -706,15 +729,15 @@ func (a *API) nextAssignment(w http.ResponseWriter, r *http.Request) {
 				}
 				assignment.RegistryAuth = base64.RawURLEncoding.EncodeToString(value)
 			}
-			writeJSON(w, 200, map[string]any{"assignment": assignment, "stop_job_ids": stops})
+			writeJSON(w, 200, map[string]any{"assignment": assignment, "stop_job_ids": stops, "checkpoint_syncs": checkpoints})
 			return
 		}
 		if err != store.ErrNotFound {
 			writeStoreError(w, err)
 			return
 		}
-		if len(stops) > 0 || time.Now().After(deadline) {
-			writeJSON(w, 200, map[string]any{"assignment": nil, "stop_job_ids": stops})
+		if len(stops) > 0 || len(checkpoints) > 0 || time.Now().After(deadline) {
+			writeJSON(w, 200, map[string]any{"assignment": nil, "stop_job_ids": stops, "checkpoint_syncs": checkpoints})
 			return
 		}
 		select {
@@ -861,6 +884,87 @@ func (a *API) putOutput(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"next_offset": next})
 }
 
+func (a *API) checkpointForAgent(w http.ResponseWriter, r *http.Request) (domain.CheckpointSync, domain.Job, bool) {
+	item, err := a.store.CheckpointSync(r.Context(), r.PathValue("sync"))
+	if err != nil {
+		writeStoreError(w, err)
+		return item, domain.Job{}, false
+	}
+	job, err := a.store.Job(r.Context(), item.JobID)
+	if err != nil {
+		writeStoreError(w, err)
+		return item, job, false
+	}
+	if job.AssignedNodeID != agentNode(r).ID || job.AttemptID != item.AttemptID {
+		writeProblem(w, http.StatusForbidden, "forbidden", "Checkpoint is not assigned to this node")
+		return item, job, false
+	}
+	return item, job, true
+}
+
+func (a *API) putCheckpoint(w http.ResponseWriter, r *http.Request) {
+	item, job, ok := a.checkpointForAgent(w, r)
+	if !ok {
+		return
+	}
+	if item.ConfirmedAt != nil {
+		writeProblem(w, http.StatusConflict, "checkpoint_confirmed", "Checkpoint is already confirmed")
+		return
+	}
+	offset, _ := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
+	next, err := a.files.AppendCheckpoint(job.ID, item.ID, r.PathValue("path"), offset, http.MaxBytesReader(w, r.Body, 8<<20))
+	if err == filestore.ErrOffsetMismatch {
+		writeJSON(w, http.StatusConflict, map[string]any{"next_offset": next})
+		return
+	}
+	if err == filestore.ErrLimitExceeded {
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"next_offset": next, "error": "checkpoint_limit_exceeded"})
+		return
+	}
+	if err != nil {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_checkpoint", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"next_offset": next})
+}
+
+func (a *API) completeCheckpoint(w http.ResponseWriter, r *http.Request) {
+	item, job, ok := a.checkpointForAgent(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Files []domain.CheckpointFile `json:"files"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	manifest := make(map[string]int64, len(body.Files))
+	for _, file := range body.Files {
+		if file.Path == "" || file.Size < 0 {
+			writeProblem(w, http.StatusUnprocessableEntity, "invalid_checkpoint_manifest", "Checkpoint manifest contains an invalid file")
+			return
+		}
+		if _, duplicate := manifest[file.Path]; duplicate {
+			writeProblem(w, http.StatusUnprocessableEntity, "invalid_checkpoint_manifest", "Checkpoint manifest contains duplicate paths")
+			return
+		}
+		manifest[file.Path] = file.Size
+	}
+	if item.ConfirmedAt == nil {
+		if err := a.files.ConfirmCheckpoint(job.ID, item.ID, manifest); err != nil {
+			writeProblem(w, http.StatusConflict, "checkpoint_incomplete", err.Error())
+			return
+		}
+		if err := a.store.ConfirmCheckpointSync(r.Context(), item.ID, body.Files); err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		_ = a.store.AppendServerEvent(r.Context(), job.ID, "checkpoint_confirmed", map[string]any{"sync_id": item.ID, "file_count": len(body.Files)})
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (a *API) sdkProgress(w http.ResponseWriter, r *http.Request) { a.sdkRecord(w, r, "progress") }
 func (a *API) sdkMetrics(w http.ResponseWriter, r *http.Request)  { a.sdkRecord(w, r, "metrics") }
 func (a *API) sdkParams(w http.ResponseWriter, r *http.Request)   { a.sdkRecord(w, r, "params") }
@@ -880,6 +984,35 @@ func (a *API) sdkRecord(w http.ResponseWriter, r *http.Request, eventType string
 func (a *API) sdkStop(w http.ResponseWriter, r *http.Request) {
 	job := jobContext(r)
 	writeJSON(w, 200, map[string]bool{"should_stop": job.DesiredStatus == domain.JobCancelled || job.Status == domain.JobStopping})
+}
+
+func (a *API) sdkCheckpoint(w http.ResponseWriter, r *http.Request) {
+	job := jobContext(r)
+	if job.AttemptID == "" || !domain.IsActive(job.Status) {
+		writeProblem(w, http.StatusConflict, "job_not_active", "Checkpoint sync requires an active job attempt")
+		return
+	}
+	item := domain.CheckpointSync{ID: ids.New(), JobID: job.ID, AttemptID: job.AttemptID, Status: "PENDING", RequestedAt: time.Now().UTC()}
+	if err := a.store.CreateCheckpointSync(r.Context(), item); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	_ = a.store.AppendServerEvent(r.Context(), job.ID, "checkpoint_requested", map[string]any{"sync_id": item.ID})
+	writeJSON(w, http.StatusAccepted, item)
+}
+
+func (a *API) sdkCheckpointStatus(w http.ResponseWriter, r *http.Request) {
+	job := jobContext(r)
+	item, err := a.store.CheckpointSync(r.Context(), r.PathValue("sync"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if item.JobID != job.ID {
+		writeProblem(w, http.StatusForbidden, "forbidden", "Checkpoint does not belong to this job")
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
 }
 
 func (a *API) authorizeJob(w http.ResponseWriter, r *http.Request) (domain.Job, bool) {

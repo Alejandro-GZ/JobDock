@@ -203,6 +203,152 @@ func (s *Store) AppendOutput(jobID, relativePath string, offset int64, source io
 	return newOffset, file.Sync()
 }
 
+// AppendCheckpoint writes to an immutable staging generation. Offset conflicts
+// return the durable server offset so an agent can resume after any disconnect.
+func (s *Store) AppendCheckpoint(jobID, syncID, relativePath string, offset int64, source io.Reader) (int64, error) {
+	if !safeSegment(syncID) {
+		return 0, errors.New("invalid checkpoint sync ID")
+	}
+	clean, err := safeRelativePath(relativePath)
+	if err != nil {
+		return 0, err
+	}
+	jobDir, err := s.JobDir(jobID)
+	if err != nil {
+		return 0, err
+	}
+	root := filepath.Join(jobDir, "checkpoint-staging", syncID)
+	path := filepath.Join(root, clean)
+	if !within(root, path) {
+		return 0, errors.New("checkpoint path escapes staging directory")
+	}
+	if err = os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return 0, err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o640)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return 0, errors.New("checkpoint destination is not a regular file")
+	}
+	if info.Size() != offset {
+		return info.Size(), ErrOffsetMismatch
+	}
+	used, err := directorySize(filepath.Join(jobDir, "output"))
+	if err == nil {
+		var checkpointBytes int64
+		checkpointBytes, err = directorySize(filepath.Join(jobDir, "checkpoints"))
+		used += checkpointBytes
+	}
+	if err == nil {
+		var stagingBytes int64
+		stagingBytes, err = directorySize(filepath.Join(jobDir, "checkpoint-staging"))
+		used += stagingBytes
+	}
+	if err != nil {
+		return offset, err
+	}
+	remaining := s.maxOutputBytes - used
+	if remaining <= 0 {
+		return offset, ErrLimitExceeded
+	}
+	if _, err = file.Seek(offset, io.SeekStart); err != nil {
+		return offset, err
+	}
+	written, err := io.Copy(file, io.LimitReader(source, remaining+1))
+	next := offset + written
+	if err != nil {
+		return next, err
+	}
+	if written > remaining {
+		_ = file.Truncate(offset + remaining)
+		return offset + remaining, ErrLimitExceeded
+	}
+	return next, file.Sync()
+}
+
+// ConfirmCheckpoint atomically promotes a fully acknowledged staging
+// directory. Older generations remain untouched, including when a newer node
+// disappears mid-upload.
+func (s *Store) ConfirmCheckpoint(jobID, syncID string, files map[string]int64) error {
+	if !safeSegment(syncID) {
+		return errors.New("invalid checkpoint sync ID")
+	}
+	jobDir, err := s.JobDir(jobID)
+	if err != nil {
+		return err
+	}
+	staging := filepath.Join(jobDir, "checkpoint-staging", syncID)
+	destination := filepath.Join(jobDir, "checkpoints", syncID)
+	if _, err = os.Stat(destination); err == nil {
+		return nil
+	}
+	if len(files) == 0 {
+		if err = os.MkdirAll(staging, 0o750); err != nil {
+			return err
+		}
+	}
+	for name, expectedSize := range files {
+		clean, pathErr := safeRelativePath(name)
+		if pathErr != nil {
+			return pathErr
+		}
+		info, statErr := os.Lstat(filepath.Join(staging, clean))
+		if statErr != nil || !info.Mode().IsRegular() || info.Size() != expectedSize {
+			return fmt.Errorf("checkpoint file %q is not durably staged", name)
+		}
+	}
+	seen := 0
+	if err = filepath.WalkDir(staging, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil || !info.Mode().IsRegular() {
+			return infoErr
+		}
+		relative, relativeErr := filepath.Rel(staging, path)
+		if relativeErr != nil {
+			return relativeErr
+		}
+		expected, ok := files[filepath.ToSlash(relative)]
+		if !ok || expected != info.Size() {
+			return fmt.Errorf("checkpoint staging does not match its manifest")
+		}
+		seen++
+		return nil
+	}); err != nil {
+		return err
+	}
+	if seen != len(files) {
+		return errors.New("checkpoint staging does not match its manifest")
+	}
+	if err = os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
+		return err
+	}
+	return os.Rename(staging, destination)
+}
+
+func (s *Store) ArchiveCheckpoint(jobID, syncID string, destination io.Writer) error {
+	if !safeSegment(syncID) {
+		return errors.New("invalid checkpoint sync ID")
+	}
+	dir, err := s.JobDir(jobID)
+	if err != nil {
+		return err
+	}
+	return archiveDirectory(filepath.Join(dir, "checkpoints", syncID), destination)
+}
+
 func (s *Store) WriteMetadata(jobID string, value any) error {
 	dir, err := s.JobDir(jobID)
 	if err != nil {
@@ -240,6 +386,9 @@ func (s *Store) Archive(jobID string, destination io.Writer) error {
 			return walkErr
 		}
 		if entry.IsDir() {
+			if path != dir && filepath.Base(path) == "checkpoint-staging" {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		info, err := entry.Info()
@@ -259,6 +408,50 @@ func (s *Store) Archive(jobID string, destination io.Writer) error {
 		}
 		header.Name = filepath.ToSlash(relative)
 		header.Method = zip.Deflate
+		writer, err := archive.CreateHeader(header)
+		if err != nil {
+			return err
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(writer, file)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	})
+	if err != nil {
+		_ = archive.Close()
+		return err
+	}
+	return archive.Close()
+}
+
+func archiveDirectory(dir string, destination io.Writer) error {
+	archive := zip.NewWriter(destination)
+	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return err
+		}
+		relative, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+		header.Name, header.Method = filepath.ToSlash(relative), zip.Deflate
 		writer, err := archive.CreateHeader(header)
 		if err != nil {
 			return err

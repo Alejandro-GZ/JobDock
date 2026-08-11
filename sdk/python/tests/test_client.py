@@ -29,3 +29,23 @@ def test_artifact_cannot_escape_output(tmp_path: Path):
     with pytest.raises(ValueError):
         job.artifact("../outside.txt")
     job.close()
+
+
+def test_explicit_checkpoint_sync_waits_for_confirmation(tmp_path: Path, monkeypatch):
+    job = Job("id", "http://jobdock.test", "token", tmp_path)
+    responses = iter([{"id": "sync-1"}, {"status": "PENDING"}, {"status": "CONFIRMED"}])
+    calls = []
+
+    def request(method, endpoint, payload, *, timeout):
+        calls.append((method, endpoint, payload))
+        return next(responses)
+
+    monkeypatch.setattr(job, "_request", request)
+    monkeypatch.setattr("jobdock.client.time.sleep", lambda _: None)
+    assert job.sync(timeout=1.0) is True
+    assert calls == [
+        ("POST", "checkpoints", {}),
+        ("GET", "checkpoints/sync-1", None),
+        ("GET", "checkpoints/sync-1", None),
+    ]
+    job.close()

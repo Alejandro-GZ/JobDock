@@ -532,6 +532,84 @@ func (s *Store) StopRequestsForNode(ctx context.Context, nodeID string) ([]strin
 	return ids, rows.Err()
 }
 
+func (s *Store) CreateCheckpointSync(ctx context.Context, sync domain.CheckpointSync) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO checkpoint_syncs(id,job_id,attempt_id,requested_at) VALUES(?,?,?,?)`, sync.ID, sync.JobID, sync.AttemptID, formatTime(sync.RequestedAt))
+	return mapConstraint(err)
+}
+
+func (s *Store) CheckpointSync(ctx context.Context, id string) (domain.CheckpointSync, error) {
+	var item domain.CheckpointSync
+	var requested string
+	var confirmed sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT id,job_id,attempt_id,requested_at,confirmed_at,file_count,byte_count FROM checkpoint_syncs WHERE id=?`, id).Scan(&item.ID, &item.JobID, &item.AttemptID, &requested, &confirmed, &item.FileCount, &item.ByteCount)
+	if errors.Is(err, sql.ErrNoRows) {
+		return item, ErrNotFound
+	}
+	if err != nil {
+		return item, err
+	}
+	item.RequestedAt, _ = time.Parse(time.RFC3339Nano, requested)
+	item.Status = "PENDING"
+	if confirmed.Valid {
+		value, _ := time.Parse(time.RFC3339Nano, confirmed.String)
+		item.ConfirmedAt = &value
+		item.Status = "CONFIRMED"
+	}
+	return item, nil
+}
+
+func (s *Store) PendingCheckpointSyncsForNode(ctx context.Context, nodeID string) ([]domain.CheckpointSync, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT c.id,c.job_id,c.attempt_id,c.requested_at FROM checkpoint_syncs c JOIN jobs j ON j.id=c.job_id WHERE j.assigned_node_id=? AND j.attempt_id=c.attempt_id AND c.confirmed_at IS NULL AND j.status IN ('ASSIGNED','PULLING_IMAGE','STARTING','RUNNING','STOPPING','LOST') ORDER BY c.requested_at`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]domain.CheckpointSync, 0)
+	for rows.Next() {
+		var item domain.CheckpointSync
+		var requested string
+		if err = rows.Scan(&item.ID, &item.JobID, &item.AttemptID, &requested); err != nil {
+			return nil, err
+		}
+		item.RequestedAt, _ = time.Parse(time.RFC3339Nano, requested)
+		item.Status = "PENDING"
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ConfirmCheckpointSync(ctx context.Context, id string, files []domain.CheckpointFile) error {
+	data, err := json.Marshal(files)
+	if err != nil {
+		return err
+	}
+	var total int64
+	for _, file := range files {
+		total += file.Size
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE checkpoint_syncs SET confirmed_at=COALESCE(confirmed_at,?),file_count=CASE WHEN confirmed_at IS NULL THEN ? ELSE file_count END,byte_count=CASE WHEN confirmed_at IS NULL THEN ? ELSE byte_count END,manifest_json=CASE WHEN confirmed_at IS NULL THEN ? ELSE manifest_json END WHERE id=?`, formatTime(time.Now().UTC()), len(files), total, data, id)
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) LatestConfirmedCheckpoint(ctx context.Context, jobID string) (domain.CheckpointSync, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM checkpoint_syncs WHERE job_id=? AND confirmed_at IS NOT NULL ORDER BY confirmed_at DESC LIMIT 1`, jobID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.CheckpointSync{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.CheckpointSync{}, err
+	}
+	return s.CheckpointSync(ctx, id)
+}
+
 func (s *Store) AllocatedGPUUUIDs(ctx context.Context) (map[string]map[string]bool, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT a.node_id,a.gpu_uuids_json FROM assignments a JOIN jobs j ON j.id=a.job_id WHERE j.status IN ('ASSIGNED','PULLING_IMAGE','STARTING','RUNNING','STOPPING','LOST')`)
 	if err != nil {

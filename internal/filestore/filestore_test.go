@@ -1,7 +1,11 @@
 package filestore
 
 import (
+	"archive/zip"
 	"bytes"
+	"io"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -12,6 +16,46 @@ func TestOutputRejectsTraversal(t *testing.T) {
 	}
 	if _, err = store.AppendOutput("job", "../escape", 0, bytes.NewBufferString("x")); err == nil {
 		t.Fatal("expected traversal to fail")
+	}
+}
+
+func TestCheckpointUploadResumesAndPromotionPreservesLastConfirmed(t *testing.T) {
+	store, err := New(t.TempDir(), 1<<20, 10<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next, err := store.AppendCheckpoint("job", "sync-one", "model.pt", 0, bytes.NewBufferString("first")); err != nil || next != 5 {
+		t.Fatalf("first chunk: offset=%d err=%v", next, err)
+	}
+	if next, err := store.AppendCheckpoint("job", "sync-one", "model.pt", 0, bytes.NewBufferString("duplicate")); err != ErrOffsetMismatch || next != 5 {
+		t.Fatalf("resume offset: offset=%d err=%v", next, err)
+	}
+	if err := store.ConfirmCheckpoint("job", "sync-one", map[string]int64{"model.pt": 5}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AppendCheckpoint("job", "sync-two", "model.pt", 0, bytes.NewBufferString("partial")); err != nil {
+		t.Fatal(err)
+	}
+
+	jobDir, _ := store.JobDir("job")
+	data, err := os.ReadFile(filepath.Join(jobDir, "checkpoints", "sync-one", "model.pt"))
+	if err != nil || string(data) != "first" {
+		t.Fatalf("confirmed generation changed: %q %v", data, err)
+	}
+
+	var archive bytes.Buffer
+	if err = store.ArchiveCheckpoint("job", "sync-one", &archive); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(archive.Bytes()), int64(archive.Len()))
+	if err != nil || len(reader.File) != 1 {
+		t.Fatalf("checkpoint archive: %v %#v", err, reader.File)
+	}
+	file, _ := reader.File[0].Open()
+	archived, _ := io.ReadAll(file)
+	_ = file.Close()
+	if string(archived) != "first" {
+		t.Fatalf("archived checkpoint = %q", archived)
 	}
 }
 func TestLogOffsetsAreIdempotent(t *testing.T) {

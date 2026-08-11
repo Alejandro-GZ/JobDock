@@ -37,6 +37,7 @@ type Agent struct {
 	running             map[string]*runtimeAssignment
 	gpu                 GPUDiscoverer
 	gpuLogOnce          sync.Once
+	syncing             map[string]bool
 }
 
 type runtimeAssignment struct {
@@ -49,11 +50,13 @@ type runtimeAssignment struct {
 	StopRequested bool       `json:"stop_requested"`
 	mu            sync.Mutex `json:"-"`
 	eventMu       sync.Mutex `json:"-"`
+	checkpointMu  sync.Mutex `json:"-"`
 }
 
 type pollResponse struct {
-	Assignment *domain.Assignment `json:"assignment"`
-	StopJobIDs []string           `json:"stop_job_ids"`
+	Assignment      *domain.Assignment      `json:"assignment"`
+	StopJobIDs      []string                `json:"stop_job_ids"`
+	CheckpointSyncs []domain.CheckpointSync `json:"checkpoint_syncs"`
 }
 
 type credentialState struct {
@@ -67,7 +70,7 @@ func New(cfg config.Agent, logger *slog.Logger) *Agent {
 }
 
 func NewWithGPUDiscoverer(cfg config.Agent, logger *slog.Logger, gpu GPUDiscoverer) *Agent {
-	return &Agent{config: cfg, log: logger, docker: dockerengine.New(cfg.DockerSocket), http: &http.Client{Timeout: 30 * time.Second}, running: map[string]*runtimeAssignment{}, gpu: gpu}
+	return &Agent{config: cfg, log: logger, docker: dockerengine.New(cfg.DockerSocket), http: &http.Client{Timeout: 30 * time.Second}, running: map[string]*runtimeAssignment{}, syncing: map[string]bool{}, gpu: gpu}
 }
 
 func (a *Agent) Run(ctx context.Context) error {
@@ -100,6 +103,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 		for _, jobID := range response.StopJobIDs {
 			a.stop(ctx, jobID)
+		}
+		for _, checkpoint := range response.CheckpointSyncs {
+			a.startCheckpointSync(ctx, checkpoint)
 		}
 		if response.Assignment != nil {
 			a.startAssignment(ctx, *response.Assignment)
@@ -515,6 +521,126 @@ func (a *Agent) uploadOutputs(ctx context.Context, record *runtimeAssignment, ro
 		}
 		return nil
 	})
+}
+
+func (a *Agent) startCheckpointSync(ctx context.Context, item domain.CheckpointSync) {
+	a.mu.Lock()
+	record := a.running[item.JobID]
+	if record == nil || a.syncing[item.ID] {
+		a.mu.Unlock()
+		return
+	}
+	a.syncing[item.ID] = true
+	a.mu.Unlock()
+	go func() {
+		defer func() { a.mu.Lock(); delete(a.syncing, item.ID); a.mu.Unlock() }()
+		record.checkpointMu.Lock()
+		defer record.checkpointMu.Unlock()
+		root := filepath.Join(a.config.WorkspaceDir, record.JobID, "output")
+		files, err := a.uploadCheckpoint(ctx, item, root)
+		if err != nil {
+			a.log.Warn("checkpoint_sync_failed", "error", err, "job_id", item.JobID, "sync_id", item.ID)
+			return
+		}
+		body := map[string]any{"files": files}
+		for _, delay := range []time.Duration{0, time.Second, 2 * time.Second, 5 * time.Second} {
+			if delay > 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(delay):
+				}
+			}
+			requestCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			err = a.apiJSON(requestCtx, "POST", "/api/v1/agent/checkpoint-syncs/"+item.ID+"/complete", body, nil)
+			cancel()
+			if err == nil {
+				return
+			}
+		}
+		a.log.Warn("checkpoint_confirmation_failed", "error", err, "job_id", item.JobID, "sync_id", item.ID)
+	}()
+}
+
+func (a *Agent) uploadCheckpoint(ctx context.Context, item domain.CheckpointSync, root string) ([]domain.CheckpointFile, error) {
+	manifest := make([]domain.CheckpointFile, 0)
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if errors.Is(walkErr, os.ErrNotExist) {
+			return nil
+		}
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		offset := int64(0)
+		buffer := make([]byte, 1<<20)
+		for offset < info.Size() {
+			if _, err = file.Seek(offset, io.SeekStart); err != nil {
+				return err
+			}
+			want := int64(len(buffer))
+			if remaining := info.Size() - offset; remaining < want {
+				want = remaining
+			}
+			count, readErr := io.ReadFull(file, buffer[:want])
+			if readErr != nil {
+				return readErr
+			}
+			endpoint := "/api/v1/agent/checkpoint-syncs/" + item.ID + "/files/" + strings.ReplaceAll(url.PathEscape(filepath.ToSlash(relative)), "%2F", "/") + "?offset=" + strconv.FormatInt(offset, 10)
+			var next int64
+			var uploadErr error
+			for attempt, delay := range []time.Duration{0, time.Second, 2 * time.Second, 5 * time.Second, 10 * time.Second} {
+				if delay > 0 {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(delay):
+					}
+				}
+				uploadCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+				next, uploadErr = a.uploadBinary(uploadCtx, "PUT", endpoint, bytes.NewReader(buffer[:count]))
+				cancel()
+				if uploadErr == nil || next > offset {
+					break
+				}
+				if attempt == 4 {
+					return uploadErr
+				}
+			}
+			if next <= offset || next > info.Size() {
+				return fmt.Errorf("invalid checkpoint offset %d for %s", next, relative)
+			}
+			offset = next
+		}
+		after, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		if after.Size() != info.Size() || !after.ModTime().Equal(info.ModTime()) {
+			return fmt.Errorf("checkpoint file changed during sync: %s", relative)
+		}
+		manifest = append(manifest, domain.CheckpointFile{Path: filepath.ToSlash(relative), Size: info.Size()})
+		return nil
+	})
+	return manifest, err
 }
 
 func (a *Agent) stop(ctx context.Context, jobID string) {

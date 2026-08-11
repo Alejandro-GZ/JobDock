@@ -33,6 +33,7 @@ class NoopJob:
     def param(self, name: str, value: str | int | float | bool) -> None: pass
     def event(self, event_type: str, payload: dict[str, Any] | None = None) -> None: pass
     def artifact(self, relative_path: str | os.PathLike[str]) -> Path: return Path(relative_path)
+    def sync(self, timeout: float = 30.0) -> bool: return False
     def should_stop(self) -> bool: return False
     def close(self, timeout: float = 0.0) -> None: pass
 
@@ -100,6 +101,31 @@ class Job:
         except Exception:
             logger.debug("Unable to query cooperative cancellation", exc_info=True)
         return cached
+
+    def sync(self, timeout: float = 30.0) -> bool:
+        """Durably synchronize the current output directory as a checkpoint.
+
+        Files should be written with an atomic rename before calling this method.
+        The call is bounded and returns only after the server has confirmed the
+        complete immutable generation. A later failed sync cannot replace it.
+        """
+        if timeout <= 0:
+            raise ValueError("checkpoint sync timeout must be positive")
+        deadline = time.monotonic() + timeout
+        try:
+            created = self._request("POST", "checkpoints", {}, timeout=min(5.0, timeout))
+            sync_id = str(created["id"])
+            while time.monotonic() < deadline:
+                remaining = deadline - time.monotonic()
+                status = self._request("GET", f"checkpoints/{sync_id}", None, timeout=min(2.0, max(0.1, remaining)))
+                if status.get("status") == "CONFIRMED":
+                    return True
+                time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
+        except Exception:
+            logger.warning("JobDock checkpoint sync was not confirmed", exc_info=True)
+            return False
+        logger.warning("JobDock checkpoint sync timed out after %.1f seconds", timeout)
+        return False
 
     def close(self, timeout: float = 2.0) -> None:
         if self._closed.is_set():

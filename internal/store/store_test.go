@@ -176,3 +176,46 @@ func TestNodeMetadataOverridesSurviveHeartbeats(t *testing.T) {
 		t.Fatalf("heartbeat replaced effective metadata: %#v", nodes[0])
 	}
 }
+
+func TestLostJobRetainsLatestConfirmedCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	repository, err := store.Open(t.TempDir() + "/jobdock.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	user := domain.User{ID: "checkpoint-owner", Username: "checkpoint-owner", Role: domain.RoleMember, CreatedAt: time.Now().UTC()}
+	if err = repository.CreateUser(ctx, user, "hash"); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC().Add(-10 * time.Minute)
+	node := domain.Node{ID: "checkpoint-node", Name: "node", Status: domain.NodeOnline, ProtocolVersion: 1, CPUTotalMillis: 2000, MemoryTotalBytes: 2 << 30, WorkspaceFreeBytes: 20 << 30, Labels: map[string]string{}, LastHeartbeat: old, CreatedAt: old}
+	if err = repository.UpsertNode(ctx, node, "credential"); err != nil {
+		t.Fatal(err)
+	}
+	job := domain.Job{ID: "checkpoint-job", OwnerID: user.ID, Spec: domain.JobSpec{Name: "train", Image: "train:latest", Command: []string{"train"}, Resources: domain.Resources{CPUMillis: 100, MemoryBytes: 1024}}, Status: domain.JobQueued, DesiredStatus: domain.JobRunning, ObservedStatus: domain.JobQueued, CreatedAt: time.Now().UTC()}
+	if err = repository.CreateJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.ReserveJob(ctx, job.ID, node.ID, "attempt-one", "assignment-one", "hash", []byte("cipher"), nil); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := domain.CheckpointSync{ID: "sync-confirmed", JobID: job.ID, AttemptID: "attempt-one", RequestedAt: time.Now().UTC()}
+	if err = repository.CreateCheckpointSync(ctx, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.ConfirmCheckpointSync(ctx, checkpoint.ID, []domain.CheckpointFile{{Path: "epoch-10.pt", Size: 42}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.MarkStaleNodes(ctx, time.Now().UTC(), time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repository.Job(ctx, job.ID)
+	if err != nil || stored.Status != domain.JobLost {
+		t.Fatalf("job was not lost: %#v %v", stored, err)
+	}
+	latest, err := repository.LatestConfirmedCheckpoint(ctx, job.ID)
+	if err != nil || latest.ID != checkpoint.ID || latest.FileCount != 1 || latest.ByteCount != 42 {
+		t.Fatalf("latest checkpoint lost: %#v %v", latest, err)
+	}
+}
