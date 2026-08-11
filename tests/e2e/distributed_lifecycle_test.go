@@ -349,11 +349,21 @@ func (h *harness) waitJob(id string, timeout time.Duration, wanted ...string) jo
 			return true
 		}
 		if value.Status == "FAILED" && !wants["FAILED"] {
-			attempts := h.jobAttempts(id)
+			var history struct {
+				Items []jobAttempt `json:"items"`
+			}
+			h.request(
+				http.MethodGet,
+				"/api/v1/jobs/"+id+"/attempts",
+				nil,
+				&history,
+				http.StatusOK,
+				false,
+			)
 			h.t.Fatalf(
 				"job %s failed unexpectedly; attempts=%#v",
 				id,
-				attempts,
+				history.Items,
 			)
 		}
 		return false
