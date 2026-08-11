@@ -1,4 +1,6 @@
-# JobDock
+<p align="center">
+  <img src="docs/assets/jobdock-logo.svg" alt="JobDock" width="286">
+</p>
 
 JobDock is a lightweight, self-hosted control plane for running containerized batch jobs across a private pool of Docker hosts.
 
