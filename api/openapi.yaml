@@ -25,6 +25,29 @@ paths:
       operationId: currentUser
       responses:
         '200': {description: Current session, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}
+  /auth/logout:
+    post:
+      operationId: logout
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      responses: {'204': {description: Session revoked and cookie cleared}}
+  /users:
+    get:
+      operationId: listUsers
+      description: Administrator-only user listing.
+      responses:
+        '200': {description: Users, content: {application/json: {schema: {$ref: '#/components/schemas/UserList'}}}}
+        '403': {$ref: '#/components/responses/Problem'}
+    post:
+      operationId: createUser
+      description: Create a local administrator or member account.
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/CreateUserRequest'}}}
+      responses:
+        '201': {description: Created user, content: {application/json: {schema: {$ref: '#/components/schemas/User'}}}}
+        '403': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
   /jobs:
     get:
       operationId: listJobs
@@ -75,6 +98,21 @@ paths:
       responses:
         '200': {description: Byte-offset resumable log chunks as text/event-stream}
         '400': {$ref: '#/components/responses/Problem'}
+  /jobs/{jobId}/logs/{stream}:
+    get:
+      operationId: downloadJobLog
+      parameters:
+        - {$ref: '#/components/parameters/JobID'}
+        - {$ref: '#/components/parameters/LogStream'}
+        - {name: offset, in: query, schema: {type: integer, format: int64, minimum: 0}}
+      responses:
+        '200':
+          description: Log bytes beginning at the requested offset, or the last 256 KiB by default.
+          headers:
+            X-JobDock-Start-Offset: {schema: {type: integer, format: int64}}
+            X-JobDock-Next-Offset: {schema: {type: integer, format: int64}}
+          content: {text/plain: {schema: {type: string}}}
+        '422': {$ref: '#/components/responses/Problem'}
   /jobs/stream:
     get:
       operationId: streamOwnedJobs
@@ -126,6 +164,18 @@ paths:
         '200': {description: Effective node metadata updated}
         '403': {description: Administrator role required}
         '422': {description: Invalid node metadata}
+  /nodes/{nodeId}/drain:
+    post:
+      operationId: drainNode
+      description: Prevent an enrolled node from receiving new assignments.
+      parameters: [{$ref: '#/components/parameters/NodeID'}, {$ref: '#/components/parameters/CSRFToken'}]
+      responses: {'204': {description: Node is draining}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
+  /nodes/{nodeId}/resume:
+    post:
+      operationId: resumeNode
+      description: Return a draining node to online scheduling.
+      parameters: [{$ref: '#/components/parameters/NodeID'}, {$ref: '#/components/parameters/CSRFToken'}]
+      responses: {'204': {description: Node resumed}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
   /audit:
     get:
       operationId: listAuditEvents
@@ -138,21 +188,60 @@ paths:
   /secrets:
     get:
       operationId: listSecrets
-      responses: {'200': {description: Secret metadata without values}}
+      responses: {'200': {description: Secret metadata without values, content: {application/json: {schema: {$ref: '#/components/schemas/SecretList'}}}}}
     post:
       operationId: createSecret
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
-      responses: {'201': {description: Encrypted secret metadata}}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/CreateSecretRequest'}}}
+      responses:
+        '201': {description: Encrypted secret metadata, content: {application/json: {schema: {$ref: '#/components/schemas/SecretMetadata'}}}}
+        '422': {$ref: '#/components/responses/Problem'}
+  /secrets/{secretId}:
+    delete:
+      operationId: deleteSecret
+      parameters:
+        - {name: secretId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {$ref: '#/components/parameters/CSRFToken'}
+      responses: {'204': {description: Secret deleted}, '404': {$ref: '#/components/responses/Problem'}}
   /agent/enroll:
     post:
       security: []
       operationId: enrollAgent
-      responses: {'201': {description: Node ID and rotatable agent credential}, '401': {$ref: '#/components/responses/Problem'}}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/AgentEnrollmentRequest'}}}
+      responses:
+        '201': {description: Node ID and rotatable agent credential, content: {application/json: {schema: {$ref: '#/components/schemas/AgentCredential'}}}}
+        '401': {$ref: '#/components/responses/Problem'}
+  /agent/heartbeat:
+    post:
+      security: [{bearerToken: []}]
+      operationId: heartbeat
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/NodeInventory'}}}
+      responses: {'204': {description: Inventory and heartbeat accepted}, '401': {$ref: '#/components/responses/Problem'}}
   /agent/assignments/next:
     get:
       security: [{bearerToken: []}]
       operationId: nextAssignment
       responses: {'200': {description: Assignment, cooperative stop requests, and pending checkpoint syncs}}
+  /agent/assignments/{assignmentId}/accept:
+    post:
+      security: [{bearerToken: []}]
+      operationId: acceptAssignment
+      parameters: [{name: assignmentId, in: path, required: true, schema: {type: string, format: uuid}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [container_id]
+              properties: {container_id: {type: string}}
+      responses: {'204': {description: Container identity persisted for the assignment}, '409': {$ref: '#/components/responses/Problem'}}
 
   /agent/checkpoint-syncs/{syncId}/files/{path}:
     put:
@@ -160,22 +249,43 @@ paths:
       operationId: uploadCheckpointChunk
       parameters:
         - {name: syncId, in: path, required: true, schema: {type: string, format: uuid}}
-        - {name: path, in: path, required: true, schema: {type: string}}
-        - {name: offset, in: query, required: true, schema: {type: integer, format: int64, minimum: 0}}
+        - {name: path, in: path, required: true, description: Slash-separated path relative to the output directory, schema: {type: string}}
+        - {$ref: '#/components/parameters/UploadOffset'}
+      requestBody:
+        required: true
+        content: {application/octet-stream: {schema: {type: string, format: binary}}}
       responses:
-        '200': {description: Chunk durably acknowledged with next_offset}
-        '409': {description: Resume at returned next_offset}
+        '200': {description: Chunk durably acknowledged, content: {application/json: {schema: {$ref: '#/components/schemas/UploadAcknowledgement'}}}}
+        '409': {description: Resume at returned durable offset, content: {application/json: {schema: {$ref: '#/components/schemas/UploadAcknowledgement'}}}}
+        '413': {description: Checkpoint storage limit reached, content: {application/json: {schema: {$ref: '#/components/schemas/UploadAcknowledgement'}}}}
   /agent/checkpoint-syncs/{syncId}/complete:
     post:
       security: [{bearerToken: []}]
       operationId: confirmCheckpointSync
       parameters: [{name: syncId, in: path, required: true, schema: {type: string, format: uuid}}]
-      responses: {'204': {description: Immutable checkpoint generation confirmed}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [files]
+              properties: {files: {type: array, items: {$ref: '#/components/schemas/CheckpointFile'}}}
+      responses: {'204': {description: Immutable checkpoint generation confirmed}, '409': {$ref: '#/components/responses/Problem'}}
   /agent/credential/rotate:
     post:
       security: [{bearerToken: []}]
       operationId: rotateAgentCredential
-      responses: {'200': {description: New revocable agent credential}}
+      responses: {'200': {description: New revocable agent credential, content: {application/json: {schema: {$ref: '#/components/schemas/AgentCredential'}}}}}
+  /agent/jobs/{jobId}/events:
+    post:
+      security: [{bearerToken: []}]
+      operationId: reportJobEvent
+      parameters: [{$ref: '#/components/parameters/JobID'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/AgentJobEvent'}}}
+      responses: {'204': {description: Sequenced event accepted}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /agent/jobs/{jobId}/telemetry:
     post:
       security: [{bearerToken: []}]
@@ -187,22 +297,97 @@ paths:
       responses:
         '204': {description: Normalized resource sample accepted}
         '422': {$ref: '#/components/responses/Problem'}
+  /agent/jobs/{jobId}/logs/{stream}:
+    put:
+      security: [{bearerToken: []}]
+      operationId: uploadJobLogChunk
+      parameters:
+        - {$ref: '#/components/parameters/JobID'}
+        - {$ref: '#/components/parameters/LogStream'}
+        - {$ref: '#/components/parameters/UploadOffset'}
+      requestBody:
+        required: true
+        content: {application/octet-stream: {schema: {type: string, format: binary}}}
+      responses:
+        '200': {description: Chunk acknowledged, content: {application/json: {schema: {$ref: '#/components/schemas/UploadAcknowledgement'}}}}
+        '409': {description: Offset conflict with durable next offset, content: {application/json: {schema: {$ref: '#/components/schemas/UploadAcknowledgement'}}}}
+        '413': {$ref: '#/components/responses/Problem'}
+  /agent/jobs/{jobId}/outputs/{path}:
+    put:
+      security: [{bearerToken: []}]
+      operationId: uploadJobOutputChunk
+      parameters:
+        - {$ref: '#/components/parameters/JobID'}
+        - {name: path, in: path, required: true, description: Slash-separated path relative to the output directory, schema: {type: string}}
+        - {$ref: '#/components/parameters/UploadOffset'}
+      requestBody:
+        required: true
+        content: {application/octet-stream: {schema: {type: string, format: binary}}}
+      responses:
+        '200': {description: Chunk acknowledged, content: {application/json: {schema: {$ref: '#/components/schemas/UploadAcknowledgement'}}}}
+        '409': {description: Offset conflict with durable next offset, content: {application/json: {schema: {$ref: '#/components/schemas/UploadAcknowledgement'}}}}
+        '413': {$ref: '#/components/responses/Problem'}
   /job-context/progress:
     post:
       security: [{bearerToken: []}]
       operationId: reportProgress
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties: {value: {type: number, format: double, minimum: 0, maximum: 1}}
       responses: {'202': {description: Progress accepted}}
+  /job-context/metrics:
+    post:
+      security: [{bearerToken: []}]
+      operationId: reportMetrics
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/MetricBatch'}}}
+      responses: {'202': {description: Metrics accepted}}
+  /job-context/params:
+    post:
+      security: [{bearerToken: []}]
+      operationId: reportParameters
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/ParameterBatch'}}}
+      responses: {'202': {description: Parameters accepted}}
+  /job-context/events:
+    post:
+      security: [{bearerToken: []}]
+      operationId: reportSDKEvent
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/SDKEvent'}}}
+      responses: {'202': {description: Structured event accepted}}
+  /job-context/stop:
+    get:
+      security: [{bearerToken: []}]
+      operationId: shouldStop
+      responses:
+        '200':
+          description: Cooperative cancellation state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [should_stop]
+                properties: {should_stop: {type: boolean}}
   /job-context/checkpoints:
     post:
       security: [{bearerToken: []}]
       operationId: requestCheckpointSync
-      responses: {'202': {description: Checkpoint synchronization requested}}
+      responses: {'202': {description: Checkpoint synchronization requested, content: {application/json: {schema: {$ref: '#/components/schemas/CheckpointSync'}}}}}
   /job-context/checkpoints/{syncId}:
     get:
       security: [{bearerToken: []}]
       operationId: getCheckpointSync
       parameters: [{name: syncId, in: path, required: true, schema: {type: string, format: uuid}}]
-      responses: {'200': {description: PENDING or CONFIRMED checkpoint status}}
+      responses: {'200': {description: PENDING or CONFIRMED checkpoint status, content: {application/json: {schema: {$ref: '#/components/schemas/CheckpointSync'}}}}}
 components:
   securitySchemes:
     sessionCookie: {type: apiKey, in: cookie, name: jobdock_session}
@@ -212,6 +397,8 @@ components:
     NodeID: {name: nodeId, in: path, required: true, schema: {type: string, format: uuid}}
     CSRFToken: {name: X-CSRF-Token, in: header, required: true, schema: {type: string}}
     IdempotencyKey: {name: Idempotency-Key, in: header, required: false, schema: {type: string, minLength: 16, maxLength: 128}}
+    LogStream: {name: stream, in: path, required: true, schema: {type: string, enum: [stdout, stderr]}}
+    UploadOffset: {name: offset, in: query, required: true, schema: {type: integer, format: int64, minimum: 0}}
   responses:
     Problem:
       description: RFC 9457-style problem detail
@@ -234,6 +421,18 @@ components:
         username: {type: string}
         role: {type: string, enum: [admin, member]}
         created_at: {type: string, format: date-time}
+    UserList:
+      type: object
+      required: [items]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/User'}}}
+    CreateUserRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password, role]
+      properties:
+        username: {type: string, minLength: 3, maxLength: 64}
+        password: {type: string, format: password, minLength: 12}
+        role: {type: string, enum: [admin, member]}
     JobSpec:
       type: object
       additionalProperties: false
@@ -274,6 +473,7 @@ components:
         desired_status: {$ref: '#/components/schemas/JobStatus'}
         observed_status: {$ref: '#/components/schemas/JobStatus'}
         assigned_node_id: {type: string, format: uuid}
+        attempt_id: {type: string, format: uuid}
         image_digest: {type: string}
         exit_code: {type: integer}
         queue_reason_code: {type: string}
@@ -282,6 +482,7 @@ components:
         created_at: {type: string, format: date-time}
         started_at: {type: string, format: date-time}
         finished_at: {type: string, format: date-time}
+        deleted_at: {type: string, format: date-time}
         version: {type: integer, format: int64}
     JobStatus: {type: string, enum: [QUEUED, ASSIGNED, PULLING_IMAGE, STARTING, RUNNING, STOPPING, CANCELLED, SUCCEEDED, FAILED, LOST, DELETING, DELETED]}
     GPU:
@@ -307,6 +508,7 @@ components:
         name: {type: string}
         status: {type: string, enum: [ONLINE, OFFLINE, DEGRADED, DRAINING]}
         agent_version: {type: string}
+        protocol_version: {type: integer}
         architecture: {type: string}
         docker_version: {type: string}
         cpu_total_millis: {type: integer, format: int64}
@@ -318,6 +520,7 @@ components:
         gpus: {type: array, items: {$ref: '#/components/schemas/GPU'}}
         gpu_discovery: {$ref: '#/components/schemas/GPUDiscovery'}
         last_heartbeat: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
     JobUpdate:
       type: object
       required: [cursor, job_id, name, status, version, created_at]
@@ -337,6 +540,129 @@ components:
         memory_bytes: {type: integer, format: int64, minimum: 0}
         gpu_utilization_basis_points: {type: integer, format: int64, minimum: 0, maximum: 10000}
         gpu_memory_bytes: {type: integer, format: int64, minimum: 0}
+    AgentEnrollmentRequest:
+      type: object
+      additionalProperties: false
+      required: [enrollment_token, node]
+      properties:
+        enrollment_token: {type: string, minLength: 1}
+        node: {$ref: '#/components/schemas/NodeInventory'}
+    AgentCredential:
+      type: object
+      required: [node_id, credential]
+      properties:
+        node_id: {type: string, format: uuid}
+        credential: {type: string, writeOnly: true}
+        protocol_version: {type: integer}
+        rotated_at: {type: string, format: date-time}
+    NodeInventory:
+      type: object
+      required: [name, status, agent_version, protocol_version, architecture, docker_version, cpu_total_millis, memory_total_bytes, workspace_free_bytes, labels, gpus, gpu_discovery]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        status: {type: string, enum: [ONLINE, OFFLINE, DEGRADED, DRAINING]}
+        agent_version: {type: string}
+        protocol_version: {type: integer}
+        architecture: {type: string}
+        docker_version: {type: string}
+        cpu_total_millis: {type: integer, format: int64, minimum: 0}
+        memory_total_bytes: {type: integer, format: int64, minimum: 0}
+        workspace_free_bytes: {type: integer, format: int64, minimum: 0}
+        labels: {type: object, additionalProperties: {type: string}}
+        gpus: {type: array, items: {$ref: '#/components/schemas/GPU'} }
+        gpu_discovery: {$ref: '#/components/schemas/GPUDiscovery'}
+    SecretMetadata:
+      type: object
+      required: [id, owner_id, name, kind, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        owner_id: {type: string, format: uuid}
+        name: {type: string}
+        kind: {type: string, enum: [generic, registry]}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    SecretList:
+      type: object
+      required: [items]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/SecretMetadata'}}}
+    CreateSecretRequest:
+      type: object
+      additionalProperties: false
+      required: [name, value]
+      properties:
+        name: {type: string, minLength: 1}
+        value: {type: string, minLength: 1, writeOnly: true}
+        kind: {type: string, enum: [generic, registry], default: generic}
+    AgentJobEvent:
+      type: object
+      additionalProperties: false
+      required: [sequence, type]
+      properties:
+        sequence: {type: integer, format: int64, minimum: 1}
+        type: {type: string}
+        status: {$ref: '#/components/schemas/JobStatus'}
+        image_digest: {type: string}
+        exit_code: {type: integer}
+        reason: {type: string}
+        payload: {type: object, additionalProperties: true}
+    UploadAcknowledgement:
+      type: object
+      required: [next_offset]
+      properties: {next_offset: {type: integer, format: int64, minimum: 0}}
+    CheckpointFile:
+      type: object
+      additionalProperties: false
+      required: [path, size]
+      properties:
+        path: {type: string}
+        size: {type: integer, format: int64, minimum: 0}
+    CheckpointSync:
+      type: object
+      required: [id, job_id, attempt_id, status, file_count, byte_count, requested_at]
+      properties:
+        id: {type: string, format: uuid}
+        job_id: {type: string, format: uuid}
+        attempt_id: {type: string, format: uuid}
+        status: {type: string, enum: [PENDING, CONFIRMED]}
+        file_count: {type: integer, minimum: 0}
+        byte_count: {type: integer, format: int64, minimum: 0}
+        requested_at: {type: string, format: date-time}
+        confirmed_at: {type: string, format: date-time}
+    MetricBatch:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [name, value]
+            properties:
+              name: {type: string, minLength: 1}
+              value: {type: number, format: double}
+              step: {type: integer}
+    ParameterBatch:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [name, value]
+            properties:
+              name: {type: string, minLength: 1}
+              value: {oneOf: [{type: string}, {type: integer}, {type: number}, {type: boolean}]}
+    SDKEvent:
+      type: object
+      additionalProperties: false
+      required: [type, payload]
+      properties:
+        type: {type: string, minLength: 1}
+        payload: {type: object, additionalProperties: true}
     Problem:
       type: object
       required: [type, title, status, code, detail]

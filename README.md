@@ -8,6 +8,10 @@ The repository contains:
 - `jobdock-agent`: a trusted per-host Docker executor.
 - `jobdock-sdk`: an optional Python telemetry SDK for running jobs.
 
+The versioned HTTP surface and client-generation contract are documented in
+[`api/openapi.yaml`](api/openapi.yaml); contributor guidance for keeping it in
+sync with the Go router is in [`docs/api.md`](docs/api.md).
+
 ## Quick start
 
 1. Copy `.env.example` to `.env` and replace every development credential.
