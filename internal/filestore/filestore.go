@@ -105,6 +105,21 @@ func (s *Store) DeleteBuild(buildID string) error {
 	return os.RemoveAll(filepath.Join(s.root, "builds", buildID))
 }
 
+func (s *Store) OpenBuildSource(buildID string) (*os.File, error) {
+	if !safeSegment(buildID) {
+		return nil, errors.New("invalid build ID")
+	}
+	path := filepath.Join(s.root, "builds", buildID, "source", "source.archive")
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("build source is not a regular file")
+	}
+	return os.Open(path)
+}
+
 // PrepareBuildSource expands a supported source archive into a temporary,
 // path-confined workspace. Callers must invoke cleanup when analysis ends.
 func (s *Store) PrepareBuildSource(buildID, filename string) (projectDir string, cleanup func(), err error) {

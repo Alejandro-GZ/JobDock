@@ -130,12 +130,77 @@ paths:
   /builds/{buildId}/confirm:
     post:
       operationId: confirmBuildPlan
-      description: Confirm the detected immutable build plan without starting BuildKit execution.
+      description: Confirm the immutable configuration and queue it for isolated BuildKit execution.
       parameters: [{$ref: '#/components/parameters/BuildID'}, {$ref: '#/components/parameters/CSRFToken'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       responses:
-        '200': {description: Confirmed build plan, content: {application/json: {schema: {$ref: '#/components/schemas/BuildPlan'}}}}
+        '202': {description: Build queued for the isolated builder, content: {application/json: {schema: {$ref: '#/components/schemas/Build'}}}}
         '403': {$ref: '#/components/responses/Problem'}
         '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+  /builder/assignments/next:
+    get:
+      security: [{bearerToken: []}]
+      operationId: claimBuildAssignment
+      parameters: [{$ref: '#/components/parameters/BuilderID'}]
+      responses:
+        '200': {description: Persisted build work claimed or recovered by this builder, content: {application/json: {schema: {$ref: '#/components/schemas/BuildWork'}}}}
+        '204': {description: No build work is available}
+        '401': {$ref: '#/components/responses/Problem'}
+  /builder/assignments/{assignmentId}:
+    get:
+      security: [{bearerToken: []}]
+      operationId: getBuildAssignment
+      parameters: [{$ref: '#/components/parameters/BuildAssignmentID'}, {$ref: '#/components/parameters/BuilderID'}]
+      responses:
+        '200': {description: Current desired and observed assignment state, content: {application/json: {schema: {$ref: '#/components/schemas/BuildAssignment'}}}}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+  /builder/assignments/{assignmentId}/heartbeat:
+    post:
+      security: [{bearerToken: []}]
+      operationId: heartbeatBuildAssignment
+      parameters: [{$ref: '#/components/parameters/BuildAssignmentID'}, {$ref: '#/components/parameters/BuilderID'}]
+      responses:
+        '200': {description: Renewed lease and cancellation state, content: {application/json: {schema: {$ref: '#/components/schemas/BuildAssignment'}}}}
+        '409': {$ref: '#/components/responses/Problem'}
+  /builder/assignments/{assignmentId}/source:
+    get:
+      security: [{bearerToken: []}]
+      operationId: downloadBuildSource
+      parameters: [{$ref: '#/components/parameters/BuildAssignmentID'}, {$ref: '#/components/parameters/BuilderID'}]
+      responses:
+        '200': {description: Exact immutable source archive, headers: {X-JobDock-Source-SHA256: {schema: {type: string, pattern: '^[0-9a-f]{64}$'}}}, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+  /builder/assignments/{assignmentId}/logs:
+    put:
+      security: [{bearerToken: []}]
+      operationId: uploadBuildLogChunk
+      parameters: [{$ref: '#/components/parameters/BuildAssignmentID'}, {$ref: '#/components/parameters/BuilderID'}, {$ref: '#/components/parameters/UploadOffset'}]
+      requestBody: {required: true, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+      responses:
+        '204': {description: Ordered log chunk acknowledged, headers: {X-JobDock-Next-Offset: {schema: {type: integer, format: int64}}}}
+        '409': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
+  /builder/assignments/{assignmentId}/complete:
+    post:
+      security: [{bearerToken: []}]
+      operationId: completeBuildAssignment
+      parameters: [{$ref: '#/components/parameters/BuildAssignmentID'}, {$ref: '#/components/parameters/BuilderID'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: {type: string, enum: [SUCCEEDED, FAILED, CANCELLED]}
+                digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+                message: {type: string, maxLength: 65536}
+      responses:
+        '200': {description: Terminal result committed idempotently, content: {application/json: {schema: {$ref: '#/components/schemas/Build'}}}}
         '409': {$ref: '#/components/responses/Problem'}
   /jobs:
     get:
@@ -582,6 +647,8 @@ components:
     bearerToken: {type: http, scheme: bearer}
   parameters:
     BuildID: {name: buildId, in: path, required: true, schema: {type: string, format: uuid}}
+    BuildAssignmentID: {name: assignmentId, in: path, required: true, schema: {type: string, format: uuid}}
+    BuilderID: {name: X-JobDock-Builder-ID, in: header, required: true, schema: {type: string, minLength: 1, maxLength: 128}}
     JobID: {name: jobId, in: path, required: true, schema: {type: string, format: uuid}}
     AttemptIDPath: {name: attemptId, in: path, required: true, schema: {type: string, format: uuid}}
     NodeID: {name: nodeId, in: path, required: true, schema: {type: string, format: uuid}}
@@ -679,6 +746,27 @@ components:
         info: {type: object, additionalProperties: true}
         created_at: {type: string, format: date-time}
         confirmed_at: {type: string, format: date-time}
+    BuildAssignment:
+      type: object
+      additionalProperties: false
+      required: [id, build_id, status, cancel_requested, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        build_id: {type: string, format: uuid}
+        status: {type: string, enum: [PENDING, RUNNING, SUCCEEDED, FAILED, CANCELLED]}
+        cancel_requested: {type: boolean}
+        builder_id: {type: string}
+        lease_expires_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    BuildWork:
+      type: object
+      additionalProperties: false
+      required: [assignment, build]
+      properties:
+        assignment: {$ref: '#/components/schemas/BuildAssignment'}
+        build: {$ref: '#/components/schemas/Build'}
+        plan: {$ref: '#/components/schemas/BuildPlan'}
     JobSpec:
       type: object
       additionalProperties: false

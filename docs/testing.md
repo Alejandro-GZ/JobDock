@@ -1,5 +1,25 @@
 # Testing JobDock
 
+## Isolated builder acceptance
+
+The default Compose stack includes `jobdock-builder` and rootless BuildKit. Set
+`JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD` and a random
+`JOBDOCK_BUILDER_TOKEN` (minimum 32 characters), then run:
+
+```sh
+docker compose -f deploy/docker-compose.yml up --build -d
+docker compose -f deploy/docker-compose.yml ps
+docker compose -f deploy/docker-compose.yml logs -f jobdock-builder buildkitd
+```
+
+Confirm a supported Railpack project and verify that its build moves from
+`ANALYZING` to `BUILDING` and then `SUCCEEDED`, build logs grow while the solve
+is running, and the final result is a `sha256:` digest. Exercise Dockerfile mode
+through `POST /api/v1/builds` with `mode=DOCKERFILE`, then confirm the build.
+Cancel a long-running build and verify that the builder terminates it on the
+next heartbeat. Restart `jobdock-server` during a confirmed build and verify
+the same assignment resumes without a second build row.
+
 The default suites are hermetic and do not require Docker:
 
 ```sh

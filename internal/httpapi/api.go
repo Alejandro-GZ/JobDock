@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -82,6 +83,12 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/builds/{id}/logs", a.withSession(false, false, a.getBuildLogs))
 	mux.HandleFunc("POST /api/v1/builds/{id}/confirm", a.withSession(false, true, a.confirmBuild))
 	mux.HandleFunc("POST /api/v1/builds/{id}/cancel", a.withSession(false, true, a.cancelBuild))
+	mux.HandleFunc("GET /api/v1/builder/assignments/next", a.withBuilder(a.nextBuildAssignment))
+	mux.HandleFunc("GET /api/v1/builder/assignments/{id}", a.withBuilder(a.getBuildAssignment))
+	mux.HandleFunc("POST /api/v1/builder/assignments/{id}/heartbeat", a.withBuilder(a.heartbeatBuildAssignment))
+	mux.HandleFunc("GET /api/v1/builder/assignments/{id}/source", a.withBuilder(a.getBuildSource))
+	mux.HandleFunc("PUT /api/v1/builder/assignments/{id}/logs", a.withBuilder(a.putBuildLog))
+	mux.HandleFunc("POST /api/v1/builder/assignments/{id}/complete", a.withBuilder(a.completeBuildAssignment))
 	mux.HandleFunc("GET /api/v1/jobs", a.withSession(false, false, a.listJobs))
 	mux.HandleFunc("POST /api/v1/jobs", a.withSession(false, true, a.createJob))
 	mux.HandleFunc("GET /api/v1/jobs/stream", a.withSession(false, false, a.jobsStream))
@@ -1162,6 +1169,25 @@ func (a *API) withAgent(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		next(w, r.WithContext(context.WithValue(r.Context(), agentContextKey{}, node)))
+	}
+}
+func (a *API) withBuilder(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !compatibleProtocol(r) {
+			writeProblem(w, http.StatusUpgradeRequired, "incompatible_protocol", "Builder protocol version is not supported")
+			return
+		}
+		if a.config.BuilderToken == "" {
+			writeProblem(w, http.StatusServiceUnavailable, "builder_not_configured", "The isolated builder is not configured")
+			return
+		}
+		token := bearer(r)
+		provided, expected := auth.TokenHash(token), auth.TokenHash(a.config.BuilderToken)
+		if token == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
+			writeProblem(w, http.StatusUnauthorized, "invalid_builder_credential", "Builder credential is invalid")
+			return
+		}
+		next(w, r)
 	}
 }
 func compatibleProtocol(r *http.Request) bool {

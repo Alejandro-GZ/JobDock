@@ -45,7 +45,7 @@ func TestSourceBuildAPIIsReproducibleAuthorizedAndIndependentFromJobs(t *testing
 	}
 	box, _ := secretbox.New(bytes.Repeat([]byte{7}, 32))
 	analyzer := fakeBuildAnalyzer{result: buildanalysis.Result{Provider: "node", Runtime: "node", PackageManager: "npm", Entrypoint: "npm run start", RailpackVersion: "0.36.0", Plan: json.RawMessage(`{"deploy":{"startCommand":"npm run start"}}`), Info: json.RawMessage(`{"success":true,"detectedProviders":["node"]}`), Logs: []byte("Railpack detected Node with npm")}}
-	api := NewWithBuildAnalyzer(config.Server{AllowInsecureHTTP: true, SessionTTL: time.Hour, MaxInputBytes: 1 << 20}, repository, files, box, slog.New(slog.NewTextHandler(io.Discard, nil)), analyzer)
+	api := NewWithBuildAnalyzer(config.Server{AllowInsecureHTTP: true, SessionTTL: time.Hour, MaxInputBytes: 1 << 20, BuilderToken: "builder-token-with-at-least-32-characters", BuilderLease: 30 * time.Second}, repository, files, box, slog.New(slog.NewTextHandler(io.Discard, nil)), analyzer)
 	server := httptest.NewServer(api.Handler())
 	defer server.Close()
 
@@ -131,10 +131,63 @@ func TestSourceBuildAPIIsReproducibleAuthorizedAndIndependentFromJobs(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = json.NewDecoder(confirmResponse.Body).Decode(&plan)
+	_ = json.NewDecoder(confirmResponse.Body).Decode(&build)
 	confirmResponse.Body.Close()
-	if confirmResponse.StatusCode != http.StatusOK || plan.ConfirmedAt == nil {
-		t.Fatalf("confirm status=%d plan=%#v", confirmResponse.StatusCode, plan)
+	if confirmResponse.StatusCode != http.StatusAccepted || build.Status != domain.BuildBuilding {
+		t.Fatalf("confirm status=%d build=%#v", confirmResponse.StatusCode, build)
+	}
+	plan, err = repository.BuildPlan(context.Background(), build.ID)
+	if err != nil || plan.ConfirmedAt == nil {
+		t.Fatalf("confirmed plan=%#v error=%v", plan, err)
+	}
+	unauthorizedBuilder, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/builder/assignments/next", nil)
+	unauthorizedBuilder.Header.Set("X-JobDock-Protocol-Version", "1")
+	unauthorizedBuilder.Header.Set("X-JobDock-Builder-ID", "builder-test")
+	unauthorizedResponse, _ := server.Client().Do(unauthorizedBuilder)
+	unauthorizedResponse.Body.Close()
+	if unauthorizedResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unscoped builder request status=%d", unauthorizedResponse.StatusCode)
+	}
+	builderRequest := func(method, path string, body io.Reader) *http.Request {
+		request, _ := http.NewRequest(method, server.URL+path, body)
+		request.Header.Set("Authorization", "Bearer builder-token-with-at-least-32-characters")
+		request.Header.Set("X-JobDock-Protocol-Version", "1")
+		request.Header.Set("X-JobDock-Builder-ID", "builder-test")
+		return request
+	}
+	nextResponse, err := server.Client().Do(builderRequest(http.MethodGet, "/api/v1/builder/assignments/next", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var work domain.BuildWork
+	_ = json.NewDecoder(nextResponse.Body).Decode(&work)
+	nextResponse.Body.Close()
+	if nextResponse.StatusCode != http.StatusOK || work.Build.ID != build.ID || work.Plan == nil || work.Assignment.BuilderID != "builder-test" {
+		t.Fatalf("builder work status=%d work=%#v", nextResponse.StatusCode, work)
+	}
+	sourceResponse, err := server.Client().Do(builderRequest(http.MethodGet, "/api/v1/builder/assignments/"+work.Assignment.ID+"/source", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceData, _ := io.ReadAll(sourceResponse.Body)
+	sourceResponse.Body.Close()
+	if sourceResponse.StatusCode != http.StatusOK || !bytes.Equal(sourceData, project.Bytes()) || sourceResponse.Header.Get("X-JobDock-Source-SHA256") != build.Source.SHA256 {
+		t.Fatalf("builder source status=%d size=%d", sourceResponse.StatusCode, len(sourceData))
+	}
+	probe := builderRequest(http.MethodPut, "/api/v1/builder/assignments/"+work.Assignment.ID+"/logs", nil)
+	probe.Header.Set("X-JobDock-Upload-Offset", "0")
+	probeResponse, _ := server.Client().Do(probe)
+	probeResponse.Body.Close()
+	if probeResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected existing analysis offset, got %d", probeResponse.StatusCode)
+	}
+	buildLogOffset := probeResponse.Header.Get("X-JobDock-Next-Offset")
+	logUpload := builderRequest(http.MethodPut, "/api/v1/builder/assignments/"+work.Assignment.ID+"/logs", bytes.NewBufferString("\nBuildKit step"))
+	logUpload.Header.Set("X-JobDock-Upload-Offset", buildLogOffset)
+	logUploadResponse, _ := server.Client().Do(logUpload)
+	logUploadResponse.Body.Close()
+	if logUploadResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("builder log upload status=%d", logUploadResponse.StatusCode)
 	}
 
 	forbidden, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/builds/"+build.ID, nil)
@@ -173,8 +226,18 @@ func TestSourceBuildAPIIsReproducibleAuthorizedAndIndependentFromJobs(t *testing
 	if cancelResponse.StatusCode != http.StatusAccepted || cancelled.Status != domain.BuildCancelled || cancelled.FinishedAt == nil {
 		t.Fatalf("cancel build status=%d build=%#v", cancelResponse.StatusCode, cancelled)
 	}
+	heartbeatResponse, err := server.Client().Do(builderRequest(http.MethodPost, "/api/v1/builder/assignments/"+work.Assignment.ID+"/heartbeat", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var assignment domain.BuildAssignment
+	_ = json.NewDecoder(heartbeatResponse.Body).Decode(&assignment)
+	heartbeatResponse.Body.Close()
+	if heartbeatResponse.StatusCode != http.StatusOK || !assignment.CancelRequested {
+		t.Fatalf("cancel heartbeat status=%d assignment=%#v", heartbeatResponse.StatusCode, assignment)
+	}
 	events, err := repository.BuildEvents(context.Background(), build.ID)
-	if err != nil || len(events) != 3 || events[0].Status != domain.BuildCreated || events[1].Status != domain.BuildAnalyzing || events[2].Status != domain.BuildCancelled {
+	if err != nil || len(events) != 4 || events[0].Status != domain.BuildCreated || events[1].Status != domain.BuildAnalyzing || events[2].Status != domain.BuildBuilding || events[3].Status != domain.BuildCancelled {
 		t.Fatalf("build events=%#v error=%v", events, err)
 	}
 	jobs, err := repository.ListJobs(context.Background(), false)

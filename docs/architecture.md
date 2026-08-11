@@ -48,8 +48,22 @@ runtime continues to accept only OCI images.
 Railpack mode expands ZIP or compressed TAR sources into a temporary confined
 workspace and invokes the pinned `railpack prepare` CLI. JobDock persists both
 Railpack JSON outputs plus a normalized provider, runtime, package-manager and
-entrypoint summary. Confirmation records user intent but does not start image
-construction; the isolated BuildKit executor owns that later lifecycle step.
+entrypoint summary. Confirmation atomically creates a durable build assignment
+and moves the build to `BUILDING`. A separately deployed `jobdock-builder`
+claims that assignment with a renewable lease, verifies the immutable source
+archive, and invokes `buildctl` against a dedicated rootless BuildKit daemon.
+Railpack builds use the persisted plan through the pinned Railpack frontend;
+Dockerfile builds use the built-in Dockerfile frontend. The builder uploads
+ordered log chunks and the terminal OCI digest through a narrowly scoped API.
+It never receives a browser session, administrative credential, server
+filesystem mount, or Docker socket.
+
+Build assignments, desired cancellation, ownership and leases live in SQLite.
+The builder identity and current assignment are persisted in its own volume.
+Consequently, a server restart leaves confirmed work unchanged and a builder
+restart reclaims the same assignment; BuildKit's persistent cache makes the
+repeated solve safe. P1.12 retains the OCI archive in the builder volume. The
+managed distribution and garbage-collection contract is introduced by P1.13.
 
 Job inputs are committed to central storage before `QUEUED` is persisted. Their
 relative paths, sizes, and SHA-256 digests become part of the immutable job

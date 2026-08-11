@@ -65,18 +65,22 @@ func (r *Railpack) Analyze(ctx context.Context, projectDir string) (Result, erro
 	if err != nil {
 		return Result{}, &AnalysisError{Message: "Railpack is unavailable. Configure JOBDOCK_RAILPACK_BINARY or use the official JobDock server image."}
 	}
-	outputDir, err := os.MkdirTemp("", "jobdock-railpack-")
-	if err != nil {
-		return Result{}, err
-	}
-	defer os.RemoveAll(outputDir)
 	home := r.Home
 	if home == "" {
-		home = outputDir
+		home = os.TempDir()
 	}
 	if err = os.MkdirAll(home, 0o750); err != nil {
 		return Result{}, err
 	}
+	temporaryRoot := filepath.Join(home, "tmp")
+	if err = os.MkdirAll(temporaryRoot, 0o750); err != nil {
+		return Result{}, err
+	}
+	outputDir, err := os.MkdirTemp(temporaryRoot, "jobdock-railpack-")
+	if err != nil {
+		return Result{}, err
+	}
+	defer os.RemoveAll(outputDir)
 	planPath := filepath.Join(outputDir, "railpack-plan.json")
 	infoPath := filepath.Join(outputDir, "railpack-info.json")
 	commandCtx, cancel := context.WithTimeout(ctx, r.Timeout)
@@ -84,7 +88,7 @@ func (r *Railpack) Analyze(ctx context.Context, projectDir string) (Result, erro
 	cmd := exec.CommandContext(commandCtx, binary, "prepare", projectDir, "--plan-out", planPath, "--info-out", infoPath, "--error-missing-start")
 	logs := &boundedBuffer{limit: maxRailpackOutputBytes}
 	cmd.Stdout, cmd.Stderr = logs, logs
-	cmd.Env = railpackEnvironment(home)
+	cmd.Env = railpackEnvironment(home, temporaryRoot)
 	runErr := cmd.Run()
 	if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
 		return Result{}, &AnalysisError{Message: fmt.Sprintf("Railpack analysis exceeded the %s time limit.", r.Timeout), Logs: logs.Bytes()}
@@ -211,9 +215,12 @@ func readBoundedJSON(path string) (json.RawMessage, error) {
 	return json.RawMessage(data), nil
 }
 
-func railpackEnvironment(home string) []string {
-	environment := []string{"HOME=" + home, "NO_COLOR=1", "FORCE_COLOR=0"}
+func railpackEnvironment(home, temporaryRoot string) []string {
+	environment := []string{"HOME=" + home, "TMPDIR=" + temporaryRoot, "TEMP=" + temporaryRoot, "TMP=" + temporaryRoot, "NO_COLOR=1", "FORCE_COLOR=0"}
 	for _, key := range []string{"PATH", "SYSTEMROOT", "TEMP", "TMP"} {
+		if key == "TEMP" || key == "TMP" {
+			continue
+		}
 		if value := os.Getenv(key); value != "" {
 			environment = append(environment, key+"="+value)
 		}

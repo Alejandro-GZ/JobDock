@@ -10,3 +10,15 @@ func TestTelemetryRetentionCannotBeShorterThanRawWindow(t *testing.T) {
 		t.Fatal("expected invalid telemetry retention to fail")
 	}
 }
+
+func TestBuilderRequiresScopedCredentialAndExplicitHTTPOptIn(t *testing.T) {
+	t.Setenv("JOBDOCK_BUILDER_TOKEN", "builder-token-with-at-least-32-characters")
+	t.Setenv("JOBDOCK_SERVER_URL", "http://server.test")
+	if _, err := LoadBuilder(); err == nil {
+		t.Fatal("plain HTTP builder connection was accepted without opt-in")
+	}
+	t.Setenv("JOBDOCK_ALLOW_INSECURE_HTTP", "true")
+	if _, err := LoadBuilder(); err != nil {
+		t.Fatal(err)
+	}
+}

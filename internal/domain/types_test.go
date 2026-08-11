@@ -44,7 +44,7 @@ func TestValidateJobSpec(t *testing.T) {
 }
 
 func TestBuildLifecycleAndValidation(t *testing.T) {
-	if !CanBuildTransition(BuildCreated, BuildAnalyzing) || !CanBuildTransition(BuildAnalyzing, BuildBuilding) || !CanBuildTransition(BuildBuilding, BuildSucceeded) {
+	if !CanBuildTransition(BuildCreated, BuildAnalyzing) || !CanBuildTransition(BuildCreated, BuildBuilding) || !CanBuildTransition(BuildAnalyzing, BuildBuilding) || !CanBuildTransition(BuildBuilding, BuildSucceeded) {
 		t.Fatal("expected happy-path build transitions")
 	}
 	if CanBuildTransition(BuildCreated, BuildSucceeded) || CanBuildTransition(BuildFailed, BuildBuilding) {
@@ -80,5 +80,20 @@ func TestBuildPlanRequiresRailpackDetectionAndValidJSON(t *testing.T) {
 	plan.Provider, plan.Plan = "python", json.RawMessage(`not-json`)
 	if err := ValidateBuildPlan(plan); err == nil {
 		t.Fatal("invalid Railpack JSON was accepted")
+	}
+}
+
+func TestBuildAssignmentValidation(t *testing.T) {
+	assignment := BuildAssignment{ID: "assignment", BuildID: "build", Status: BuildAssignmentPending}
+	if err := ValidateBuildAssignment(assignment); err != nil {
+		t.Fatal(err)
+	}
+	assignment.Status = BuildAssignmentRunning
+	if err := ValidateBuildAssignment(assignment); err == nil {
+		t.Fatal("running assignment without builder identity was accepted")
+	}
+	assignment.BuilderID = "builder"
+	if err := ValidateBuildAssignment(assignment); err != nil {
+		t.Fatal(err)
 	}
 }

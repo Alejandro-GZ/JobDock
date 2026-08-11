@@ -7,6 +7,7 @@ JobDock is a lightweight, self-hosted control plane for running containerized ba
 The repository contains:
 
 - `jobdock-server`: the API, scheduler, persistent state, artifact store, and web application.
+- `jobdock-builder`: an isolated source-build worker that drives a dedicated rootless BuildKit service.
 - `jobdock-agent`: a trusted per-host Docker executor.
 - `jobdock-sdk`: an optional Python telemetry SDK for running jobs.
 
@@ -55,4 +56,4 @@ cd sdk/python && python -m pytest
 
 JobDock is currently an MVP and targets trusted teams. Docker containers are not a security boundary for hostile multi-tenant workloads.
 
-The agent is intentionally privileged through its Docker socket even though it does not use Docker's `privileged` container mode. Run it only on trusted hosts and never pass the socket to job containers.
+The agent is intentionally privileged through its Docker socket even though it does not use Docker's `privileged` container mode. Run it only on trusted hosts and never pass the socket to job containers. The source builder is a separate boundary: neither `jobdock-builder`, BuildKit, nor user build steps receive the host Docker socket.

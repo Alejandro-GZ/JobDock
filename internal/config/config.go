@@ -30,6 +30,9 @@ type Server struct {
 	TelemetryRetention    time.Duration
 	BuildAnalysisTimeout  time.Duration
 	RailpackBinary        string
+	BuilderToken          string
+	BuilderLease          time.Duration
+	MaxBuildArtifactBytes int64
 }
 
 type Agent struct {
@@ -43,6 +46,22 @@ type Agent struct {
 	Labels            map[string]string
 	AllowInsecureHTTP bool
 	GPUMode           string
+}
+
+type Builder struct {
+	ServerURL         string
+	Token             string
+	StateDir          string
+	WorkspaceDir      string
+	BuildctlBinary    string
+	BuildkitAddress   string
+	PollInterval      time.Duration
+	Lease             time.Duration
+	BuildTimeout      time.Duration
+	MaxSourceBytes    int64
+	MaxArtifactBytes  int64
+	RailpackFrontend  string
+	AllowInsecureHTTP bool
 }
 
 func LoadServer() (Server, error) {
@@ -64,6 +83,8 @@ func LoadServer() (Server, error) {
 		TelemetryRetention:    envDuration("JOBDOCK_TELEMETRY_RETENTION", 30*24*time.Hour),
 		BuildAnalysisTimeout:  envDuration("JOBDOCK_BUILD_ANALYSIS_TIMEOUT", 2*time.Minute),
 		RailpackBinary:        env("JOBDOCK_RAILPACK_BINARY", "railpack"),
+		BuilderLease:          envDuration("JOBDOCK_BUILDER_LEASE", 30*time.Second),
+		MaxBuildArtifactBytes: envInt64("JOBDOCK_MAX_BUILD_ARTIFACT_BYTES", 20<<30),
 	}
 	if c.MaxLogBytes <= 0 || c.MaxOutputBytes <= 0 || c.MaxInputBytes <= 0 {
 		return c, errors.New("log, output, and input limits must be positive")
@@ -71,14 +92,21 @@ func LoadServer() (Server, error) {
 	if c.TelemetryRawRetention <= 0 || c.TelemetryRetention < c.TelemetryRawRetention {
 		return c, errors.New("telemetry retention must be positive and at least as long as raw retention")
 	}
-	if c.BuildAnalysisTimeout <= 0 {
-		return c, errors.New("build analysis timeout must be positive")
+	if c.BuildAnalysisTimeout <= 0 || c.BuilderLease <= 0 || c.MaxBuildArtifactBytes <= 0 {
+		return c, errors.New("build analysis timeout, builder lease, and build artifact limit must be positive")
 	}
 	password, err := valueOrFile("JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD", "JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD_FILE")
 	if err != nil {
 		return c, err
 	}
 	c.BootstrapPassword = password
+	c.BuilderToken, err = valueOrFile("JOBDOCK_BUILDER_TOKEN", "JOBDOCK_BUILDER_TOKEN_FILE")
+	if err != nil {
+		return c, err
+	}
+	if c.BuilderToken != "" && len(c.BuilderToken) < 32 {
+		return c, errors.New("JOBDOCK_BUILDER_TOKEN must contain at least 32 characters")
+	}
 	keyText, err := valueOrFile("JOBDOCK_MASTER_KEY", "JOBDOCK_MASTER_KEY_FILE")
 	if err != nil {
 		return c, err
@@ -92,6 +120,38 @@ func LoadServer() (Server, error) {
 	}
 	if !c.AllowInsecureHTTP && strings.HasPrefix(c.PublicURL, "http://") {
 		return c, errors.New("plain HTTP requires JOBDOCK_ALLOW_INSECURE_HTTP=true")
+	}
+	return c, nil
+}
+
+func LoadBuilder() (Builder, error) {
+	token, err := valueOrFile("JOBDOCK_BUILDER_TOKEN", "JOBDOCK_BUILDER_TOKEN_FILE")
+	if err != nil {
+		return Builder{}, err
+	}
+	c := Builder{
+		ServerURL:         strings.TrimRight(env("JOBDOCK_SERVER_URL", "http://jobdock-server:8080"), "/"),
+		Token:             token,
+		StateDir:          env("JOBDOCK_BUILDER_STATE_DIR", "/var/lib/jobdock-builder"),
+		WorkspaceDir:      env("JOBDOCK_BUILDER_WORKSPACE_DIR", "/var/lib/jobdock-builder/workspaces"),
+		BuildctlBinary:    env("JOBDOCK_BUILDCTL_BINARY", "buildctl"),
+		BuildkitAddress:   env("JOBDOCK_BUILDKIT_ADDRESS", "tcp://buildkitd:1234"),
+		PollInterval:      envDuration("JOBDOCK_BUILDER_POLL_INTERVAL", 2*time.Second),
+		Lease:             envDuration("JOBDOCK_BUILDER_LEASE", 30*time.Second),
+		BuildTimeout:      envDuration("JOBDOCK_BUILD_TIMEOUT", 30*time.Minute),
+		MaxSourceBytes:    envInt64("JOBDOCK_MAX_INPUT_BYTES", 10<<30),
+		MaxArtifactBytes:  envInt64("JOBDOCK_MAX_BUILD_ARTIFACT_BYTES", 20<<30),
+		RailpackFrontend:  env("JOBDOCK_RAILPACK_FRONTEND", "ghcr.io/railwayapp/railpack-frontend:v0.36.0"),
+		AllowInsecureHTTP: envBool("JOBDOCK_ALLOW_INSECURE_HTTP", false),
+	}
+	if len(c.Token) < 32 {
+		return c, errors.New("JOBDOCK_BUILDER_TOKEN must contain at least 32 characters")
+	}
+	if c.PollInterval <= 0 || c.Lease <= c.PollInterval || c.BuildTimeout <= 0 || c.MaxSourceBytes <= 0 || c.MaxArtifactBytes <= 0 {
+		return c, errors.New("builder intervals and storage limits are invalid")
+	}
+	if strings.HasPrefix(c.ServerURL, "http://") && !c.AllowInsecureHTTP {
+		return c, errors.New("builder refuses plain HTTP unless JOBDOCK_ALLOW_INSECURE_HTTP=true")
 	}
 	return c, nil
 }

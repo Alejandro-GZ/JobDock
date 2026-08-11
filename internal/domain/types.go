@@ -105,6 +105,33 @@ type BuildPlan struct {
 	ConfirmedAt     *time.Time      `json:"confirmed_at,omitempty"`
 }
 
+type BuildAssignmentStatus string
+
+const (
+	BuildAssignmentPending   BuildAssignmentStatus = "PENDING"
+	BuildAssignmentRunning   BuildAssignmentStatus = "RUNNING"
+	BuildAssignmentSucceeded BuildAssignmentStatus = "SUCCEEDED"
+	BuildAssignmentFailed    BuildAssignmentStatus = "FAILED"
+	BuildAssignmentCancelled BuildAssignmentStatus = "CANCELLED"
+)
+
+type BuildAssignment struct {
+	ID              string                `json:"id"`
+	BuildID         string                `json:"build_id"`
+	Status          BuildAssignmentStatus `json:"status"`
+	CancelRequested bool                  `json:"cancel_requested"`
+	BuilderID       string                `json:"builder_id,omitempty"`
+	LeaseExpiresAt  *time.Time            `json:"lease_expires_at,omitempty"`
+	CreatedAt       time.Time             `json:"created_at"`
+	UpdatedAt       time.Time             `json:"updated_at"`
+}
+
+type BuildWork struct {
+	Assignment BuildAssignment `json:"assignment"`
+	Build      Build           `json:"build"`
+	Plan       *BuildPlan      `json:"plan,omitempty"`
+}
+
 type GPURequest struct {
 	Count        int   `json:"count"`
 	MinVRAMBytes int64 `json:"min_vram_bytes"`
@@ -334,7 +361,7 @@ func CanBuildTransition(from, to BuildStatus) bool {
 		return true
 	}
 	allowed := map[BuildStatus]map[BuildStatus]bool{
-		BuildCreated:   {BuildAnalyzing: true, BuildFailed: true, BuildCancelled: true},
+		BuildCreated:   {BuildAnalyzing: true, BuildBuilding: true, BuildFailed: true, BuildCancelled: true},
 		BuildAnalyzing: {BuildBuilding: true, BuildFailed: true, BuildCancelled: true},
 		BuildBuilding:  {BuildSucceeded: true, BuildFailed: true, BuildCancelled: true},
 	}

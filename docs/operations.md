@@ -6,6 +6,46 @@
 - Keep the server data volume and agent state/workspace volumes on durable filesystems.
 - Treat every agent as host-administrative software: access to the Docker socket can control the host.
 - Put JobDock on a trusted private network or VPN and restrict public access at the firewall or reverse proxy.
+- Run `jobdock-builder` and `buildkitd` as separate services. Neither service may mount the host Docker socket.
+
+## Isolated source builder
+
+Generate a random builder credential of at least 32 characters and set the same
+`JOBDOCK_BUILDER_TOKEN` for the server and builder. Treat it as a scoped service
+credential: it can claim build work, download only assigned source archives,
+append build logs, and report results, but it cannot access users, secrets,
+jobs, nodes, or administrative APIs.
+
+The supplied Compose deployment runs one build at a time through
+`moby/buildkit:v0.30.0-rootless`. It uses no host Docker socket and separates
+the server/builder control network from the builder/BuildKit network. Configure
+the execution boundary with:
+
+- `JOBDOCK_BUILD_CPU_LIMIT` (default `2.0` CPUs);
+- `JOBDOCK_BUILD_MEMORY_LIMIT` (default `4g`);
+- `JOBDOCK_BUILD_PID_LIMIT` (default `1024`);
+- `JOBDOCK_BUILD_CACHE_LIMIT_MB` (default `20480` MiB, enforced by BuildKit GC);
+- `JOBDOCK_BUILD_TIMEOUT` (default `30m`);
+- `JOBDOCK_MAX_BUILD_ARTIFACT_BYTES` (default `20 GiB`).
+
+The builder volume stores its stable identity, current assignment and completed
+OCI archives. The BuildKit volume stores cache and in-progress solve state.
+Keep both persistent across ordinary restarts. If the server restarts, the
+assignment lease and build status remain in SQLite. If the builder restarts, it
+reclaims its assignment and repeats the BuildKit solve against the persistent
+cache instead of creating a second build record.
+
+Verify the security boundary after deployment:
+
+```sh
+docker inspect jobdock-jobdock-builder-1 --format '{{json .Mounts}}'
+docker inspect jobdock-buildkitd-1 --format '{{json .HostConfig.Resources}}'
+```
+
+The first output must not contain `/var/run/docker.sock`. Build cancellation is
+cooperative at the control plane and forceful at the builder: the next lease
+heartbeat cancels `buildctl`, while a late success is discarded in favor of the
+persisted cancellation request.
 
 ## Backup and restore
 
@@ -21,7 +61,7 @@ Stop the server or use SQLite's online backup mechanism, then copy the database,
 
 Resource telemetry stores only normalized CPU millicores, memory bytes, average GPU utilization, and GPU memory bytes. Full Docker Stats documents are discarded in the agent and rejected by the server. Five-second samples are retained for 24 hours, then averaged into five-minute buckets and retained for 30 days. Configure these windows with `JOBDOCK_TELEMETRY_RAW_RETENTION` and `JOBDOCK_TELEMETRY_RETENTION`; the final retention must not be shorter than the raw window. Public resource and SDK metric queries are attempt-scoped and capped at 10,000 returned points; the UI uses a 2,000-point window and server-selected resolution by default. Live charts use a resumable SSE connection and append deltas locally, so reverse proxies must disable response buffering for `/api/v1/jobs/*/series/stream`.
 
-Limits are controlled with `JOBDOCK_MAX_LOG_BYTES`, `JOBDOCK_MAX_OUTPUT_BYTES`, and `JOBDOCK_MAX_INPUT_BYTES`. Input limits are checked before a job is queued; log/output limit events are visible in the job timeline, and workloads are not killed merely because central collection reached a quota.
+Job limits are controlled with `JOBDOCK_MAX_LOG_BYTES`, `JOBDOCK_MAX_OUTPUT_BYTES`, and `JOBDOCK_MAX_INPUT_BYTES`. Input limits are checked before a job is queued; log/output limit events are visible in the job timeline, and workloads are not killed merely because central collection reached a quota. Build execution limits are configured independently as described above.
 
 ## Upgrades
 

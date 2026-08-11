@@ -220,14 +220,24 @@ func (a *API) confirmBuild(w http.ResponseWriter, r *http.Request) {
 	if !proceed {
 		return
 	}
-	plan, err := a.store.ConfirmBuildPlan(r.Context(), build.ID)
+	if a.config.BuilderToken == "" {
+		idem.abort(r.Context())
+		writeProblem(w, http.StatusServiceUnavailable, "builder_not_configured", "Configure an isolated jobdock-builder before starting builds")
+		return
+	}
+	work, err := a.store.QueueBuild(r.Context(), build.ID, ids.New())
 	if err != nil {
 		idem.abort(r.Context())
 		writeStoreError(w, err)
 		return
 	}
-	_ = a.store.Audit(r.Context(), currentUser(r).ID, "build.confirm", "build", build.ID, map[string]any{"provider": plan.Provider, "railpack_version": plan.RailpackVersion})
-	idem.write(w, r.Context(), http.StatusOK, plan)
+	metadata := map[string]any{"mode": build.Mode, "assignment_id": work.Assignment.ID}
+	if work.Plan != nil {
+		metadata["provider"] = work.Plan.Provider
+		metadata["railpack_version"] = work.Plan.RailpackVersion
+	}
+	_ = a.store.Audit(r.Context(), currentUser(r).ID, "build.confirm", "build", build.ID, metadata)
+	idem.write(w, r.Context(), http.StatusAccepted, work.Build)
 }
 
 func (a *API) getBuildLogs(w http.ResponseWriter, r *http.Request) {
@@ -272,7 +282,13 @@ func (a *API) cancelBuild(w http.ResponseWriter, r *http.Request) {
 	if !proceed {
 		return
 	}
-	updated, err := a.store.UpdateBuildStatus(r.Context(), build.ID, domain.BuildCancelled, "", "Cancelled by user")
+	var updated domain.Build
+	var err error
+	if build.Status == domain.BuildBuilding {
+		updated, err = a.store.RequestBuildCancellation(r.Context(), build.ID)
+	} else {
+		updated, err = a.store.UpdateBuildStatus(r.Context(), build.ID, domain.BuildCancelled, "", "Cancelled by user")
+	}
 	if err != nil {
 		idem.abort(r.Context())
 		writeStoreError(w, err)

@@ -57,6 +57,21 @@ func ValidateBuildPlan(plan BuildPlan) error {
 	return nil
 }
 
+func ValidateBuildAssignment(assignment BuildAssignment) error {
+	if strings.TrimSpace(assignment.ID) == "" || strings.TrimSpace(assignment.BuildID) == "" {
+		return errors.New("build assignment requires assignment and build IDs")
+	}
+	switch assignment.Status {
+	case BuildAssignmentPending, BuildAssignmentRunning, BuildAssignmentSucceeded, BuildAssignmentFailed, BuildAssignmentCancelled:
+	default:
+		return errors.New("invalid build assignment status")
+	}
+	if assignment.Status == BuildAssignmentRunning && strings.TrimSpace(assignment.BuilderID) == "" {
+		return errors.New("running build assignments require a builder ID")
+	}
+	return nil
+}
+
 func ValidateJobSpec(spec JobSpec) error {
 	if n := len(strings.TrimSpace(spec.Name)); n < 3 || n > 120 {
 		return errors.New("name must contain between 3 and 120 characters")
