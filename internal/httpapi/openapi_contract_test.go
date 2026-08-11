@@ -82,6 +82,7 @@ func TestOpenAPIDomainSchemasCoverJSONFields(t *testing.T) {
 	properties := openAPISchemaProperties(string(data))
 	contracts := map[string]any{
 		"User": domain.User{}, "Job": domain.Job{}, "Node": domain.Node{},
+		"Build": domain.Build{}, "BuildSource": domain.BuildSource{}, "BuildEvent": domain.BuildEvent{},
 		"GPU": domain.GPU{}, "GPUDiscovery": domain.GPUDiscovery{}, "MetricPoint": domain.MetricPoint{}, "MetricSeries": domain.MetricSeries{},
 		"ResourceSample": domain.ResourceSample{}, "CheckpointSync": domain.CheckpointSync{},
 		"Assignment": domain.Assignment{}, "InputFile": domain.InputFile{}, "JobAttempt": domain.JobAttempt{}, "OutputFile": domain.OutputFile{},

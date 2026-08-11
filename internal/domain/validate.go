@@ -9,6 +9,36 @@ import (
 )
 
 var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var lowercaseSHA256 = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var ociDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+func ValidateBuild(build Build) error {
+	if n := len(strings.TrimSpace(build.Name)); n < 3 || n > 120 {
+		return errors.New("build name must contain between 3 and 120 characters")
+	}
+	if build.Mode != BuildModeRailpack && build.Mode != BuildModeDockerfile {
+		return errors.New("build mode must be RAILPACK or DOCKERFILE")
+	}
+	if strings.TrimSpace(build.Source.Filename) == "" || len(build.Source.Filename) > 255 {
+		return errors.New("source filename is required and must not exceed 255 characters")
+	}
+	if build.Source.Size <= 0 || !lowercaseSHA256.MatchString(build.Source.SHA256) {
+		return errors.New("source requires a positive size and lowercase SHA-256 digest")
+	}
+	if build.Status == BuildSucceeded && !ociDigest.MatchString(build.OCIDigest) {
+		return errors.New("successful builds require an immutable sha256 OCI digest")
+	}
+	if build.Status != BuildSucceeded && build.OCIDigest != "" {
+		return errors.New("only successful builds may reference an OCI digest")
+	}
+	if build.OCIDigest != "" && !ociDigest.MatchString(build.OCIDigest) {
+		return errors.New("OCI digest must use sha256 with 64 lowercase hexadecimal characters")
+	}
+	if build.Status == BuildFailed && strings.TrimSpace(build.FailureReason) == "" {
+		return errors.New("failed builds require a failure reason")
+	}
+	return nil
+}
 
 func ValidateJobSpec(spec JobSpec) error {
 	if n := len(strings.TrimSpace(spec.Name)); n < 3 || n > 120 {

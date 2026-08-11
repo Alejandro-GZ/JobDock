@@ -48,6 +48,76 @@ paths:
         '201': {description: Created user, content: {application/json: {schema: {$ref: '#/components/schemas/User'}}}}
         '403': {$ref: '#/components/responses/Problem'}
         '422': {$ref: '#/components/responses/Problem'}
+  /builds:
+    get:
+      operationId: listBuilds
+      description: List builds visible to the current user. Administrators can see all builds.
+      responses:
+        '200': {description: Visible builds, content: {application/json: {schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/Build'}}}}}}}
+    post:
+      operationId: createBuild
+      description: Persist one immutable source archive and create its independent build lifecycle.
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [metadata, source]
+              properties:
+                metadata:
+                  type: string
+                  contentMediaType: application/json
+                  description: JSON containing name and mode (RAILPACK or DOCKERFILE).
+                source: {type: string, format: binary, description: Immutable source archive bytes.}
+      responses:
+        '201': {description: Created source build, content: {application/json: {schema: {$ref: '#/components/schemas/Build'}}}}
+        '413': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+  /builds/{buildId}:
+    parameters: [{$ref: '#/components/parameters/BuildID'}]
+    get:
+      operationId: getBuild
+      responses:
+        '200': {description: Build detail including source identity, lifecycle and immutable OCI result, content: {application/json: {schema: {$ref: '#/components/schemas/Build'}}}}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+  /builds/{buildId}/events:
+    get:
+      operationId: listBuildEvents
+      parameters: [{$ref: '#/components/parameters/BuildID'}]
+      responses:
+        '200': {description: Ordered build lifecycle history, content: {application/json: {schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/BuildEvent'}}}}}}}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+  /builds/{buildId}/logs:
+    get:
+      operationId: getBuildLogs
+      parameters:
+        - {$ref: '#/components/parameters/BuildID'}
+        - {name: offset, in: query, schema: {type: integer, format: int64, minimum: 0, default: 0}}
+        - {name: limit, in: query, schema: {type: integer, format: int64, minimum: 1, maximum: 4194304, default: 1048576}}
+      responses:
+        '200':
+          description: Bounded build log bytes beginning at the requested offset.
+          headers:
+            X-JobDock-Start-Offset: {schema: {type: integer, format: int64}}
+            X-JobDock-Next-Offset: {schema: {type: integer, format: int64}}
+          content: {text/plain: {schema: {type: string}}}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+  /builds/{buildId}/cancel:
+    post:
+      operationId: cancelBuild
+      parameters: [{$ref: '#/components/parameters/BuildID'}, {$ref: '#/components/parameters/CSRFToken'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '202': {description: Build cancelled, content: {application/json: {schema: {$ref: '#/components/schemas/Build'}}}}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
   /jobs:
     get:
       operationId: listJobs
@@ -492,6 +562,7 @@ components:
     sessionCookie: {type: apiKey, in: cookie, name: jobdock_session}
     bearerToken: {type: http, scheme: bearer}
   parameters:
+    BuildID: {name: buildId, in: path, required: true, schema: {type: string, format: uuid}}
     JobID: {name: jobId, in: path, required: true, schema: {type: string, format: uuid}}
     AttemptIDPath: {name: attemptId, in: path, required: true, schema: {type: string, format: uuid}}
     NodeID: {name: nodeId, in: path, required: true, schema: {type: string, format: uuid}}
@@ -538,6 +609,42 @@ components:
         username: {type: string, minLength: 3, maxLength: 64}
         password: {type: string, format: password, minLength: 12}
         role: {type: string, enum: [admin, member]}
+    BuildSource:
+      type: object
+      additionalProperties: false
+      required: [filename, size, sha256]
+      properties:
+        filename: {type: string, minLength: 1, maxLength: 255}
+        size: {type: integer, format: int64, minimum: 1}
+        sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+    Build:
+      type: object
+      additionalProperties: false
+      required: [id, owner_id, name, mode, status, source, created_at, version]
+      properties:
+        id: {type: string, format: uuid}
+        owner_id: {type: string, format: uuid}
+        name: {type: string, minLength: 3, maxLength: 120}
+        mode: {type: string, enum: [RAILPACK, DOCKERFILE]}
+        status: {$ref: '#/components/schemas/BuildStatus'}
+        source: {$ref: '#/components/schemas/BuildSource'}
+        oci_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        failure_reason: {type: string}
+        created_at: {type: string, format: date-time}
+        started_at: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time}
+        version: {type: integer, format: int64, minimum: 1}
+    BuildStatus: {type: string, enum: [CREATED, ANALYZING, BUILDING, SUCCEEDED, FAILED, CANCELLED]}
+    BuildEvent:
+      type: object
+      additionalProperties: false
+      required: [id, build_id, status, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        build_id: {type: string, format: uuid}
+        status: {$ref: '#/components/schemas/BuildStatus'}
+        message: {type: string}
+        created_at: {type: string, format: date-time}
     JobSpec:
       type: object
       additionalProperties: false

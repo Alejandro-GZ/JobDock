@@ -35,11 +35,58 @@ const (
 	NodeDegraded NodeStatus = "DEGRADED"
 )
 
+type BuildStatus string
+
+const (
+	BuildCreated   BuildStatus = "CREATED"
+	BuildAnalyzing BuildStatus = "ANALYZING"
+	BuildBuilding  BuildStatus = "BUILDING"
+	BuildSucceeded BuildStatus = "SUCCEEDED"
+	BuildFailed    BuildStatus = "FAILED"
+	BuildCancelled BuildStatus = "CANCELLED"
+)
+
+type BuildMode string
+
+const (
+	BuildModeRailpack   BuildMode = "RAILPACK"
+	BuildModeDockerfile BuildMode = "DOCKERFILE"
+)
+
 type User struct {
 	ID        string    `json:"id"`
 	Username  string    `json:"username"`
 	Role      Role      `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type BuildSource struct {
+	Filename string `json:"filename"`
+	Size     int64  `json:"size"`
+	SHA256   string `json:"sha256"`
+}
+
+type Build struct {
+	ID            string      `json:"id"`
+	OwnerID       string      `json:"owner_id"`
+	Name          string      `json:"name"`
+	Mode          BuildMode   `json:"mode"`
+	Status        BuildStatus `json:"status"`
+	Source        BuildSource `json:"source"`
+	OCIDigest     string      `json:"oci_digest,omitempty"`
+	FailureReason string      `json:"failure_reason,omitempty"`
+	CreatedAt     time.Time   `json:"created_at"`
+	StartedAt     *time.Time  `json:"started_at,omitempty"`
+	FinishedAt    *time.Time  `json:"finished_at,omitempty"`
+	Version       int64       `json:"version"`
+}
+
+type BuildEvent struct {
+	ID        int64       `json:"id"`
+	BuildID   string      `json:"build_id"`
+	Status    BuildStatus `json:"status"`
+	Message   string      `json:"message,omitempty"`
+	CreatedAt time.Time   `json:"created_at"`
 }
 
 type GPURequest struct {
@@ -262,6 +309,18 @@ func CanTransition(from, to JobStatus) bool {
 		JobSucceeded:    {JobDeleting: true},
 		JobFailed:       {JobDeleting: true},
 		JobDeleting:     {JobDeleted: true},
+	}
+	return allowed[from][to]
+}
+
+func CanBuildTransition(from, to BuildStatus) bool {
+	if from == to {
+		return true
+	}
+	allowed := map[BuildStatus]map[BuildStatus]bool{
+		BuildCreated:   {BuildAnalyzing: true, BuildFailed: true, BuildCancelled: true},
+		BuildAnalyzing: {BuildBuilding: true, BuildFailed: true, BuildCancelled: true},
+		BuildBuilding:  {BuildSucceeded: true, BuildFailed: true, BuildCancelled: true},
 	}
 	return allowed[from][to]
 }

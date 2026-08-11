@@ -39,3 +39,28 @@ func TestValidateJobSpec(t *testing.T) {
 		t.Fatal("expected reserved environment variable to be rejected")
 	}
 }
+
+func TestBuildLifecycleAndValidation(t *testing.T) {
+	if !CanBuildTransition(BuildCreated, BuildAnalyzing) || !CanBuildTransition(BuildAnalyzing, BuildBuilding) || !CanBuildTransition(BuildBuilding, BuildSucceeded) {
+		t.Fatal("expected happy-path build transitions")
+	}
+	if CanBuildTransition(BuildCreated, BuildSucceeded) || CanBuildTransition(BuildFailed, BuildBuilding) {
+		t.Fatal("invalid build transition was accepted")
+	}
+	build := Build{Name: "source build", Mode: BuildModeRailpack, Status: BuildCreated, Source: BuildSource{Filename: "source.tar.gz", Size: 10, SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}
+	if err := ValidateBuild(build); err != nil {
+		t.Fatal(err)
+	}
+	build.Status = BuildSucceeded
+	if err := ValidateBuild(build); err == nil {
+		t.Fatal("successful build without OCI digest was accepted")
+	}
+	build.OCIDigest = "sha256:abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	if err := ValidateBuild(build); err != nil {
+		t.Fatal(err)
+	}
+	build.Status, build.OCIDigest, build.FailureReason = BuildFailed, "", ""
+	if err := ValidateBuild(build); err == nil {
+		t.Fatal("failed build without visible failure reason was accepted")
+	}
+}

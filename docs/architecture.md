@@ -38,6 +38,13 @@ delayed retry cannot write into a later execution.
 - Server filesystem: attempt-scoped stdout/stderr files, outputs, and generated metadata.
 - Agent filesystem: assignment journal, bounded attempt workspaces, job token files, secret files, and outputs.
 
+Source builds are modeled independently from jobs. A build owns an immutable
+source archive identified by its SHA-256 digest, a lifecycle event history, and
+bounded build logs. Successful builds reference an immutable OCI digest; failed
+analysis or execution records a visible reason without creating an invalid job.
+This boundary allows the build executor to evolve independently while the job
+runtime continues to accept only OCI images.
+
 Job inputs are committed to central storage before `QUEUED` is persisted. Their
 relative paths, sizes, and SHA-256 digests become part of the immutable job
 specification. The assigned agent downloads and verifies that exact manifest,

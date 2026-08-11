@@ -25,8 +25,10 @@ type Store struct {
 }
 
 func New(root string, maxLogBytes, maxOutputBytes, maxInputBytes int64) (*Store, error) {
-	if err := os.MkdirAll(filepath.Join(root, "jobs"), 0o750); err != nil {
-		return nil, err
+	for _, directory := range []string{"jobs", "builds"} {
+		if err := os.MkdirAll(filepath.Join(root, directory), 0o750); err != nil {
+			return nil, err
+		}
 	}
 	return &Store{root: root, maxLogBytes: maxLogBytes, maxOutputBytes: maxOutputBytes, maxInputBytes: maxInputBytes}, nil
 }
@@ -35,6 +37,145 @@ type InputMetadata struct {
 	Path   string
 	Size   int64
 	SHA256 string
+}
+
+type BuildSourceMetadata struct {
+	Filename string
+	Size     int64
+	SHA256   string
+}
+
+// StoreBuildSource persists the exact uploaded source bytes once. The digest
+// identifies a reproducible source generation; existing sources are immutable.
+func (s *Store) StoreBuildSource(buildID, filename string, source io.Reader) (BuildSourceMetadata, error) {
+	if !safeSegment(buildID) {
+		return BuildSourceMetadata{}, errors.New("invalid build ID")
+	}
+	filename = filepath.Base(strings.TrimSpace(filename))
+	if filename == "" || filename == "." || len(filename) > 255 {
+		return BuildSourceMetadata{}, errors.New("invalid source filename")
+	}
+	dir := filepath.Join(s.root, "builds", buildID, "source")
+	destination := filepath.Join(dir, "source.archive")
+	if _, err := os.Lstat(destination); err == nil {
+		return BuildSourceMetadata{}, errors.New("build source is immutable")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return BuildSourceMetadata{}, err
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return BuildSourceMetadata{}, err
+	}
+	temporary, err := os.CreateTemp(dir, ".jobdock-source-*")
+	if err != nil {
+		return BuildSourceMetadata{}, err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	hash := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(temporary, hash), io.LimitReader(source, s.maxInputBytes+1))
+	if copyErr == nil && written > s.maxInputBytes {
+		copyErr = ErrLimitExceeded
+	}
+	if copyErr == nil {
+		copyErr = temporary.Sync()
+	}
+	if closeErr := temporary.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr != nil {
+		return BuildSourceMetadata{}, copyErr
+	}
+	if err = os.Chmod(temporaryPath, 0o440); err != nil {
+		return BuildSourceMetadata{}, err
+	}
+	if err = os.Rename(temporaryPath, destination); err != nil {
+		return BuildSourceMetadata{}, err
+	}
+	return BuildSourceMetadata{Filename: filename, Size: written, SHA256: hex.EncodeToString(hash.Sum(nil))}, nil
+}
+
+func (s *Store) DeleteBuild(buildID string) error {
+	if !safeSegment(buildID) {
+		return errors.New("invalid build ID")
+	}
+	return os.RemoveAll(filepath.Join(s.root, "builds", buildID))
+}
+
+func (s *Store) AppendBuildLog(buildID string, offset int64, source io.Reader) (int64, error) {
+	if !safeSegment(buildID) {
+		return offset, errors.New("invalid build ID")
+	}
+	dir := filepath.Join(s.root, "builds", buildID, "logs")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return offset, err
+	}
+	path := filepath.Join(dir, "build.log")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o640)
+	if err != nil {
+		return offset, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return offset, err
+	}
+	if info.Size() != offset {
+		return info.Size(), ErrOffsetMismatch
+	}
+	remaining := s.maxLogBytes - info.Size()
+	if remaining <= 0 {
+		return offset, ErrLimitExceeded
+	}
+	if _, err = file.Seek(offset, io.SeekStart); err != nil {
+		return offset, err
+	}
+	written, err := io.Copy(file, io.LimitReader(source, remaining+1))
+	if err != nil {
+		return offset + written, err
+	}
+	if written > remaining {
+		_ = file.Truncate(offset + remaining)
+		return offset + remaining, ErrLimitExceeded
+	}
+	return offset + written, file.Sync()
+}
+
+func (s *Store) ReadBuildLog(buildID string, offset int64, destination io.Writer) (int64, error) {
+	if !safeSegment(buildID) || offset < 0 {
+		return offset, errors.New("invalid build log request")
+	}
+	file, err := os.Open(filepath.Join(s.root, "builds", buildID, "logs", "build.log"))
+	if errors.Is(err, os.ErrNotExist) {
+		return offset, nil
+	}
+	if err != nil {
+		return offset, err
+	}
+	defer file.Close()
+	if _, err = file.Seek(offset, io.SeekStart); err != nil {
+		return offset, err
+	}
+	written, err := io.Copy(destination, file)
+	return offset + written, err
+}
+
+func (s *Store) ReadBuildLogChunk(buildID string, offset, limit int64) ([]byte, int64, error) {
+	if !safeSegment(buildID) || offset < 0 || limit <= 0 {
+		return nil, offset, errors.New("invalid build log request")
+	}
+	file, err := os.Open(filepath.Join(s.root, "builds", buildID, "logs", "build.log"))
+	if errors.Is(err, os.ErrNotExist) {
+		return []byte{}, offset, nil
+	}
+	if err != nil {
+		return nil, offset, err
+	}
+	defer file.Close()
+	if _, err = file.Seek(offset, io.SeekStart); err != nil {
+		return nil, offset, err
+	}
+	data, err := io.ReadAll(io.LimitReader(file, limit))
+	return data, offset + int64(len(data)), err
 }
 
 func (s *Store) StoreInput(jobID, relativePath string, source io.Reader) (InputMetadata, error) {

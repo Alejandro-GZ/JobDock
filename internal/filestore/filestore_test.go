@@ -55,6 +55,30 @@ func TestInputsAreImmutableBoundedAndRemovedWithJob(t *testing.T) {
 	}
 }
 
+func TestBuildSourceIsImmutableAndLogsAreOffsetBounded(t *testing.T) {
+	store, err := New(t.TempDir(), 12, 1024, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := store.StoreBuildSource("build-one", "project.tar.gz", bytes.NewBufferString("immutable source"))
+	if err != nil || source.Size != 16 || source.SHA256 != "fc17afe4af56fca9d2943b7901e7517611b37a36db7a7775b3e341e7d20a6ba0" {
+		t.Fatalf("source metadata: %#v %v", source, err)
+	}
+	if _, err = store.StoreBuildSource("build-one", "replacement.tar.gz", bytes.NewBufferString("replacement")); err == nil {
+		t.Fatal("immutable build source was replaced")
+	}
+	if next, err := store.AppendBuildLog("build-one", 0, bytes.NewBufferString("first second")); err != nil || next != 12 {
+		t.Fatalf("append build log: offset=%d err=%v", next, err)
+	}
+	if next, err := store.AppendBuildLog("build-one", 0, bytes.NewBufferString("duplicate")); err != ErrOffsetMismatch || next != 12 {
+		t.Fatalf("build log offset mismatch: offset=%d err=%v", next, err)
+	}
+	chunk, next, err := store.ReadBuildLogChunk("build-one", 6, 6)
+	if err != nil || string(chunk) != "second" || next != 12 {
+		t.Fatalf("build log chunk: data=%q offset=%d err=%v", chunk, next, err)
+	}
+}
+
 func TestCheckpointUploadResumesAndPromotionPreservesLastConfirmed(t *testing.T) {
 	store, err := New(t.TempDir(), 1<<20, 10<<20, 1<<20)
 	if err != nil {
