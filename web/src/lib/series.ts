@@ -1,4 +1,4 @@
-import type { Job, MetricPoint, ResourcePoint } from "@/types";
+import type { Job, MetricPoint, MetricSeriesResponse, ResourcePoint, ResourceSeriesResponse, SeriesUpdate } from "@/types";
 
 export type SeriesPoint = { timestamp: number; value: number; step?: number; sampleCount?: number };
 export type TimeRange = "1h" | "6h" | "24h" | "7d" | "all";
@@ -35,4 +35,28 @@ export function zoomDomain(domain: [number, number], factor: number, anchor = .5
   const [start, end] = domain, width = Math.max(1, end - start), next = Math.max(1000, width * factor);
   const center = start + width * Math.min(1, Math.max(0, anchor));
   return [center - next * anchor, center + next * (1 - anchor)];
+}
+
+const livePointLimit = 2000;
+
+export function appendMetricUpdate(current: MetricSeriesResponse | undefined, update: SeriesUpdate) {
+  if (!current || update.kind !== "metrics" || update.attempt_id !== current.attempt_id || update.cursor <= current.cursor) return current;
+  const byName = new Map(current.series.map(series => [series.name, {...series, points:[...series.points]}]));
+  for (const sample of update.metrics ?? []) {
+    const point: MetricPoint = {cursor:sample.cursor,captured_at:sample.captured_at,step:sample.step,value:sample.value,sample_count:1};
+    const series = byName.get(sample.name);
+    if (series) {
+      series.points.push(point);
+      if (series.points.length > livePointLimit) series.points.splice(0, series.points.length-livePointLimit);
+      series.last=sample.value;series.min=Math.min(series.min,sample.value);series.max=Math.max(series.max,sample.value);series.sample_count+=1;
+    } else byName.set(sample.name,{name:sample.name,points:[point],last:sample.value,min:sample.value,max:sample.value,sample_count:1});
+  }
+  return {...current,cursor:update.cursor,to:new Date(Math.max(Date.parse(current.to),Date.parse(update.captured_at))).toISOString(),series:[...byName.values()]};
+}
+
+export function appendResourceUpdate(current: ResourceSeriesResponse | undefined, update: SeriesUpdate) {
+  if (!current || update.kind !== "resources" || update.attempt_id !== current.attempt_id || update.cursor <= current.cursor || !update.resource) return current;
+  const points=[...current.points,update.resource];
+  if(points.length>livePointLimit)points.splice(0,points.length-livePointLimit);
+  return {...current,cursor:update.cursor,to:new Date(Math.max(Date.parse(current.to),Date.parse(update.captured_at))).toISOString(),points};
 }

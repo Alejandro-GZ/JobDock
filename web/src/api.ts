@@ -11,6 +11,7 @@ export const api={
   events:async(id:string,after=0)=>(await request<{items:JobEvent[]|null}>(`/jobs/${id}/events?after=${after}`)).items??[],
   metrics:(id:string,query:string)=>request<MetricSeriesResponse>(`/jobs/${id}/metrics?${query}`),
   resources:(id:string,query:string)=>request<ResourceSeriesResponse>(`/jobs/${id}/resources?${query}`),
+  openSeriesStream:(id:string,attemptId:string,after:number)=>new EventSource(`/api/v1/jobs/${encodeURIComponent(id)}/series/stream?attempt_id=${encodeURIComponent(attemptId)}&after=${after}`),
   metricsCSV:(id:string,query:string)=>seriesCSV(id,"metrics",query),
   resourcesCSV:(id:string,query:string)=>seriesCSV(id,"resources",query),
   openLogStream:(id:string,stream:"stdout"|"stderr")=>new EventSource(`/api/v1/jobs/${encodeURIComponent(id)}/logs/${stream}/tail?after=tail`),

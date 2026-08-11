@@ -14,13 +14,50 @@ const (
 )
 
 func (s *Store) AppendResourceSample(ctx context.Context, sample domain.ResourceSample) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO job_resource_samples(job_id,attempt_id,captured_at,resolution_seconds,sample_count,cpu_millis,memory_bytes,gpu_utilization_basis_points,gpu_memory_bytes) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(attempt_id,captured_at,resolution_seconds) DO NOTHING`,
-		sample.JobID, sample.AttemptID, sample.CapturedAt.UTC().Unix(), int(TelemetryRawResolution/time.Second), 1, sample.CPUMillis, sample.MemoryBytes, sample.GPUUtilizationBasisPoints, sample.GPUMemoryBytes)
-	return mapConstraint(err)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	cursor, err := insertSeriesUpdate(ctx, tx, sample.JobID, sample.AttemptID, "resources", sample.CapturedAt)
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO job_resource_samples(job_id,attempt_id,captured_at,resolution_seconds,sample_count,cpu_millis,memory_bytes,gpu_utilization_basis_points,gpu_memory_bytes,series_cursor) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(attempt_id,captured_at,resolution_seconds) DO NOTHING`,
+		sample.JobID, sample.AttemptID, sample.CapturedAt.UTC().Unix(), int(TelemetryRawResolution/time.Second), 1, sample.CPUMillis, sample.MemoryBytes, sample.GPUUtilizationBasisPoints, sample.GPUMemoryBytes, cursor)
+	if err != nil {
+		return mapConstraint(err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if inserted == 0 {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM job_series_updates WHERE id=?`, cursor); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ResourceSamples(ctx context.Context, jobID, attemptID string, from, to time.Time, resolution, limit int) ([]domain.ResourceSample, bool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT job_id,attempt_id,captured_at,resolution_seconds,sample_count,cpu_millis,memory_bytes,gpu_utilization_basis_points,gpu_memory_bytes FROM job_resource_samples WHERE job_id=? AND attempt_id=? AND captured_at>=? AND captured_at<=? AND resolution_seconds=? ORDER BY captured_at LIMIT ?`, jobID, attemptID, from.UTC().Unix(), to.UTC().Unix(), resolution, limit+1)
+	return s.resourceSamples(ctx, jobID, attemptID, from, to, resolution, limit, nil)
+}
+
+func (s *Store) ResourceSamplesAt(ctx context.Context, jobID, attemptID string, from, to time.Time, resolution, limit int, maxCursor int64) ([]domain.ResourceSample, bool, error) {
+	return s.resourceSamples(ctx, jobID, attemptID, from, to, resolution, limit, &maxCursor)
+}
+
+func (s *Store) resourceSamples(ctx context.Context, jobID, attemptID string, from, to time.Time, resolution, limit int, maxCursor *int64) ([]domain.ResourceSample, bool, error) {
+	query := `SELECT COALESCE(series_cursor,0),job_id,attempt_id,captured_at,resolution_seconds,sample_count,cpu_millis,memory_bytes,gpu_utilization_basis_points,gpu_memory_bytes FROM job_resource_samples WHERE job_id=? AND attempt_id=? AND captured_at>=? AND captured_at<=? AND resolution_seconds=?`
+	arguments := []any{jobID, attemptID, from.UTC().Unix(), to.UTC().Unix(), resolution}
+	if maxCursor != nil {
+		query += ` AND (series_cursor IS NULL OR series_cursor<=?)`
+		arguments = append(arguments, *maxCursor)
+	}
+	query += ` ORDER BY captured_at LIMIT ?`
+	arguments = append(arguments, limit+1)
+	rows, err := s.db.QueryContext(ctx, query, arguments...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -30,7 +67,7 @@ func (s *Store) ResourceSamples(ctx context.Context, jobID, attemptID string, fr
 		var sample domain.ResourceSample
 		var captured int64
 		var gpuUtilization, gpuMemory sql.NullInt64
-		if err = rows.Scan(&sample.JobID, &sample.AttemptID, &captured, &sample.ResolutionSeconds, &sample.SampleCount, &sample.CPUMillis, &sample.MemoryBytes, &gpuUtilization, &gpuMemory); err != nil {
+		if err = rows.Scan(&sample.Cursor, &sample.JobID, &sample.AttemptID, &captured, &sample.ResolutionSeconds, &sample.SampleCount, &sample.CPUMillis, &sample.MemoryBytes, &gpuUtilization, &gpuMemory); err != nil {
 			return nil, false, err
 		}
 		sample.CapturedAt = time.Unix(captured, 0).UTC()

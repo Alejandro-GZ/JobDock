@@ -35,6 +35,13 @@ Metric queries accept repeated `name` filters and
 validated against the job, which prevents series from different reruns being
 combined.
 
+Each JSON snapshot includes a common, attempt-scoped `cursor`. Supplying that
+cursor back to either query fixes the result to the same persistence boundary.
+`GET /api/v1/jobs/{jobId}/series/stream?after=<cursor>` then emits only metric
+batches and resource samples committed after that boundary. The SSE event ID is
+the next cursor, so browser reconnection through `Last-Event-ID` is resumable
+without downloading the historical window again.
+
 ## Drift protection
 
 `TestOpenAPICoversRegisteredAPI` extracts every literal `/api/v1` method and

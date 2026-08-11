@@ -169,6 +169,7 @@ type Event struct {
 // ResourceSample is deliberately limited to normalized scalar resource data.
 // Docker Stats responses must never cross this boundary or reach persistence.
 type ResourceSample struct {
+	Cursor                    int64     `json:"cursor,omitempty"`
 	JobID                     string    `json:"-"`
 	AttemptID                 string    `json:"attempt_id"`
 	CapturedAt                time.Time `json:"captured_at"`
@@ -181,6 +182,7 @@ type ResourceSample struct {
 }
 
 type MetricSample struct {
+	Cursor     int64     `json:"cursor,omitempty"`
 	JobID      string    `json:"-"`
 	AttemptID  string    `json:"attempt_id"`
 	Name       string    `json:"name"`
@@ -190,6 +192,7 @@ type MetricSample struct {
 }
 
 type MetricPoint struct {
+	Cursor      int64     `json:"cursor,omitempty"`
 	CapturedAt  time.Time `json:"captured_at"`
 	Step        *int64    `json:"step,omitempty"`
 	Value       float64   `json:"value"`

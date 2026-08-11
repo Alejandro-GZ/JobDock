@@ -92,6 +92,7 @@ paths:
         - {$ref: '#/components/parameters/SeriesFrom'}
         - {$ref: '#/components/parameters/SeriesTo'}
         - {$ref: '#/components/parameters/SeriesLimit'}
+        - {$ref: '#/components/parameters/SeriesCursor'}
         - {name: name, in: query, description: Repeat to select up to 64 metric names, schema: {type: array, maxItems: 64, items: {type: string}}}
         - {name: resolution, in: query, schema: {type: string, enum: [auto, raw, 1m, 5m], default: auto}}
         - {name: format, in: query, schema: {type: string, enum: [json, csv], default: json}}
@@ -109,10 +110,25 @@ paths:
         - {$ref: '#/components/parameters/SeriesFrom'}
         - {$ref: '#/components/parameters/SeriesTo'}
         - {$ref: '#/components/parameters/SeriesLimit'}
+        - {$ref: '#/components/parameters/SeriesCursor'}
         - {name: resolution, in: query, schema: {type: string, enum: [auto, 5s, 5m], default: auto}}
         - {name: format, in: query, schema: {type: string, enum: [json, csv], default: json}}
       responses:
         '200': {description: Resource samples or CSV export, content: {application/json: {schema: {$ref: '#/components/schemas/ResourceSeriesResponse'}}, text/csv: {schema: {type: string}}}}
+        '404': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+  /jobs/{jobId}/series/stream:
+    get:
+      operationId: streamJobSeries
+      description: Resumable attempt-scoped stream of newly persisted metric and resource batches. Event IDs are common series cursors.
+      parameters:
+        - {$ref: '#/components/parameters/JobID'}
+        - {$ref: '#/components/parameters/AttemptIDQuery'}
+        - {name: after, in: query, description: Resume strictly after this cursor, schema: {oneOf: [{type: integer, format: int64, minimum: 0}, {type: string, const: latest}], default: 0}}
+        - {name: Last-Event-ID, in: header, description: Last applied series cursor used by automatic SSE reconnection, schema: {type: integer, format: int64, minimum: 0}}
+      responses:
+        '200': {description: SeriesUpdate events as text/event-stream, content: {text/event-stream: {schema: {$ref: '#/components/schemas/SeriesUpdate'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
         '404': {$ref: '#/components/responses/Problem'}
         '422': {$ref: '#/components/responses/Problem'}
   /jobs/{jobId}/stream:
@@ -439,6 +455,7 @@ components:
     SeriesFrom: {name: from, in: query, description: Inclusive RFC3339 start, schema: {type: string, format: date-time}}
     SeriesTo: {name: to, in: query, description: Inclusive RFC3339 end, schema: {type: string, format: date-time}}
     SeriesLimit: {name: limit, in: query, description: Global maximum number of returned points, schema: {type: integer, minimum: 1, maximum: 10000, default: 2000}}
+    SeriesCursor: {name: cursor, in: query, description: Consistent snapshot cursor; defaults to the latest cursor for the attempt, schema: {type: integer, format: int64, minimum: 0}}
   responses:
     Problem:
       description: RFC 9457-style problem detail
@@ -576,6 +593,7 @@ components:
       additionalProperties: false
       required: [cpu_millis, memory_bytes]
       properties:
+        cursor: {type: integer, format: int64, minimum: 0}
         attempt_id: {type: string, format: uuid}
         captured_at: {type: string, format: date-time}
         resolution_seconds: {type: integer, enum: [5, 300]}
@@ -588,6 +606,7 @@ components:
       type: object
       required: [captured_at, value, sample_count]
       properties:
+        cursor: {type: integer, format: int64, minimum: 0}
         captured_at: {type: string, format: date-time}
         step: {type: integer, format: int64}
         value: {type: number, format: double}
@@ -604,9 +623,10 @@ components:
         sample_count: {type: integer, format: int64, minimum: 1}
     MetricSeriesResponse:
       type: object
-      required: [attempt_id, from, to, resolution_seconds, truncated, series]
+      required: [attempt_id, cursor, from, to, resolution_seconds, truncated, series]
       properties:
         attempt_id: {type: string, format: uuid}
+        cursor: {type: integer, format: int64, minimum: 0}
         from: {type: string, format: date-time}
         to: {type: string, format: date-time}
         resolution_seconds: {type: integer, minimum: 0}
@@ -614,14 +634,35 @@ components:
         series: {type: array, items: {$ref: '#/components/schemas/MetricSeries'}}
     ResourceSeriesResponse:
       type: object
-      required: [attempt_id, from, to, resolution_seconds, truncated, points]
+      required: [attempt_id, cursor, from, to, resolution_seconds, truncated, points]
       properties:
         attempt_id: {type: string, format: uuid}
+        cursor: {type: integer, format: int64, minimum: 0}
         from: {type: string, format: date-time}
         to: {type: string, format: date-time}
         resolution_seconds: {type: integer, enum: [5, 300]}
         truncated: {type: boolean}
         points: {type: array, items: {$ref: '#/components/schemas/ResourceSample'}}
+    LiveMetricSample:
+      type: object
+      required: [cursor, attempt_id, name, value, captured_at]
+      properties:
+        cursor: {type: integer, format: int64, minimum: 1}
+        attempt_id: {type: string, format: uuid}
+        name: {type: string, minLength: 1, maxLength: 128}
+        step: {type: integer, format: int64}
+        value: {type: number, format: double}
+        captured_at: {type: string, format: date-time}
+    SeriesUpdate:
+      type: object
+      required: [cursor, attempt_id, kind, captured_at]
+      properties:
+        cursor: {type: integer, format: int64, minimum: 1}
+        attempt_id: {type: string, format: uuid}
+        kind: {type: string, enum: [metrics, resources]}
+        captured_at: {type: string, format: date-time}
+        metrics: {type: array, items: {$ref: '#/components/schemas/LiveMetricSample'}}
+        resource: {$ref: '#/components/schemas/ResourceSample'}
     AgentEnrollmentRequest:
       type: object
       additionalProperties: false

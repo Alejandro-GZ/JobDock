@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
@@ -342,6 +343,10 @@ func (h *harness) testObservableSeries(t *testing.T) {
 	created := h.submit("e2e-observable-series", "alpine:3.20", []string{"sh", "-c", "i=0; while [ $i -lt 12 ]; do i=$((i+1)); dd if=/dev/zero of=/dev/null bs=1M count=8 2>/dev/null; sleep 1; done"})
 	h.waitJob(created.ID, 30*time.Second, "RUNNING")
 	token := h.jobToken(created.ID)
+	var snapshot struct {
+		Cursor int64 `json:"cursor"`
+	}
+	h.request(http.MethodGet, "/api/v1/jobs/"+created.ID+"/metrics?resolution=raw", nil, &snapshot, http.StatusOK, false)
 	payload := []byte(`{"items":[{"name":"loss","value":0.75,"step":1},{"name":"accuracy","value":0.8,"step":1}]}`)
 	request, _ := http.NewRequest(http.MethodPost, h.serverURL+"/api/v1/job-context/metrics", bytes.NewReader(payload))
 	request.Header.Set("Content-Type", "application/json")
@@ -353,6 +358,10 @@ func (h *harness) testObservableSeries(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != http.StatusAccepted {
 		t.Fatalf("metric ingestion returned %d", response.StatusCode)
+	}
+	update := h.readSeriesUpdate("/api/v1/jobs/" + created.ID + "/series/stream?after=" + fmt.Sprint(snapshot.Cursor))
+	if update.Kind != "metrics" || update.Cursor <= snapshot.Cursor || len(update.Metrics) != 2 {
+		t.Fatalf("incremental SDK metric update missing: %#v", update)
 	}
 	finished := h.waitJob(created.ID, 60*time.Second, "SUCCEEDED")
 	var metrics struct {
@@ -383,6 +392,46 @@ func (h *harness) testObservableSeries(t *testing.T) {
 			t.Fatalf("%s CSV is missing attempt identity: %s", endpoint, data)
 		}
 	}
+}
+
+func (h *harness) readSeriesUpdate(path string) struct {
+	Cursor  int64  `json:"cursor"`
+	Kind    string `json:"kind"`
+	Metrics []any  `json:"metrics"`
+} {
+	h.t.Helper()
+	response, err := h.client.Get(h.serverURL + path)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(response.Body)
+		h.t.Fatalf("series stream returned %d: %s", response.StatusCode, data)
+	}
+	scanner := bufio.NewScanner(response.Body)
+	for scanner.Scan() {
+		if !strings.HasPrefix(scanner.Text(), "data: ") {
+			continue
+		}
+		var update struct {
+			Cursor  int64  `json:"cursor"`
+			Kind    string `json:"kind"`
+			Metrics []any  `json:"metrics"`
+		}
+		if err = json.Unmarshal([]byte(strings.TrimPrefix(scanner.Text(), "data: ")), &update); err != nil {
+			h.t.Fatal(err)
+		}
+		if update.Kind == "metrics" {
+			return update
+		}
+	}
+	h.t.Fatalf("series stream ended without metric update: %v", scanner.Err())
+	return struct {
+		Cursor  int64  `json:"cursor"`
+		Kind    string `json:"kind"`
+		Metrics []any  `json:"metrics"`
+	}{}
 }
 
 func (h *harness) jobToken(jobID string) string {

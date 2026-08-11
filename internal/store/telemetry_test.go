@@ -111,6 +111,22 @@ func TestMetricSeriesAreAttemptAwareBoundedAndAggregated(t *testing.T) {
 	if err != nil || !truncated {
 		t.Fatalf("bounded metric query: truncated=%v err=%v", truncated, err)
 	}
+	snapshotCursor, err := repository.LatestSeriesCursor(ctx, job.ID, attemptID)
+	if err != nil || snapshotCursor == 0 {
+		t.Fatalf("initial series cursor: %d %v", snapshotCursor, err)
+	}
+	step3 := int64(3)
+	if err = repository.AppendMetricSamples(ctx, []domain.MetricSample{{JobID: job.ID, AttemptID: attemptID, Name: "loss", Step: &step3, Value: 1, CapturedAt: base.Add(20 * time.Second)}}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _, err := repository.MetricSeriesAt(ctx, job.ID, attemptID, []string{"loss"}, base.Add(-time.Second), base.Add(time.Minute), 0, 100, snapshotCursor)
+	if err != nil || len(snapshot) != 1 || snapshot[0].SampleCount != 2 || snapshot[0].Last != 2 {
+		t.Fatalf("cursor-consistent snapshot: %#v %v", snapshot, err)
+	}
+	updates, hasMore, err := repository.SeriesUpdates(ctx, job.ID, attemptID, snapshotCursor, 10)
+	if err != nil || hasMore || len(updates) != 1 || updates[0].Cursor <= snapshotCursor || len(updates[0].Metrics) != 1 || updates[0].Metrics[0].Value != 1 {
+		t.Fatalf("incremental metric updates: %#v more=%v err=%v", updates, hasMore, err)
+	}
 }
 
 func TestRawDockerStatsEventsAreRejected(t *testing.T) {

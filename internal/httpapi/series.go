@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -19,6 +20,7 @@ const (
 
 type seriesWindow struct {
 	AttemptID string
+	Cursor    int64
 	From      time.Time
 	To        time.Time
 	Limit     int
@@ -26,6 +28,7 @@ type seriesWindow struct {
 
 type metricSeriesResponse struct {
 	AttemptID         string                `json:"attempt_id"`
+	Cursor            int64                 `json:"cursor"`
 	From              time.Time             `json:"from"`
 	To                time.Time             `json:"to"`
 	ResolutionSeconds int                   `json:"resolution_seconds"`
@@ -35,6 +38,7 @@ type metricSeriesResponse struct {
 
 type resourceSeriesResponse struct {
 	AttemptID         string                  `json:"attempt_id"`
+	Cursor            int64                   `json:"cursor"`
 	From              time.Time               `json:"from"`
 	To                time.Time               `json:"to"`
 	ResolutionSeconds int                     `json:"resolution_seconds"`
@@ -97,12 +101,12 @@ func (a *API) jobMetrics(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	series, truncated, err := a.store.MetricSeries(r.Context(), job.ID, window.AttemptID, names, window.From, window.To, resolution, window.Limit)
+	series, truncated, err := a.store.MetricSeriesAt(r.Context(), job.ID, window.AttemptID, names, window.From, window.To, resolution, window.Limit, window.Cursor)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	response := metricSeriesResponse{AttemptID: window.AttemptID, From: window.From, To: window.To, ResolutionSeconds: resolution, Truncated: truncated, Series: series}
+	response := metricSeriesResponse{AttemptID: window.AttemptID, Cursor: window.Cursor, From: window.From, To: window.To, ResolutionSeconds: resolution, Truncated: truncated, Series: series}
 	format, ok := seriesFormat(w, r.URL.Query().Get("format"))
 	if !ok {
 		return
@@ -127,20 +131,20 @@ func (a *API) jobResources(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	points, truncated, err := a.store.ResourceSamples(r.Context(), job.ID, window.AttemptID, window.From, window.To, resolution, window.Limit)
+	points, truncated, err := a.store.ResourceSamplesAt(r.Context(), job.ID, window.AttemptID, window.From, window.To, resolution, window.Limit, window.Cursor)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
 	if len(points) == 0 && r.URL.Query().Get("resolution") == "auto" && resolution == 5 {
 		resolution = 300
-		points, truncated, err = a.store.ResourceSamples(r.Context(), job.ID, window.AttemptID, window.From, window.To, resolution, window.Limit)
+		points, truncated, err = a.store.ResourceSamplesAt(r.Context(), job.ID, window.AttemptID, window.From, window.To, resolution, window.Limit, window.Cursor)
 		if err != nil {
 			writeStoreError(w, err)
 			return
 		}
 	}
-	response := resourceSeriesResponse{AttemptID: window.AttemptID, From: window.From, To: window.To, ResolutionSeconds: resolution, Truncated: truncated, Points: points}
+	response := resourceSeriesResponse{AttemptID: window.AttemptID, Cursor: window.Cursor, From: window.From, To: window.To, ResolutionSeconds: resolution, Truncated: truncated, Points: points}
 	format, ok := seriesFormat(w, r.URL.Query().Get("format"))
 	if !ok {
 		return
@@ -172,6 +176,20 @@ func (a *API) parseSeriesWindow(w http.ResponseWriter, r *http.Request, job doma
 		writeProblem(w, http.StatusNotFound, "attempt_not_found", "The requested attempt does not belong to this job")
 		return seriesWindow{}, false
 	}
+	latestCursor, err := a.store.LatestSeriesCursor(r.Context(), job.ID, result.AttemptID)
+	if err != nil {
+		writeStoreError(w, err)
+		return seriesWindow{}, false
+	}
+	result.Cursor = latestCursor
+	if value := r.URL.Query().Get("cursor"); value != "" {
+		parsed, parseErr := strconv.ParseInt(value, 10, 64)
+		if parseErr != nil || parsed < 0 || parsed > latestCursor {
+			writeProblem(w, http.StatusUnprocessableEntity, "invalid_series_cursor", "cursor must be a non-negative cursor from this job attempt")
+			return seriesWindow{}, false
+		}
+		result.Cursor = parsed
+	}
 	for key, target := range map[string]*time.Time{"from": &result.From, "to": &result.To} {
 		if value := r.URL.Query().Get(key); value != "" {
 			parsed, parseErr := time.Parse(time.RFC3339, value)
@@ -195,6 +213,99 @@ func (a *API) parseSeriesWindow(w http.ResponseWriter, r *http.Request, job doma
 		result.Limit = parsed
 	}
 	return result, true
+}
+
+func (a *API) jobSeriesStream(w http.ResponseWriter, r *http.Request) {
+	job, ok := a.authorizeJob(w, r)
+	if !ok {
+		return
+	}
+	attemptID := r.URL.Query().Get("attempt_id")
+	if attemptID == "" {
+		attemptID = job.AttemptID
+	}
+	if attemptID == "" {
+		writeProblem(w, http.StatusConflict, "attempt_unavailable", "Live series require a job attempt")
+		return
+	}
+	belongs, err := a.store.AttemptBelongsToJob(r.Context(), job.ID, attemptID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if !belongs {
+		writeProblem(w, http.StatusNotFound, "attempt_not_found", "The requested attempt does not belong to this job")
+		return
+	}
+	after, ok := a.parseSeriesCursor(w, r, job.ID, attemptID)
+	if !ok {
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeProblem(w, http.StatusInternalServerError, "stream_unsupported", "Streaming is unavailable")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		updates, hasMore, queryErr := a.store.SeriesUpdates(r.Context(), job.ID, attemptID, after, 100)
+		if queryErr != nil {
+			a.log.Error("tail job series", "error", queryErr, "job_id", job.ID, "attempt_id", attemptID, "after", after)
+			return
+		}
+		for _, update := range updates {
+			data, _ := json.Marshal(update)
+			fmt.Fprintf(w, "id: %d\nevent: series\ndata: %s\n\n", update.Cursor, data)
+			after = update.Cursor
+		}
+		if len(updates) == 0 {
+			fmt.Fprint(w, ": keepalive\n\n")
+		}
+		flusher.Flush()
+		if hasMore {
+			continue
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (a *API) parseSeriesCursor(w http.ResponseWriter, r *http.Request, jobID, attemptID string) (int64, bool) {
+	value := r.URL.Query().Get("after")
+	var after int64
+	if value == "latest" {
+		cursor, err := a.store.LatestSeriesCursor(r.Context(), jobID, attemptID)
+		if err != nil {
+			writeStoreError(w, err)
+			return 0, false
+		}
+		after = cursor
+	} else if value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed < 0 {
+			writeProblem(w, http.StatusUnprocessableEntity, "invalid_series_cursor", "after must be latest or a non-negative series cursor")
+			return 0, false
+		}
+		after = parsed
+	}
+	if value := r.Header.Get("Last-Event-ID"); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed < 0 {
+			writeProblem(w, http.StatusBadRequest, "invalid_series_cursor", "Last-Event-ID must be a non-negative series cursor")
+			return 0, false
+		}
+		if parsed > after {
+			after = parsed
+		}
+	}
+	return after, true
 }
 
 func metricResolution(w http.ResponseWriter, value string, window seriesWindow) (int, bool) {

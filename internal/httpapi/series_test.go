@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -91,6 +93,23 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 	if len(resources.Points) != 1 || resources.Points[0].AttemptID != attemptID || resources.Points[0].GPUUtilizationBasisPoints == nil {
 		t.Fatalf("resource response: %#v", resources)
 	}
+	if metrics.Cursor == 0 || resources.Cursor == 0 || metrics.Cursor != resources.Cursor {
+		t.Fatalf("series responses do not share a consistent cursor: metrics=%d resources=%d", metrics.Cursor, resources.Cursor)
+	}
+	if err = repository.AppendMetricSamples(ctx, []domain.MetricSample{{JobID: job.ID, AttemptID: attemptID, Name: "loss", Value: .25, CapturedAt: base.Add(20 * time.Second)}}); err != nil {
+		t.Fatal(err)
+	}
+	metricUpdate := readSeriesSSE(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/series/stream?attempt_id="+attemptID+"&after="+strconv.FormatInt(metrics.Cursor, 10), "")
+	if metricUpdate.Cursor <= metrics.Cursor || metricUpdate.Kind != "metrics" || len(metricUpdate.Metrics) != 1 || metricUpdate.Metrics[0].Name != "loss" {
+		t.Fatalf("metric live update: %#v", metricUpdate)
+	}
+	if err = repository.AppendResourceSample(ctx, domain.ResourceSample{JobID: job.ID, AttemptID: attemptID, CapturedAt: base.Add(25 * time.Second), CPUMillis: 900, MemoryBytes: 256 << 20}); err != nil {
+		t.Fatal(err)
+	}
+	resourceUpdate := readSeriesSSE(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/series/stream?attempt_id="+attemptID+"&after="+strconv.FormatInt(metrics.Cursor, 10), strconv.FormatInt(metricUpdate.Cursor, 10))
+	if resourceUpdate.Cursor <= metricUpdate.Cursor || resourceUpdate.Kind != "resources" || resourceUpdate.Resource == nil || resourceUpdate.Resource.CPUMillis != 900 {
+		t.Fatalf("resumed resource update: %#v", resourceUpdate)
+	}
 	for _, endpoint := range []string{metricURL + "&format=csv", resourceURL + "&format=csv"} {
 		response, requestErr := ownerClient.Get(endpoint)
 		if requestErr != nil {
@@ -113,6 +132,36 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 			t.Fatalf("cross-owner series status: %d", response.StatusCode)
 		}
 	}
+}
+
+func readSeriesSSE(t *testing.T, client *http.Client, endpoint, lastEventID string) store.SeriesUpdate {
+	t.Helper()
+	request, _ := http.NewRequest(http.MethodGet, endpoint, nil)
+	if lastEventID != "" {
+		request.Header.Set("Last-Event-ID", lastEventID)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(response.Body)
+		t.Fatalf("series stream status %d: %s", response.StatusCode, data)
+	}
+	scanner := bufio.NewScanner(response.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "data: ") {
+			var update store.SeriesUpdate
+			if err = json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &update); err != nil {
+				t.Fatal(err)
+			}
+			return update
+		}
+	}
+	t.Fatalf("series stream ended without data: %v", scanner.Err())
+	return store.SeriesUpdate{}
 }
 
 func createSeriesUser(t *testing.T, repository *store.Store, username string) domain.User {
