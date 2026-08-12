@@ -430,7 +430,7 @@ func (s *Store) Heartbeat(ctx context.Context, node domain.Node) error {
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE nodes SET name=?,status=CASE WHEN status='DRAINING' THEN status ELSE ? END,agent_version=?,protocol_version=?,architecture=?,docker_version=?,cpu_total_millis=?,memory_total_bytes=?,workspace_free_bytes=?,labels_json=?,last_heartbeat=?,gpu_discovery_status=?,gpu_error_code=?,gpu_error_message=? WHERE id=?`, node.Name, node.Status, node.AgentVersion, node.ProtocolVersion, node.Architecture, node.DockerVersion, node.CPUTotalMillis, node.MemoryTotalBytes, node.WorkspaceFreeBytes, labels, formatTime(node.LastHeartbeat), node.GPUDiscovery.Status, node.GPUDiscovery.ErrorCode, node.GPUDiscovery.Message, node.ID)
+	result, err := tx.ExecContext(ctx, `UPDATE nodes SET name=?,status=CASE WHEN status='DRAINING' THEN status ELSE ? END,agent_version=?,protocol_version=?,architecture=?,docker_version=?,cpu_total_millis=?,memory_total_bytes=?,workspace_free_bytes=?,labels_json=?,last_heartbeat=?,gpu_discovery_status=?,gpu_error_code=?,gpu_error_message=? WHERE id=? AND deleted_at IS NULL`, node.Name, node.Status, node.AgentVersion, node.ProtocolVersion, node.Architecture, node.DockerVersion, node.CPUTotalMillis, node.MemoryTotalBytes, node.WorkspaceFreeBytes, labels, formatTime(node.LastHeartbeat), node.GPUDiscovery.Status, node.GPUDiscovery.ErrorCode, node.GPUDiscovery.Message, node.ID)
 	if err != nil {
 		return err
 	}
@@ -450,7 +450,7 @@ func (s *Store) Heartbeat(ctx context.Context, node domain.Node) error {
 }
 
 func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(name_override,name),status,agent_version,protocol_version,architecture,docker_version,cpu_total_millis,memory_total_bytes,workspace_free_bytes,COALESCE(labels_override_json,labels_json),last_heartbeat,created_at,gpu_discovery_status,gpu_error_code,gpu_error_message FROM nodes ORDER BY COALESCE(name_override,name)`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(name_override,name),status,agent_version,protocol_version,architecture,docker_version,cpu_total_millis,memory_total_bytes,workspace_free_bytes,COALESCE(labels_override_json,labels_json),last_heartbeat,created_at,gpu_discovery_status,gpu_error_code,gpu_error_message FROM nodes WHERE deleted_at IS NULL ORDER BY COALESCE(name_override,name)`)
 	if err != nil {
 		return nil, err
 	}
@@ -489,7 +489,7 @@ func (s *Store) UpdateNodeMetadata(ctx context.Context, id, name string, labels 
 	if err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE nodes SET name_override=?,labels_override_json=? WHERE id=?`, name, data, id)
+	result, err := s.db.ExecContext(ctx, `UPDATE nodes SET name_override=?,labels_override_json=? WHERE id=? AND deleted_at IS NULL`, name, data, id)
 	if err != nil {
 		return err
 	}
@@ -502,7 +502,7 @@ func (s *Store) UpdateNodeMetadata(ctx context.Context, id, name string, labels 
 
 func (s *Store) NodeByCredential(ctx context.Context, credentialHash string) (domain.Node, error) {
 	var node domain.Node
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,status FROM nodes WHERE credential_hash=? OR (previous_credential_hash=? AND previous_credential_expires_at>?)`, credentialHash, credentialHash, formatTime(time.Now().UTC())).Scan(&node.ID, &node.Name, &node.Status)
+	err := s.db.QueryRowContext(ctx, `SELECT id,name,status FROM nodes WHERE deleted_at IS NULL AND (credential_hash=? OR (previous_credential_hash=? AND previous_credential_expires_at>?))`, credentialHash, credentialHash, formatTime(time.Now().UTC())).Scan(&node.ID, &node.Name, &node.Status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return node, ErrNotFound
 	}
@@ -511,7 +511,7 @@ func (s *Store) NodeByCredential(ctx context.Context, credentialHash string) (do
 
 func (s *Store) RotateNodeCredential(ctx context.Context, nodeID, credentialHash string) error {
 	now := time.Now().UTC()
-	result, err := s.db.ExecContext(ctx, `UPDATE nodes SET previous_credential_hash=credential_hash,previous_credential_expires_at=?,credential_hash=?,credential_created_at=? WHERE id=?`, formatTime(now.Add(10*time.Minute)), credentialHash, formatTime(now), nodeID)
+	result, err := s.db.ExecContext(ctx, `UPDATE nodes SET previous_credential_hash=credential_hash,previous_credential_expires_at=?,credential_hash=?,credential_created_at=? WHERE id=? AND deleted_at IS NULL`, formatTime(now.Add(10*time.Minute)), credentialHash, formatTime(now), nodeID)
 	if err != nil {
 		return err
 	}
@@ -523,7 +523,7 @@ func (s *Store) RotateNodeCredential(ctx context.Context, nodeID, credentialHash
 }
 
 func (s *Store) SetNodeStatus(ctx context.Context, id string, status domain.NodeStatus) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE nodes SET status=? WHERE id=?`, status, id)
+	result, err := s.db.ExecContext(ctx, `UPDATE nodes SET status=? WHERE id=? AND deleted_at IS NULL`, status, id)
 	if err != nil {
 		return err
 	}
@@ -534,11 +534,52 @@ func (s *Store) SetNodeStatus(ctx context.Context, id string, status domain.Node
 	return nil
 }
 
-func (s *Store) MarkStaleNodes(ctx context.Context, offlineBefore, lostBefore time.Time) error {
-	if _, err := s.db.ExecContext(ctx, `UPDATE nodes SET status='OFFLINE' WHERE status IN ('ONLINE','DEGRADED') AND last_heartbeat < ?`, formatTime(offlineBefore)); err != nil {
+// DeleteNode forgets a node from scheduling without destroying historical job
+// attempts that reference it. The enrollment credential is revoked immediately,
+// and the row is kept only as a foreign-key anchor for immutable history.
+func (s *Store) DeleteNode(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM jobs WHERE status IN ('ASSIGNED','PULLING_IMAGE','STARTING','RUNNING','STOPPING') AND assigned_node_id IN (SELECT id FROM nodes WHERE last_heartbeat < ?)`, formatTime(lostBefore))
+	defer tx.Rollback()
+
+	var deletedAt sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT deleted_at FROM nodes WHERE id=?`, id).Scan(&deletedAt)
+	if errors.Is(err, sql.ErrNoRows) || deletedAt.Valid {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+
+	var active int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE assigned_node_id=? AND status IN ('ASSIGNED','PULLING_IMAGE','STARTING','RUNNING','STOPPING','LOST')`, id).Scan(&active); err != nil {
+		return err
+	}
+	if active > 0 {
+		return fmt.Errorf("%w: node still has %d active job(s); stop or reconcile them before deletion", ErrConflict, active)
+	}
+
+	result, err := tx.ExecContext(ctx, `UPDATE nodes SET status='OFFLINE',deleted_at=?,credential_hash='revoked:'||id,previous_credential_hash=NULL,previous_credential_expires_at=NULL WHERE id=? AND deleted_at IS NULL`, formatTime(time.Now().UTC()), id)
+	if err != nil {
+		return err
+	}
+	changed, _ := result.RowsAffected()
+	if changed != 1 {
+		return ErrNotFound
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM gpus WHERE node_id=?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) MarkStaleNodes(ctx context.Context, offlineBefore, lostBefore time.Time) error {
+	if _, err := s.db.ExecContext(ctx, `UPDATE nodes SET status='OFFLINE' WHERE deleted_at IS NULL AND status IN ('ONLINE','DEGRADED') AND last_heartbeat < ?`, formatTime(offlineBefore)); err != nil {
+		return err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM jobs WHERE status IN ('ASSIGNED','PULLING_IMAGE','STARTING','RUNNING','STOPPING') AND assigned_node_id IN (SELECT id FROM nodes WHERE deleted_at IS NULL AND last_heartbeat < ?)`, formatTime(lostBefore))
 	if err != nil {
 		return err
 	}

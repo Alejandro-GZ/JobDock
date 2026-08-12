@@ -78,6 +78,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/builds", a.withSession(false, false, a.listBuilds))
 	mux.HandleFunc("POST /api/v1/builds", a.withSession(false, true, a.createBuild))
 	mux.HandleFunc("GET /api/v1/builds/{id}", a.withSession(false, false, a.getBuild))
+	mux.HandleFunc("DELETE /api/v1/builds/{id}", a.withSession(false, true, a.deleteBuild))
 	mux.HandleFunc("GET /api/v1/builds/{id}/events", a.withSession(false, false, a.getBuildEvents))
 	mux.HandleFunc("GET /api/v1/builds/{id}/plan", a.withSession(false, false, a.getBuildPlan))
 	mux.HandleFunc("GET /api/v1/builds/{id}/logs", a.withSession(false, false, a.getBuildLogs))
@@ -110,6 +111,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/jobs/{id}/checkpoints/latest.zip", a.withSession(false, false, a.latestCheckpointArchive))
 	mux.HandleFunc("GET /api/v1/nodes", a.withSession(false, false, a.listNodes))
 	mux.HandleFunc("PATCH /api/v1/nodes/{id}", a.withSession(true, true, a.updateNodeMetadata))
+	mux.HandleFunc("DELETE /api/v1/nodes/{id}", a.withSession(true, true, a.deleteNode))
 	mux.HandleFunc("POST /api/v1/nodes/enrollment-tokens", a.withSession(true, true, a.createEnrollmentToken))
 	mux.HandleFunc("POST /api/v1/nodes/{id}/drain", a.withSession(true, true, a.drainNode))
 	mux.HandleFunc("POST /api/v1/nodes/{id}/resume", a.withSession(true, true, a.resumeNode))
@@ -627,6 +629,15 @@ func (a *API) updateNodeMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = a.store.Audit(r.Context(), currentUser(r).ID, "node.metadata.update", "node", id, map[string]any{"name": body.Name, "labels": body.Labels})
 	writeJSON(w, 200, map[string]any{"id": id, "name": body.Name, "labels": body.Labels})
+}
+func (a *API) deleteNode(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := a.store.DeleteNode(r.Context(), id); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	_ = a.store.Audit(r.Context(), currentUser(r).ID, "node.delete", "node", id, map[string]any{})
+	w.WriteHeader(http.StatusNoContent)
 }
 func (a *API) createEnrollmentToken(w http.ResponseWriter, r *http.Request) {
 	user := currentUser(r)

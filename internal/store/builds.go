@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jobdock/jobdock/internal/domain"
@@ -183,6 +184,51 @@ func (s *Store) UpdateBuildStatus(ctx context.Context, id string, status domain.
 		return domain.Build{}, err
 	}
 	return s.Build(ctx, id)
+}
+
+// DeleteBuild permanently removes a terminal/inactive source build and all
+// database-owned build children. Successful managed images remain protected
+// while a non-deleted job can still reference them for inspection or reruns.
+func (s *Store) DeleteBuild(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var status domain.BuildStatus
+	var digest string
+	err = tx.QueryRowContext(ctx, `SELECT status,oci_digest FROM builds WHERE id=?`, id).Scan(&status, &digest)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if status == domain.BuildAnalyzing || status == domain.BuildBuilding {
+		return fmt.Errorf("%w: active builds must be cancelled before deletion", ErrConflict)
+	}
+
+	if digest != "" {
+		reference := domain.ManagedArtifactReference(id, digest)
+		var references int
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE status<>'DELETED' AND json_extract(spec_json,'$.image')=?`, reference).Scan(&references); err != nil {
+			return err
+		}
+		if references > 0 {
+			return fmt.Errorf("%w: build image is referenced by %d non-deleted job(s); delete those jobs first", ErrConflict, references)
+		}
+	}
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM builds WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	changed, _ := result.RowsAffected()
+	if changed != 1 {
+		return ErrNotFound
+	}
+	return tx.Commit()
 }
 
 func scanBuild(row scanner) (domain.Build, error) {

@@ -298,6 +298,25 @@ func (a *API) cancelBuild(w http.ResponseWriter, r *http.Request) {
 	idem.write(w, r.Context(), http.StatusAccepted, updated)
 }
 
+func (a *API) deleteBuild(w http.ResponseWriter, r *http.Request) {
+	build, ok := a.authorizeBuild(w, r)
+	if !ok {
+		return
+	}
+	if err := a.store.DeleteBuild(r.Context(), build.ID); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	// The database is the source of truth. If filesystem cleanup fails after
+	// the metadata was removed, keep the build deleted and surface the orphan
+	// to operators instead of returning a misleading retryable response.
+	if err := a.files.DeleteBuild(build.ID); err != nil {
+		a.log.Error("delete build files", "error", err, "build_id", build.ID)
+	}
+	_ = a.store.Audit(r.Context(), currentUser(r).ID, "build.delete", "build", build.ID, map[string]any{})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (a *API) authorizeBuild(w http.ResponseWriter, r *http.Request) (domain.Build, bool) {
 	build, err := a.store.Build(r.Context(), r.PathValue("id"))
 	if err != nil {

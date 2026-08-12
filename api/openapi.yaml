@@ -84,6 +84,15 @@ paths:
         '200': {description: Build detail including source identity, lifecycle and immutable OCI result, content: {application/json: {schema: {$ref: '#/components/schemas/Build'}}}}
         '403': {$ref: '#/components/responses/Problem'}
         '404': {$ref: '#/components/responses/Problem'}
+    delete:
+      operationId: deleteBuild
+      description: Permanently delete an inactive build and its stored source, logs, plan and managed artifact. Managed images referenced by non-deleted jobs cannot be deleted.
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      responses:
+        '204': {description: Build deleted}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
   /builds/{buildId}/events:
     get:
       operationId: listBuildEvents
@@ -419,6 +428,16 @@ paths:
         '200': {description: Effective node metadata updated}
         '403': {description: Administrator role required}
         '422': {description: Invalid node metadata}
+    delete:
+      operationId: deleteNode
+      description: Remove a node from active scheduling and revoke its agent credential while retaining historical job-attempt references. Active jobs must be stopped or reconciled first.
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+      responses:
+        '204': {description: Node deleted}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
   /nodes/{nodeId}/drain:
     post:
       operationId: drainNode

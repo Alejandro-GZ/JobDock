@@ -1,14 +1,15 @@
 import {useMutation,useQuery,useQueryClient} from "@tanstack/react-query";
-import {Link,useParams} from "react-router-dom";
-import {AlertTriangle,ArrowLeft,Check,Code2,LoaderCircle,PackageCheck,Play,Terminal,X} from "lucide-react";
+import {Link,useNavigate,useParams} from "react-router-dom";
+import {AlertTriangle,ArrowLeft,Check,Code2,LoaderCircle,PackageCheck,Play,Terminal,Trash2,X} from "lucide-react";
 import {toast} from "sonner";
 import {api} from "@/api";
 import {BuildStatusBadge} from "@/views/builds";
+import {AlertDialog,AlertDialogAction,AlertDialogCancel,AlertDialogContent,AlertDialogDescription,AlertDialogFooter,AlertDialogHeader,AlertDialogTitle,AlertDialogTrigger} from "@/components/ui/alert-dialog";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 
 export function BuildDetail(){
-  const {id=""}=useParams(),queryClient=useQueryClient();
+  const {id=""}=useParams(),navigate=useNavigate(),queryClient=useQueryClient();
   const build=useQuery({queryKey:["build",id],queryFn:()=>api.build(id),refetchInterval:5000});
   const hasPlan=build.data?.mode==="RAILPACK"&&build.data.status!=="CREATED";
   const plan=useQuery({queryKey:["build-plan",id],queryFn:()=>api.buildPlan(id),enabled:Boolean(hasPlan)});
@@ -16,10 +17,12 @@ export function BuildDetail(){
   const refresh=async()=>{await Promise.all([queryClient.invalidateQueries({queryKey:["build",id]}),queryClient.invalidateQueries({queryKey:["build-plan",id]})])};
   const confirm=useMutation({mutationFn:()=>api.confirmBuild(id),onSuccess:async()=>{toast.success("Build queued");await refresh()},onError:(cause:Error)=>toast.error(cause.message)});
   const cancel=useMutation({mutationFn:()=>api.cancelBuild(id),onSuccess:async()=>{toast.success("Build cancelled");await refresh()},onError:(cause:Error)=>toast.error(cause.message)});
+  const remove=useMutation({mutationFn:()=>api.deleteBuild(id),onSuccess:async()=>{toast.success("Build deleted");await queryClient.invalidateQueries({queryKey:["builds"]});navigate("/builds")},onError:(cause:Error)=>toast.error(cause.message)});
   if(build.isPending)return <div className="grid min-h-72 place-items-center"><LoaderCircle className="size-5 animate-spin text-muted-foreground"/></div>;
   if(!build.data)return <div className="text-sm text-destructive">Build not found.</div>;
   const item=build.data;
-  return <div className="space-y-5"><div className="flex items-start gap-3"><Button asChild variant="ghost" size="icon"><Link to="/builds"><ArrowLeft className="size-4"/><span className="sr-only">Back to builds</span></Link></Button><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h1 className="truncate text-xl font-semibold">{item.name}</h1><BuildStatusBadge status={item.status}/></div><div className="mt-1 font-mono text-xs text-muted-foreground">{item.id}</div></div></div>
+  const deletable=!["ANALYZING","BUILDING"].includes(item.status);
+  return <div className="space-y-5"><div className="flex items-start gap-3"><Button asChild variant="ghost" size="icon"><Link to="/builds"><ArrowLeft className="size-4"/><span className="sr-only">Back to builds</span></Link></Button><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h1 className="truncate text-xl font-semibold">{item.name}</h1><BuildStatusBadge status={item.status}/></div><div className="mt-1 font-mono text-xs text-muted-foreground">{item.id}</div></div><AlertDialog><AlertDialogTrigger asChild><Button variant="destructive" size="sm" disabled={!deletable||remove.isPending}><Trash2 className="size-4"/>Delete build</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Delete this build?</AlertDialogTitle><AlertDialogDescription>This permanently removes the source archive, analysis, logs and managed OCI artifact. A build whose image is still referenced by a non-deleted job cannot be deleted.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={()=>remove.mutate()}>Delete build</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div>
     {item.status==="FAILED"&&<section className="flex gap-3 rounded-md border border-destructive/30 bg-destructive/5 p-4"><AlertTriangle className="mt-0.5 size-5 shrink-0 text-destructive"/><div><h2 className="text-sm font-medium">Build failed</h2><p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{item.failure_reason}</p></div></section>}
     {plan.data&&<section className="overflow-hidden rounded-md border"><div className="flex items-center justify-between border-b px-4 py-3"><div className="flex items-center gap-2"><PackageCheck className="size-4"/><h2 className="text-sm font-medium">Detected configuration</h2>{plan.data.confirmed_at&&<Badge variant="secondary" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"><Check className="size-3"/>Confirmed</Badge>}</div><span className="text-xs text-muted-foreground">Railpack {plan.data.railpack_version||"unknown"}</span></div>
       <dl className="grid sm:grid-cols-2 lg:grid-cols-4"><Detected label="Provider" value={plan.data.provider}/><Detected label="Runtime" value={plan.data.runtime}/><Detected label="Package manager" value={plan.data.package_manager}/><Detected label="Entrypoint" value={plan.data.entrypoint} mono/></dl>
