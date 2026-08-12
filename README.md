@@ -35,7 +35,7 @@ For an NVIDIA host, use the same command with `--gpu`:
 curl -fsSL https://dock.example.com/install-agent.sh | sudo sh -s -- --server https://dock.example.com --token YOUR_ONE_TIME_TOKEN --name gpu-01 --gpu
 ```
 
-The installer pulls the immutable `ghcr.io/alejandro-gz/jobdock-agent:0.1.0` image, creates persistent agent state, and starts the constrained agent container. It does not clone this repository, invoke a compiler, or edit Compose. The GPU mode requests NVIDIA devices and requires NVML discovery; a discovery failure marks the node `DEGRADED` and prevents assignments.
+The installer pulls the latest `ghcr.io/alejandro-gz/jobdock-agent:latest` image, creates persistent agent state, and starts the constrained agent container. It does not clone this repository, invoke a compiler, or edit Compose. The GPU mode requests NVIDIA devices and requires NVML discovery; a discovery failure marks the node `DEGRADED` and prevents assignments.
 
 For an intentionally insecure local server, append `--allow-insecure-http`. The installer otherwise requires HTTPS.
 
