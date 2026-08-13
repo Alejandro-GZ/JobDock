@@ -84,4 +84,23 @@ func TestAgentTelemetryPersistsOnlyNormalizedScalars(t *testing.T) {
 	if err != nil || len(events) != 0 {
 		t.Fatalf("raw Docker Stats reached job events: %#v %v", events, err)
 	}
+
+	exitCode := 1
+	if err = repository.UpdateJobStatus(ctx, job.ID, domain.JobFailed, &exitCode, "", "test terminal state"); err != nil {
+		t.Fatal(err)
+	}
+	staleRequest, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/agent/jobs/"+job.ID+"/events", bytes.NewBufferString(`{"attempt_id":"`+attemptID+`","sequence":2,"type":"container_started","status":"RUNNING"}`))
+	staleRequest.Header = request.Header.Clone()
+	staleResponse, err := http.DefaultClient.Do(staleRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleResponse.Body.Close()
+	if staleResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("stale RUNNING event status: %d, want 409 so the agent retries or reconciles", staleResponse.StatusCode)
+	}
+	persisted, err := repository.Job(ctx, job.ID)
+	if err != nil || persisted.Status != domain.JobFailed {
+		t.Fatalf("stale event changed terminal state: %#v %v", persisted, err)
+	}
 }

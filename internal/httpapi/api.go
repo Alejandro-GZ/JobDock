@@ -905,7 +905,7 @@ func (a *API) agentEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Status != "" {
-		if err = a.store.UpdateJobStatus(r.Context(), job.ID, body.Status, body.ExitCode, body.ImageDigest, body.Reason); err != nil && !errors.Is(err, store.ErrConflict) {
+		if err = a.store.UpdateJobStatus(r.Context(), job.ID, body.Status, body.ExitCode, body.ImageDigest, body.Reason); err != nil {
 			writeStoreError(w, err)
 			return
 		}

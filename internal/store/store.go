@@ -299,38 +299,57 @@ func (s *Store) ReserveJob(ctx context.Context, jobID, nodeID, attemptID, assign
 }
 
 func (s *Store) UpdateJobStatus(ctx context.Context, jobID string, status domain.JobStatus, exitCode *int, imageDigest, reason string) error {
-	job, err := s.Job(ctx, jobID)
-	if err != nil {
-		return err
+	// Agent events can race with reconciliation and other lifecycle requests.
+	// Retry a lost compare-and-swap with fresh state; only report success when
+	// both the job and its current attempt reflect the observed status.
+	for attempt := 0; attempt < 3; attempt++ {
+		job, err := s.Job(ctx, jobID)
+		if err != nil {
+			return err
+		}
+		if job.Status == status && job.ObservedStatus == status {
+			return nil
+		}
+		if !domain.CanTransition(job.Status, status) {
+			return fmt.Errorf("%w: invalid transition %s to %s", ErrConflict, job.Status, status)
+		}
+		now := time.Now().UTC()
+		started, finished := any(nil), any(nil)
+		if status == domain.JobRunning && job.StartedAt == nil {
+			started = formatTime(now)
+		}
+		if status == domain.JobSucceeded || status == domain.JobFailed || status == domain.JobCancelled {
+			finished = formatTime(now)
+		}
+		tx, beginErr := s.db.BeginTx(ctx, nil)
+		if beginErr != nil {
+			return beginErr
+		}
+		result, updateErr := tx.ExecContext(ctx, `UPDATE jobs SET status=?,observed_status=?,exit_code=COALESCE(?,exit_code),image_digest=CASE WHEN ?='' THEN image_digest ELSE ? END,failure_reason=CASE WHEN ?='' THEN failure_reason ELSE ? END,started_at=COALESCE(?,started_at),finished_at=COALESCE(?,finished_at),version=version+1 WHERE id=? AND status=? AND attempt_id=?`, status, status, exitCode, imageDigest, imageDigest, reason, reason, started, finished, jobID, job.Status, job.AttemptID)
+		if updateErr != nil {
+			_ = tx.Rollback()
+			return updateErr
+		}
+		changed, _ := result.RowsAffected()
+		if changed != 1 {
+			_ = tx.Rollback()
+			continue
+		}
+		result, updateErr = tx.ExecContext(ctx, `UPDATE job_attempts SET status=?,exit_code=COALESCE(?,exit_code),image_digest=CASE WHEN ?='' THEN image_digest ELSE ? END,failure_reason=CASE WHEN ?='' THEN failure_reason ELSE ? END,started_at=COALESCE(?,started_at),finished_at=COALESCE(?,finished_at),job_token_hash=CASE WHEN ? THEN 'revoked:'||id ELSE job_token_hash END WHERE id=? AND job_id=?`, status, exitCode, imageDigest, imageDigest, reason, reason, started, finished, finished != nil, job.AttemptID, jobID)
+		if updateErr != nil {
+			_ = tx.Rollback()
+			return updateErr
+		}
+		if changed, _ = result.RowsAffected(); changed != 1 {
+			_ = tx.Rollback()
+			return ErrConflict
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			return commitErr
+		}
+		return nil
 	}
-	if !domain.CanTransition(job.Status, status) {
-		return fmt.Errorf("%w: invalid transition %s to %s", ErrConflict, job.Status, status)
-	}
-	now := time.Now().UTC()
-	started, finished := any(nil), any(nil)
-	if status == domain.JobRunning && job.StartedAt == nil {
-		started = formatTime(now)
-	}
-	if status == domain.JobSucceeded || status == domain.JobFailed || status == domain.JobCancelled {
-		finished = formatTime(now)
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE jobs SET status=?,observed_status=?,exit_code=COALESCE(?,exit_code),image_digest=CASE WHEN ?='' THEN image_digest ELSE ? END,failure_reason=CASE WHEN ?='' THEN failure_reason ELSE ? END,started_at=COALESCE(?,started_at),finished_at=COALESCE(?,finished_at),version=version+1 WHERE id=? AND status=? AND attempt_id=?`, status, status, exitCode, imageDigest, imageDigest, reason, reason, started, finished, jobID, job.Status, job.AttemptID)
-	if err != nil {
-		return err
-	}
-	if count, _ := result.RowsAffected(); count != 1 {
-		return ErrConflict
-	}
-	_, err = tx.ExecContext(ctx, `UPDATE job_attempts SET status=?,exit_code=COALESCE(?,exit_code),image_digest=CASE WHEN ?='' THEN image_digest ELSE ? END,failure_reason=CASE WHEN ?='' THEN failure_reason ELSE ? END,started_at=COALESCE(?,started_at),finished_at=COALESCE(?,finished_at),job_token_hash=CASE WHEN ? THEN 'revoked:'||id ELSE job_token_hash END WHERE id=? AND job_id=?`, status, exitCode, imageDigest, imageDigest, reason, reason, started, finished, finished != nil, job.AttemptID, jobID)
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
+	return ErrConflict
 }
 
 func (s *Store) SetAttemptOutputs(ctx context.Context, jobID, attemptID string, outputs []domain.OutputFile) error {
