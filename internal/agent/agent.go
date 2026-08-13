@@ -42,6 +42,7 @@ type Agent struct {
 	gpu                 GPUDiscoverer
 	gpuLogOnce          sync.Once
 	syncing             map[string]bool
+	inventoryOverride   func(context.Context) (domain.Node, error)
 }
 
 type runtimeAssignment struct {
@@ -68,6 +69,16 @@ type credentialState struct {
 	NodeID     string    `json:"node_id"`
 	Credential string    `json:"credential"`
 	RotatedAt  time.Time `json:"rotated_at"`
+}
+
+type apiError struct {
+	StatusCode int
+	Code       string
+	Detail     string
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("JobDock API %d %s: %s", e.StatusCode, http.StatusText(e.StatusCode), e.Detail)
 }
 
 func New(cfg config.Agent, logger *slog.Logger) *Agent {
@@ -138,6 +149,7 @@ func (a *Agent) pollAssignments(ctx context.Context) error {
 
 func (a *Agent) authenticate(ctx context.Context) error {
 	credentialPath := filepath.Join(a.config.StateDir, "credential.json")
+	loadedSavedCredential := false
 	if a.config.Token != "" {
 		a.credential = a.config.Token
 	}
@@ -147,10 +159,34 @@ func (a *Agent) authenticate(ctx context.Context) error {
 			a.nodeID = saved.NodeID
 			a.credential = saved.Credential
 			a.credentialRotatedAt = saved.RotatedAt
+			loadedSavedCredential = true
 		}
 	}
 	if a.credential != "" && a.nodeID != "" {
-		return nil
+		if !loadedSavedCredential || a.config.EnrollmentToken == "" {
+			return nil
+		}
+		// Installations intentionally retain state across container replacement.
+		// If an operator deleted the previous node, its saved credential is
+		// revoked while a new one-use enrollment token is supplied to the new
+		// container. Validate before starting the background loops so that this
+		// state can recover without repeatedly returning 401.
+		node, err := a.inventory(ctx)
+		if err != nil {
+			return err
+		}
+		node.ID = a.nodeID
+		if err = a.apiJSON(ctx, "POST", "/api/v1/agent/heartbeat", node, nil); err == nil {
+			return nil
+		} else if !isAPIErrorCode(err, http.StatusUnauthorized, "invalid_agent_credential") {
+			// Preserve the existing offline-start behavior. The heartbeat and poll
+			// loops will retry transient server and network failures.
+			return nil
+		}
+		a.log.Warn("saved_credential_rejected", "node_id", a.nodeID, "action", "reenroll")
+		a.nodeID = ""
+		a.credential = ""
+		a.credentialRotatedAt = time.Time{}
 	}
 	if a.config.EnrollmentToken == "" {
 		return errors.New("agent needs JOBDOCK_ENROLLMENT_TOKEN for first enrollment")
@@ -178,6 +214,9 @@ func (a *Agent) authenticate(ctx context.Context) error {
 }
 
 func (a *Agent) inventory(ctx context.Context) (domain.Node, error) {
+	if a.inventoryOverride != nil {
+		return a.inventoryOverride(ctx)
+	}
 	info, err := a.docker.Info(ctx)
 	if err != nil {
 		return domain.Node{}, err
@@ -1032,7 +1071,22 @@ func writeReadOnlyFile(path string, data []byte) error {
 }
 func readAPIError(response *http.Response) error {
 	data, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
-	return fmt.Errorf("JobDock API %s: %s", response.Status, strings.TrimSpace(string(data)))
+	detail := strings.TrimSpace(string(data))
+	var problem struct {
+		Code   string `json:"code"`
+		Detail string `json:"detail"`
+	}
+	if json.Unmarshal(data, &problem) == nil {
+		if problem.Detail != "" {
+			detail = problem.Detail
+		}
+	}
+	return &apiError{StatusCode: response.StatusCode, Code: problem.Code, Detail: detail}
+}
+
+func isAPIErrorCode(err error, status int, code string) bool {
+	var apiErr *apiError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == status && apiErr.Code == code
 }
 func safeFilename(value string) string {
 	value = filepath.Base(value)
