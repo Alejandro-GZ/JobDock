@@ -7,7 +7,6 @@ on:
 permissions:
   contents: read
   packages: write
-  id-token: write
 
 concurrency:
   group: release-images-${{ github.ref }}
@@ -21,11 +20,12 @@ jobs:
       version: ${{ steps.release.outputs.version }}
       stable: ${{ steps.release.outputs.stable }}
     steps:
+      - uses: actions/checkout@v4
       - id: release
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
             echo "Release tag must be a SemVer tag such as v0.1.0 or v0.2.0-rc.1" >&2
             exit 1
           fi
@@ -33,13 +33,26 @@ jobs:
           stable=true
           if [[ "$version" == *-* ]]; then
             stable=false
+            prerelease="${version#*-}"
+            IFS='.' read -ra identifiers <<< "$prerelease"
+            for identifier in "${identifiers[@]}"; do
+              if [[ "$identifier" =~ ^[0-9]+$ && "$identifier" != "0" && "$identifier" == 0* ]]; then
+                echo "Numeric prerelease identifiers must not contain leading zeroes" >&2
+                exit 1
+              fi
+            done
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "stable=$stable" >> "$GITHUB_OUTPUT"
 
+  quality:
+    name: Required CI
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+
   publish:
     name: Publish ${{ matrix.image }}
-    needs: validate
+    needs: [validate, quality]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -83,22 +96,113 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
       - name: Record immutable digest
-        run: echo '${{ matrix.image }}=${{ steps.build.outputs.digest }}' >> "$GITHUB_STEP_SUMMARY"
+        env:
+          IMAGE: ghcr.io/alejandro-gz/${{ matrix.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release-digest
+          jq -n \
+            --arg image "$IMAGE" \
+            --arg digest "$DIGEST" \
+            --arg reference "${IMAGE}@${DIGEST}" \
+            '{image: $image, digest: $digest, reference: $reference}' \
+            > "release-digest/${{ matrix.image }}.json"
+          echo "${IMAGE}@${DIGEST}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve immutable digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-digest-${{ matrix.image }}
+          path: release-digest/${{ matrix.image }}.json
+          if-no-files-found: error
+          retention-days: 30
 
   verify:
     name: Verify published release set
     needs: [validate, publish]
     runs-on: ubuntu-latest
+    outputs:
+      manifest: ${{ steps.manifest.outputs.manifest }}
+      server_digest: ${{ steps.manifest.outputs.server_digest }}
+      agent_digest: ${{ steps.manifest.outputs.agent_digest }}
+      builder_digest: ${{ steps.manifest.outputs.builder_digest }}
     steps:
-      - name: Pull exact versions anonymously and verify OCI labels
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-digest-*
+          path: release-digests
+          merge-multiple: true
+      - id: manifest
+        name: Assemble release digest manifest
         env:
           VERSION: ${{ needs.validate.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          for component in server agent builder; do
-            image="ghcr.io/alejandro-gz/jobdock-${component}:${VERSION}"
-            docker pull "$image"
-            actual="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$image")"
-            test "$actual" = "$VERSION"
+          test "$(find release-digests -maxdepth 1 -name 'jobdock-*.json' | wc -l)" -eq 3
+          jq -s --arg version "$VERSION" \
+            '{version: $version, images: (sort_by(.image))}' \
+            release-digests/jobdock-*.json > release-manifest.json
+          echo "manifest=$(jq -c . release-manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "server_digest=$(jq -r 'select(.image | endswith("/jobdock-server")) | .digest' release-digests/jobdock-server.json)" >> "$GITHUB_OUTPUT"
+          echo "agent_digest=$(jq -r 'select(.image | endswith("/jobdock-agent")) | .digest' release-digests/jobdock-agent.json)" >> "$GITHUB_OUTPUT"
+          echo "builder_digest=$(jq -r 'select(.image | endswith("/jobdock-builder")) | .digest' release-digests/jobdock-builder.json)" >> "$GITHUB_OUTPUT"
+      - name: Pull published digests and verify exact-version tags
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in release-digests/jobdock-*.json; do
+            image="$(jq -r .image "$file")"
+            digest="$(jq -r .digest "$file")"
+            reference="$(jq -r .reference "$file")"
+            docker pull "$reference"
+            actual_version="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$reference")"
+            test "$actual_version" = "$VERSION"
+            tag_digest="$(docker buildx imagetools inspect "${image}:${VERSION}" --format '{{json .Manifest}}' | jq -r .digest)"
+            test "$tag_digest" = "$digest"
           done
+      - name: Preserve release manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest-${{ needs.validate.outputs.version }}
+          path: release-manifest.json
+          if-no-files-found: error
+          retention-days: 90
+
+  release:
+    name: Create GitHub Release
+    needs: [validate, verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-manifest-${{ needs.validate.outputs.version }}
+      - name: Create release from the verified package set
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          STABLE: ${{ needs.validate.outputs.stable }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          prerelease=()
+          if [[ "$STABLE" != "true" ]]; then
+            prerelease=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "JobDock ${VERSION}" \
+            --generate-notes \
+            "${prerelease[@]}" \
+            release-manifest.json

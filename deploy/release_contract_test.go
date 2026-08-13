@@ -20,10 +20,29 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 		"build-args: VERSION=${{ needs.validate.outputs.version }}",
 		"provenance: mode=max",
 		"sbom: true",
+		"quality:",
+		"uses: ./.github/workflows/ci.yml",
+		"needs: [validate, quality]",
+		"steps.build.outputs.digest",
+		"actions/upload-artifact@v4",
+		"release-manifest.json",
+		"server_digest:",
+		"agent_digest:",
+		"builder_digest:",
+		"release:",
+		"needs: [validate, verify]",
+		"gh release create",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("release workflow is missing %q", required)
 		}
+	}
+	if count := strings.Count(workflow, "uses: docker/build-push-action@v6"); count != 1 {
+		t.Fatalf("release workflow declares %d image build steps, want one matrix build step", count)
+	}
+	ci := readReleaseFile(t, ".github", "workflows", "ci.yml")
+	if !strings.Contains(ci, "workflow_call:") || !strings.Contains(ci, "branches: ['**']") {
+		t.Fatal("required CI must be reusable by releases and must not run as an independent tag workflow")
 	}
 	if _, err := os.Stat(filepath.Join("..", ".github", "workflows", "release-agent.yml")); !os.IsNotExist(err) {
 		t.Fatal("legacy agent-only release workflow must not coexist with the release set")
