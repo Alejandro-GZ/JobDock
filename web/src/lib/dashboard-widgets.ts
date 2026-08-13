@@ -29,6 +29,22 @@ export const widgetCatalog: ReadonlyArray<{ type: DashboardWidgetType; label: st
   { type: "progress", label: "Progress", description: "Global progress, current stage and upcoming milestones." },
 ];
 
+export const dashboardSchemaVersion=1;
+
+export function restoreDashboardWidgets(value:unknown):DashboardWidget[]|null{
+  if(!Array.isArray(value)||value.length>64)return null;
+  const types=new Set(widgetCatalog.map(item=>item.type)),kinds=new Set<DashboardSourceKind>(["metric","resource","matrix","progress"]);
+  const widgets:DashboardWidget[]=[];
+  for(const candidate of value){
+    if(!candidate||typeof candidate!=="object")return null;const item=candidate as Partial<DashboardWidget>;
+    if(typeof item.id!=="string"||!item.id||!types.has(item.type as DashboardWidgetType)||!item.size||!item.position||!Array.isArray(item.sources))return null;
+    if(item.sources.some(source=>!source||!kinds.has(source.kind)||typeof source.name!=="string"||!source.name))return null;
+    widgets.push({id:item.id,type:item.type as DashboardWidgetType,size:{columns:item.size.columns>=2?2:1,rows:item.size.rows>=2?2:1},position:{x:Math.max(0,Math.min(1,item.position.x||0)),y:Math.max(0,item.position.y||0)},sources:item.sources.map(source=>({...source})),x_axis:item.x_axis==="step"?"step":"time"});
+  }
+  if(new Set(widgets.map(widget=>widget.id)).size!==widgets.length)return null;
+  return layoutDashboardWidgets(widgets);
+}
+
 export function defaultDashboardWidgets(sources: DashboardSources): DashboardWidget[] {
   const definitions: Array<{ type: DashboardWidgetType; source: DashboardWidgetSource }> = [];
   if (sources.progress) definitions.push({ type: "progress", source: { kind: "progress", name: "progress" } });

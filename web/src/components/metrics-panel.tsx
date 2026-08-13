@@ -1,16 +1,26 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Radio, TriangleAlert, WifiOff } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@/api";
 import { ObservabilityDashboard, type NumericWidgetSource } from "@/components/observability-dashboard";
 import { appendMetricUpdate, appendResourceUpdate, metricPoints, resourcePoints, seriesQuery } from "@/lib/series";
 import type { Job, MetricSeriesResponse, ResourceSeriesResponse, SeriesUpdate } from "@/types";
+import type { DashboardWidget } from "@/lib/dashboard-widgets";
 
 export function MetricsPanel({ job }: { job: Job }) {
   const queryClient = useQueryClient();
+  const saveTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
+  const pendingSave=useRef<{jobID:string;widgets:DashboardWidget[]}|undefined>(undefined);
+  const [dashboardWidgets,setDashboardWidgets]=useState<DashboardWidget[]|null|undefined>(undefined);
   const [live, setLive] = useState<"connecting" | "connected" | "reconnecting">("connecting");
-  const query = useMemo(() => seriesQuery(job, "all", "auto", Date.now()), [job.id, job.attempt_id, job.started_at, job.finished_at]);
-  const metrics = useQuery({ queryKey: ["job-metrics", job.id, query], queryFn: () => api.metrics(job.id, query), staleTime: 30_000 });
+  const dashboard=useQuery({queryKey:["job-dashboard",job.id],queryFn:()=>api.dashboard(job.id)});
+  const catalog=useQuery({queryKey:["job-metric-catalog",job.id,job.attempt_id],queryFn:()=>api.metricCatalog(job.id,job.attempt_id),enabled:dashboard.isSuccess});
+  useEffect(()=>{if(dashboard.data)setDashboardWidgets(dashboard.data.widgets)},[dashboard.data]);
+  const effectiveWidgets=dashboardWidgets===undefined?dashboard.data?.widgets:dashboardWidgets;
+  const configuredNames=useMemo(()=>effectiveWidgets==null?null:[...new Set(effectiveWidgets.flatMap(widget=>widget.sources.filter(source=>source.kind==="metric").map(source=>source.name)))],[effectiveWidgets]);
+  const query = useMemo(() => {const params=new URLSearchParams(seriesQuery(job,"all","auto",Date.now()));const names=configuredNames??catalog.data?.map(item=>item.name);if(names)for(const name of names.length?names:["__jobdock_no_metric__"])params.append("name",name);return params.toString()}, [job.id, job.attempt_id, job.started_at, job.finished_at, configuredNames, catalog.data]);
+  const metrics = useQuery({ queryKey: ["job-metrics", job.id, query], queryFn: () => api.metrics(job.id, query), staleTime: 30_000,enabled:dashboard.isSuccess&&catalog.isSuccess });
   const resources = useQuery({ queryKey: ["job-resources", job.id, query], queryFn: () => api.resources(job.id, query), staleTime: 30_000 });
   const checkpoints=useQuery({queryKey:["job-checkpoints",job.id,job.attempt_id],queryFn:()=>api.checkpoints(job.id,job.attempt_id!),enabled:!!job.attempt_id});
   const progress=useQuery({queryKey:["job-progress",job.id,job.attempt_id],queryFn:()=>api.progress(job.id,job.attempt_id!),enabled:!!job.attempt_id});
@@ -38,14 +48,16 @@ export function MetricsPanel({ job }: { job: Job }) {
     { kind:"resource",name:"gpu-memory",title: "GPU memory",unit:"GiB", points: resourcePoints(resources.data.points, point => point.gpu_memory_bytes, 1073741824), format: gib, color: "#ef4444" },
   ] : [];
   const resourceSeries=allResourceSeries.filter(item => item.points.length > 0);
-  const metricSeries:NumericWidgetSource[]=(metrics.data?.series??[]).map(series=>({kind:"metric",name:series.name,title:series.name,unit:series.unit||"unitless",points:metricPoints(series.points),summary:{last:series.last,min:series.min,max:series.max}}));
-  const dashboardReady=metrics.isSuccess&&resources.isSuccess&&(!job.attempt_id||(checkpoints.isSuccess&&progress.isSuccess&&matrices.isSuccess));
+  const metricSeries:NumericWidgetSource[]=(catalog.data??[]).map(descriptor=>{const series=metrics.data?.series.find(item=>item.name===descriptor.name);return{kind:"metric",name:descriptor.name,title:descriptor.name,unit:series?.unit||descriptor.unit||"unitless",points:series?metricPoints(series.points):[],summary:series?{last:series.last,min:series.min,max:series.max}:undefined}});
+  const dashboardReady=dashboard.isSuccess&&catalog.isSuccess&&metrics.isSuccess&&resources.isSuccess&&(!job.attempt_id||(checkpoints.isSuccess&&progress.isSuccess&&matrices.isSuccess));
+  const saveDashboard=useCallback((widgets:DashboardWidget[])=>{setDashboardWidgets(widgets);if(saveTimer.current)clearTimeout(saveTimer.current);const pending={jobID:job.id,widgets};pendingSave.current=pending;saveTimer.current=setTimeout(()=>{api.saveDashboard(pending.jobID,pending.widgets).catch((error:Error)=>toast.error("Dashboard could not be saved",{description:error.message}));if(pendingSave.current===pending)pendingSave.current=undefined},400)},[job.id]);
+  useEffect(()=>()=>{if(saveTimer.current)clearTimeout(saveTimer.current);const pending=pendingSave.current;if(pending){pendingSave.current=undefined;void api.saveDashboard(pending.jobID,pending.widgets).catch(()=>undefined)}},[job.id]);
   const liveStatus=!job.finished_at?(live === "connected" ? <span className="ml-1 flex items-center gap-1 text-[10px] text-emerald-600"><Radio className="size-3 animate-pulse"/>Live</span> : <span className="ml-1 flex items-center gap-1 text-[10px] text-amber-600"><WifiOff className="size-3"/>{live === "connecting" ? "Connecting" : "Reconnecting"}</span>):undefined;
   return <div className="space-y-4">
     {(metrics.data?.truncated || resources.data?.truncated) && <p className="flex shrink-0 items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-amber-700 dark:text-amber-300"><TriangleAlert className="size-4"/>The selected range exceeded the point limit. Choose a shorter range.</p>}
-    {(metrics.isError||resources.isError||progress.isError||matrices.isError||checkpoints.isError)
+    {(dashboard.isError||catalog.isError||metrics.isError||resources.isError||progress.isError||matrices.isError||checkpoints.isError)
       ? <div role="alert" className="grid min-h-[320px] place-items-center rounded-md border border-destructive/30 text-sm text-destructive">The observability dashboard could not be loaded.</div>
-      : <ObservabilityDashboard attemptID={job.attempt_id??"unassigned"} ready={dashboardReady} numericSources={[...metricSeries,...resourceSeries]} progress={progress.data} matrices={matrices.data??[]} markers={markers} metricsDownloadURL={api.metricsCSV(job.id,query)} resourcesDownloadURL={api.resourcesCSV(job.id,query)} live={liveStatus}/>
+      : <ObservabilityDashboard attemptID={job.attempt_id??"unassigned"} ready={dashboardReady} numericSources={[...metricSeries,...resourceSeries]} progress={progress.data} matrices={matrices.data??[]} markers={markers} metricsDownloadURL={api.metricsCSV(job.id,query)} resourcesDownloadURL={api.resourcesCSV(job.id,query)} initialWidgets={dashboard.data?.widgets} onWidgetsChange={saveDashboard} live={liveStatus}/>
     }
   </div>;
 }

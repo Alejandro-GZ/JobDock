@@ -342,6 +342,32 @@ paths:
         '200': {description: Metric series or CSV export, content: {application/json: {schema: {$ref: '#/components/schemas/MetricSeriesResponse'}}, text/csv: {schema: {type: string}}}}
         '404': {$ref: '#/components/responses/Problem'}
         '422': {$ref: '#/components/responses/Problem'}
+  /jobs/{jobId}/metrics/catalog:
+    get:
+      operationId: getJobMetricCatalog
+      description: List bounded metric descriptors for configuring a dashboard without downloading sample history.
+      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDQuery'}]
+      responses:
+        '200': {description: Attempt metric descriptors, content: {application/json: {schema: {$ref: '#/components/schemas/MetricDescriptorList'}}}}
+        '404': {$ref: '#/components/responses/Problem'}
+  /jobs/{jobId}/dashboard:
+    get:
+      operationId: getJobDashboard
+      description: Return the current user's versioned dashboard configuration for this job. Unsupported saved schemas safely return a default fallback.
+      parameters: [{$ref: '#/components/parameters/JobID'}]
+      responses:
+        '200': {description: Saved dashboard or an explicit fallback, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardPreference'}}}}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+    put:
+      operationId: putJobDashboard
+      description: Atomically persist layout, widget types and source configuration for the current user and job.
+      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/CSRFToken'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardPreferenceWrite'}}}}
+      responses:
+        '200': {description: Persisted dashboard, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardPreference'}}}}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
   /jobs/{jobId}/checkpoints:
     get:
       operationId: listJobCheckpoints
@@ -1115,6 +1141,62 @@ components:
         resolution_seconds: {type: integer, minimum: 0}
         truncated: {type: boolean}
         series: {type: array, items: {$ref: '#/components/schemas/MetricSeries'}}
+    MetricDescriptor:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        unit: {type: string, maxLength: 64}
+        metadata: {$ref: '#/components/schemas/ObservationMetadata'}
+    MetricDescriptorList:
+      type: object
+      required: [attempt_id, items]
+      properties:
+        attempt_id: {type: string}
+        items: {type: array, maxItems: 256, items: {$ref: '#/components/schemas/MetricDescriptor'}}
+    DashboardWidgetSource:
+      type: object
+      additionalProperties: false
+      required: [kind, name]
+      properties:
+        kind: {type: string, enum: [metric, resource, matrix, progress]}
+        name: {type: string, minLength: 1, maxLength: 128}
+        role: {type: string, enum: [x, y]}
+    DashboardWidget:
+      type: object
+      additionalProperties: false
+      required: [id, type, size, position, sources]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 128}
+        type: {type: string, enum: [lineplot, barplot, scatterplot, confusion_matrix, progress]}
+        size:
+          type: object
+          additionalProperties: false
+          required: [columns, rows]
+          properties: {columns: {type: integer, minimum: 1, maximum: 2}, rows: {type: integer, minimum: 1, maximum: 2}}
+        position:
+          type: object
+          additionalProperties: false
+          required: [x, y]
+          properties: {x: {type: integer, minimum: 0, maximum: 1}, y: {type: integer, minimum: 0, maximum: 1024}}
+        sources: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/DashboardWidgetSource'}}
+        x_axis: {type: string, enum: [time, step]}
+    DashboardPreferenceWrite:
+      type: object
+      additionalProperties: false
+      required: [schema_version, widgets]
+      properties:
+        schema_version: {type: integer, const: 1}
+        widgets: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/DashboardWidget'}}
+    DashboardPreference:
+      type: object
+      required: [schema_version, widgets]
+      properties:
+        schema_version: {type: integer, const: 1}
+        widgets: {oneOf: [{type: array, maxItems: 64, items: {$ref: '#/components/schemas/DashboardWidget'}}, {type: 'null'}]}
+        updated_at: {type: string, format: date-time}
+        fallback_reason: {type: string, enum: [unsupported_schema_version, invalid_saved_configuration]}
     ResourceSeriesResponse:
       type: object
       required: [attempt_id, cursor, from, to, resolution_seconds, truncated, points]

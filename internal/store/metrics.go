@@ -12,6 +12,33 @@ import (
 	"github.com/jobdock/jobdock/internal/domain"
 )
 
+type MetricDescriptor struct {
+	Name     string         `json:"name"`
+	Unit     string         `json:"unit,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+func (s *Store) MetricDescriptors(ctx context.Context, jobID, attemptID string) ([]MetricDescriptor, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name,COALESCE(unit,''),COALESCE(metadata_json,'') FROM job_metric_descriptors WHERE job_id=? AND attempt_id=? ORDER BY name LIMIT 256`, jobID, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]MetricDescriptor, 0)
+	for rows.Next() {
+		var item MetricDescriptor
+		var metadata string
+		if err = rows.Scan(&item.Name, &item.Unit, &metadata); err != nil {
+			return nil, err
+		}
+		if metadata != "" {
+			_ = json.Unmarshal([]byte(metadata), &item.Metadata)
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
 func (s *Store) AppendMetricSamples(ctx context.Context, samples []domain.MetricSample) error {
 	if len(samples) == 0 {
 		return nil

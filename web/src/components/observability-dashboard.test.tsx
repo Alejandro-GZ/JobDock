@@ -64,4 +64,12 @@ describe("ObservabilityDashboard",()=>{
     await user.click(screen.getByRole("button",{name:"Restore default layout"}));
     expect(document.querySelector<HTMLElement>("[data-widget-id]")?.dataset.size).toBe("1x1");
   });
+
+  it("degrades a missing saved source and keeps the widget reconfigurable",async()=>{
+    const user=userEvent.setup(),saved=[{id:"missing",type:"lineplot" as const,size:{columns:1 as const,rows:1 as const},position:{x:0,y:0},sources:[{kind:"metric" as const,name:"removed"}],x_axis:"time" as const}];
+    render(<TooltipProvider><ObservabilityDashboard attemptID="attempt-saved" ready initialWidgets={saved} numericSources={[{kind:"metric",name:"loss",title:"loss",unit:"ratio",points:[]}]} matrices={[]} markers={[]} metricsDownloadURL="/metrics.csv" resourcesDownloadURL="/resources.csv"/></TooltipProvider>);
+    expect(await screen.findByText("The selected source is no longer available for this attempt.")).toBeTruthy();
+    await user.click(screen.getByRole("button",{name:"Configure widget"}));
+    expect(screen.getByRole("checkbox",{name:"loss (ratio)"})).toBeTruthy();
+  });
 });

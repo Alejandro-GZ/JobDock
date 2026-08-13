@@ -10,16 +10,17 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { createDashboardWidget, defaultDashboardWidgets, layoutDashboardWidgets, moveDashboardWidget, removeDashboardWidget, resizeDashboardWidget, widgetCatalog, type DashboardSourceKind, type DashboardSources, type DashboardWidget, type DashboardWidgetSize, type DashboardWidgetType } from "@/lib/dashboard-widgets";
+import { createDashboardWidget, defaultDashboardWidgets, layoutDashboardWidgets, moveDashboardWidget, removeDashboardWidget, resizeDashboardWidget, restoreDashboardWidgets, widgetCatalog, type DashboardSourceKind, type DashboardSources, type DashboardWidget, type DashboardWidgetSize, type DashboardWidgetType } from "@/lib/dashboard-widgets";
 import type { SeriesPoint } from "@/lib/series";
 import type { MatrixObservation, ProgressState } from "@/types";
 
 export type NumericWidgetSource = { kind: "metric" | "resource"; name: string; title: string; unit: string; points: SeriesPoint[]; color?: string; format?: (value:number)=>string; summary?: {last:number;min:number;max:number} };
 
-export function ObservabilityDashboard({ attemptID, ready, numericSources, progress, matrices, markers, metricsDownloadURL, resourcesDownloadURL, live }: { attemptID: string; ready: boolean; numericSources: NumericWidgetSource[]; progress?: ProgressState; matrices: MatrixObservation[]; markers: ChartMarker[]; metricsDownloadURL: string; resourcesDownloadURL: string; live?: ReactNode }) {
-  const [widgets,setWidgets]=useState<DashboardWidget[]>([]),[dragging,setDragging]=useState(""),initializedAttempt=useRef("");
+export function ObservabilityDashboard({ attemptID, ready, numericSources, progress, matrices, markers, metricsDownloadURL, resourcesDownloadURL, initialWidgets=null, onWidgetsChange, live }: { attemptID: string; ready: boolean; numericSources: NumericWidgetSource[]; progress?: ProgressState; matrices: MatrixObservation[]; markers: ChartMarker[]; metricsDownloadURL: string; resourcesDownloadURL: string; initialWidgets?:DashboardWidget[]|null;onWidgetsChange?:(widgets:DashboardWidget[])=>void;live?: ReactNode }) {
+  const [widgets,setWidgets]=useState<DashboardWidget[]>([]),[dragging,setDragging]=useState(""),initializedAttempt=useRef(""),hydrating=useRef(false);
   const sources=useMemo<DashboardSources>(()=>({metrics:numericSources.filter(item=>item.kind==="metric").map(item=>item.name),resources:numericSources.filter(item=>item.kind==="resource").map(item=>item.name),matrices:matrices.map(item=>item.name),progress:hasProgress(progress)}),[numericSources,matrices,progress]);
-  useEffect(()=>{if(!ready||initializedAttempt.current===attemptID)return;initializedAttempt.current=attemptID;setWidgets(defaultDashboardWidgets(sources))},[attemptID,ready,sources]);
+  useEffect(()=>{if(!ready||initializedAttempt.current===attemptID)return;initializedAttempt.current=attemptID;hydrating.current=true;setWidgets(restoreDashboardWidgets(initialWidgets)??defaultDashboardWidgets(sources))},[attemptID,ready,sources,initialWidgets]);
+  useEffect(()=>{if(hydrating.current){hydrating.current=false;return}if(initializedAttempt.current===attemptID&&ready)onWidgetsChange?.(widgets)},[widgets,attemptID,ready,onWidgetsChange]);
   const add=(type:DashboardWidgetType)=>setWidgets(current=>layoutDashboardWidgets([...current,createDashboardWidget(type,sources)]));
   const remove=(id:string)=>setWidgets(current=>removeDashboardWidget(current,id));
   const update=(next:DashboardWidget)=>setWidgets(current=>current.map(widget=>widget.id===next.id?next:widget));

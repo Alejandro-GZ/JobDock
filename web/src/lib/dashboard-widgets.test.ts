@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compatibleSourceKinds, createDashboardWidget, defaultDashboardWidgets, layoutDashboardWidgets, moveDashboardWidget, removeDashboardWidget, resizeDashboardWidget, widgetCatalog } from "./dashboard-widgets";
+import { compatibleSourceKinds, createDashboardWidget, defaultDashboardWidgets, layoutDashboardWidgets, moveDashboardWidget, removeDashboardWidget, resizeDashboardWidget, restoreDashboardWidgets, widgetCatalog } from "./dashboard-widgets";
 
 const sources={metrics:["loss","accuracy"],resources:["cpu"],matrices:["validation"],progress:true};
 
@@ -36,5 +36,11 @@ describe("dashboard widget model",()=>{
     expect(moved.map(item=>item.id)).toEqual(["one","three","two"]);
     const resized=resizeDashboardWidget(moved,"two",{columns:2,rows:2});
     expect(resized.find(item=>item.id==="two")?.size).toEqual({columns:2,rows:2});
+  });
+
+  it("restores versioned widget data and safely rejects invalid saved layouts",()=>{
+    const restored=restoreDashboardWidgets([{id:"saved",type:"lineplot",size:{columns:2,rows:1},position:{x:1,y:9},sources:[{kind:"metric",name:"missing"}],x_axis:"step"}]);
+    expect(restored?.[0]).toMatchObject({id:"saved",position:{x:0,y:0},sources:[{kind:"metric",name:"missing"}],x_axis:"step"});
+    expect(restoreDashboardWidgets([{id:"bad",type:"future-widget",size:{columns:1,rows:1},position:{x:0,y:0},sources:[]}])).toBeNull();
   });
 });

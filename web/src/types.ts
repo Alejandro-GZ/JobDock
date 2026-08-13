@@ -23,6 +23,7 @@ export type MetricPoint={cursor?:number;captured_at:string;step?:number;value:nu
 export type ObservationMetadata=Record<string,unknown>;
 export type MetricSeries={name:string;unit?:string;metadata?:ObservationMetadata;points:MetricPoint[];last:number;min:number;max:number;sample_count:number};
 export type MetricSeriesResponse={attempt_id:string;cursor:number;from:string;to:string;resolution_seconds:number;truncated:boolean;series:MetricSeries[]};
+export type MetricDescriptor={name:string;unit?:string;metadata?:ObservationMetadata};
 export type ResourcePoint={cursor?:number;attempt_id:string;captured_at:string;resolution_seconds:number;sample_count:number;cpu_millis:number;memory_bytes:number;gpu_utilization_basis_points?:number;gpu_memory_bytes?:number};
 export type ResourceSeriesResponse={attempt_id:string;cursor:number;from:string;to:string;resolution_seconds:number;truncated:boolean;points:ResourcePoint[]};
 export type LiveMetricSample={cursor:number;attempt_id:string;name:string;step?:number;value:number;captured_at:string;unit?:string;metadata?:ObservationMetadata};
