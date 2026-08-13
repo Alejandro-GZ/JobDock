@@ -66,6 +66,19 @@ The SDK exports presentation-independent `CheckpointObservation`, `ProgressObser
 
 Outside JobDock, `current_job()` returns a no-op object. Use `current_job(required=True)` when missing execution context should be an error.
 
+## Versioning
+
+`jobdock-sdk` uses the JobDock product release tag as its only release-version
+source. A tag such as `v0.3.0` builds Python package version `0.3.0`; SemVer
+prereleases are converted deterministically to PEP 440, for example
+`v0.3.0-rc.1` becomes `0.3.0rc1`. The installed version is available as
+`jobdock.__version__` and is also used in the SDK HTTP user agent.
+
+An untagged source build has an explicit `0.0.0.dev0+g<commit>` version and is
+never indistinguishable from a release. Release automation supplies
+`JOBDOCK_RELEASE_TAG` and `JOBDOCK_PRODUCT_VERSION`; inconsistent values fail the
+package build instead of publishing mismatched artifacts.
+
 Checkpoint uploads are chunked, acknowledged, and resumed from the server's
 durable offset after a network or agent restart. A partially uploaded generation
 never replaces the last confirmed checkpoint. The latest confirmed generation

@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
 from .observability import CheckpointObservation, JSONValue, MatrixObservation, Metric, Milestone, ProgressObservation
+from . import __version__
 
 logger = logging.getLogger("jobdock")
 
@@ -241,7 +242,7 @@ class Job:
             f"{self.api_url}/api/v1/job-context/{endpoint}",
             data=body,
             method=method,
-            headers={"Authorization": f"Bearer {self._token}", "Content-Type": "application/json", "User-Agent": "jobdock-sdk/0.1.0"},
+            headers={"Authorization": f"Bearer {self._token}", "Content-Type": "application/json", "User-Agent": f"jobdock-sdk/{__version__}"},
         )
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:

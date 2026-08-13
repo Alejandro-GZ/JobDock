@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.release.outputs.version }}
+      sdk_version: ${{ steps.sdk.outputs.version }}
       stable: ${{ steps.release.outputs.stable }}
     steps:
       - uses: actions/checkout@v4
@@ -44,6 +45,18 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "stable=$stable" >> "$GITHUB_OUTPUT"
+      - id: sdk
+        name: Derive Python SDK version
+        env:
+          JOBDOCK_RELEASE_TAG: ${{ github.ref_name }}
+          JOBDOCK_PRODUCT_VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_version="$(python3 sdk/python/versioning.py)"
+          test -n "$sdk_version"
+          echo "version=$sdk_version" >> "$GITHUB_OUTPUT"
+          echo "Python SDK version: ${sdk_version}" >> "$GITHUB_STEP_SUMMARY"
 
   quality:
     name: Required CI
