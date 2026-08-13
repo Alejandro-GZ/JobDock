@@ -22,29 +22,20 @@ sync with the Go router is in [`docs/api.md`](docs/api.md).
 Real-Docker release verification is described in
 [`docs/testing.md`](docs/testing.md).
 
-## Quick start
+## Install a stable release
 
-1. Copy `.env.example` to `.env` and replace every development credential.
-2. Start the control plane with `docker compose --env-file .env -f deploy/docker-compose.yml up --build`.
-3. Sign in at `http://localhost:8080`.
-4. Create a one-time enrollment token in **Nodes**.
-5. On each additional Docker host, run the versioned CPU installer with the one-time token:
+A published release requires only Linux amd64, Docker Engine with the Compose
+plugin, `curl`, and `sha256sum`. Download its four assets, verify
+`SHA256SUMS`, start the supplied `docker-compose.yml`, and enroll hosts with the
+supplied `install-agent.sh`. The Compose file and installer are pinned to the
+verified image digests from that release; no repository clone, Go, Node.js, or
+local image build is involved.
 
-```sh
-curl -fsSL https://dock.example.com/install-agent.sh | sudo sh -s -- --server https://dock.example.com --token YOUR_ONE_TIME_TOKEN --name cpu-01
-```
+See [Install a published release](docs/installing-release.md) for the complete
+server, builder, CPU-agent, and NVIDIA-agent procedure.
 
-For an NVIDIA host, use the same command with `--gpu`:
-
-```sh
-curl -fsSL https://dock.example.com/install-agent.sh | sudo sh -s -- --server https://dock.example.com --token YOUR_ONE_TIME_TOKEN --name gpu-01 --gpu
-```
-
-The installer pulls the latest `ghcr.io/alejandro-gz/jobdock-agent:latest` image, creates persistent agent state, and starts the constrained agent container. It does not clone this repository, invoke a compiler, or edit Compose. The GPU mode requests NVIDIA devices and requires NVML discovery; a discovery failure marks the node `DEGRADED` and prevents assignments.
-
-For an intentionally insecure local server, append `--allow-insecure-http`. The installer otherwise requires HTTPS.
-
-The quick start permits plain HTTP for local evaluation. Production deployments must terminate TLS and set `JOBDOCK_ALLOW_INSECURE_HTTP=false`.
+Production deployments must terminate TLS and set
+`JOBDOCK_ALLOW_INSECURE_HTTP=false`.
 
 See [Architecture](docs/architecture.md), [Security](SECURITY.md), and [Operations](docs/operations.md) before deploying JobDock.
 
@@ -52,7 +43,13 @@ See [Architecture](docs/architecture.md), [Security](SECURITY.md), and [Operatio
 
 Requirements: Go 1.26+, Node.js 24+, Python 3.10+, and Docker Engine 29+.
 
+The development Compose file is intentionally different from the downloadable
+release Compose file: it uses repository Dockerfiles and `--build` so local
+source changes are included.
+
 ```text
+cp .env.example .env
+docker compose --env-file .env -f deploy/docker-compose.yml up --build
 go test ./...
 go run ./cmd/jobdock-server
 cd web && npm install && npm run dev

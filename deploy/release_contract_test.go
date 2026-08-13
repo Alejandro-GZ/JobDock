@@ -80,6 +80,25 @@ func TestReleaseDockerfilesEmbedVersionAndOCILabels(t *testing.T) {
 	}
 }
 
+func TestReleaseInstallationIsDocumentedSeparatelyFromDevelopment(t *testing.T) {
+	readme := readReleaseFile(t, "README.md")
+	if !strings.Contains(readme, "Install a stable release") || !strings.Contains(readme, "docs/installing-release.md") {
+		t.Fatal("README must direct administrators to the published-release installation flow")
+	}
+	guide := readReleaseFile(t, "docs", "installing-release.md")
+	for _, required := range []string{
+		"Go, Node.js, Python, Git, and the JobDock repository are not required",
+		"sha256sum --check SHA256SUMS",
+		"docker compose --env-file .env -f docker-compose.yml up -d",
+		"It does not use `latest`",
+		"Development is a separate flow",
+	} {
+		if !strings.Contains(guide, required) {
+			t.Fatalf("release installation guide is missing %q", required)
+		}
+	}
+}
+
 func readReleaseFile(t *testing.T, path ...string) string {
 	t.Helper()
 	contents, err := os.ReadFile(filepath.Join(append([]string{".."}, path...)...))

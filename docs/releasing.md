@@ -17,4 +17,6 @@ release set in GitHub Container Registry:
 8. On the first release, set all three package visibilities to public in the repository package settings.
 9. Run the downloaded server/builder Compose file and CPU/NVIDIA agent installer on disposable hosts. Confirm component versions and agent enrollment before announcing the release.
 
+The administrator-facing procedure is documented in [Install a published release](installing-release.md). Keep it independent from the repository development flow.
+
 Never replace an existing immutable patch or prerelease tag. If its contents are wrong, publish a new version.

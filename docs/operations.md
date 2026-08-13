@@ -76,21 +76,21 @@ Back up the server, upgrade the control plane, verify readiness, then upgrade ag
 
 ## Enrolling a Docker host
 
-Create a one-time enrollment token from **Nodes**, then run one installer command on a Linux amd64 host with Docker ready. Enrollment tokens expire after 15 minutes and cannot be reused.
+Create a one-time enrollment token from **Nodes**, then use the `install-agent.sh` attached to the same GitHub Release as the server on a Linux amd64 host with Docker ready. Enrollment tokens expire after 15 minutes and cannot be reused. The release installer defaults to the matching immutable agent digest, not `latest`.
 
 CPU host:
 
 ```sh
-curl -fsSL https://dock.example.com/install-agent.sh | sudo sh -s -- --server https://dock.example.com --token YOUR_ONE_TIME_TOKEN --name cpu-01 --labels zone=lab
+sudo ./install-agent.sh --server https://dock.example.com --token YOUR_ONE_TIME_TOKEN --name cpu-01 --labels zone=lab
 ```
 
 NVIDIA GPU host:
 
 ```sh
-curl -fsSL https://dock.example.com/install-agent.sh | sudo sh -s -- --server https://dock.example.com --token YOUR_ONE_TIME_TOKEN --name gpu-01 --labels zone=lab --gpu
+sudo ./install-agent.sh --server https://dock.example.com --token YOUR_ONE_TIME_TOKEN --name gpu-01 --labels zone=lab --gpu
 ```
 
-The host must have outbound access to the JobDock URL and GHCR. GPU hosts additionally require a working NVIDIA driver and NVIDIA Container Toolkit. A prepared host performs only an image pull, volume creation, and container start, so no repository checkout or local build is involved. Verify enrollment with `docker logs -f jobdock-agent` and confirm the heartbeat in **Nodes**.
+The host must have outbound access to the JobDock URL and GHCR. GPU hosts additionally require a working NVIDIA driver and NVIDIA Container Toolkit. A prepared host performs only an image pull, volume creation, and container start, so no repository checkout or local build is involved. See [Install a published release](installing-release.md) for download and checksum verification. Verify enrollment with `docker logs -f jobdock-agent` and confirm the heartbeat in **Nodes**.
 
 The installer rejects an existing `jobdock-agent` container instead of replacing it implicitly. Drain the node, remove the old container explicitly, and rerun the command with the desired `--version` during an upgrade. Persistent identity and reconciliation state remain in the `jobdock-agent-state` volume.
 

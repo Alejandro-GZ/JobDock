@@ -54,10 +54,14 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 	if strings.Contains(compose, "@@JOBDOCK_") || !strings.Contains(compose, images[0]["reference"]) || !strings.Contains(compose, images[2]["reference"]) {
 		t.Fatal("release Compose file is not pinned to the verified server and builder references")
 	}
+	if strings.Contains(compose, "build:") {
+		t.Fatal("release Compose file must not contain local image build instructions")
+	}
 	installer := readTestFile(t, filepath.Join(outputPath, "install-agent.sh"))
 	if !strings.Contains(installer, `DEFAULT_VERSION="1.2.3-rc.1"`) || !strings.Contains(installer, `DEFAULT_IMAGE_REFERENCE="`+images[1]["reference"]+`"`) {
 		t.Fatal("release agent installer is not pinned to the verified agent reference")
 	}
+	assertInstallerPullsDefaultReference(t, filepath.Join(outputPath, "install-agent.sh"), images[1]["reference"])
 	notes := readTestFile(t, filepath.Join(outputPath, "release-notes.md"))
 	if !strings.Contains(notes, "## Highlights") || !strings.Contains(notes, "## Changes") || !strings.Contains(notes, commit) {
 		t.Fatal("release notes do not contain highlights, changes, and source commit context")
@@ -67,6 +71,50 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 	if output, checkErr := check.CombinedOutput(); checkErr != nil {
 		t.Fatalf("verify release checksums: %v\n%s", checkErr, output)
 	}
+}
+
+func assertInstallerPullsDefaultReference(t *testing.T, installerPath, reference string) {
+	t.Helper()
+	binDir := t.TempDir()
+	callsPath := filepath.Join(binDir, "docker-calls")
+	dockerStub := `#!/bin/sh
+if [ "${1:-}" = "container" ] && [ "${2:-}" = "inspect" ]; then exit 1; fi
+printf '%s\n' "$*" >>"$DOCKER_CALLS"
+`
+	unameStub := `#!/bin/sh
+if [ "${1:-}" = "-m" ]; then printf 'x86_64\n'; else printf 'Linux\n'; fi
+`
+	for name, contents := range map[string]string{"docker": dockerStub, "uname": unameStub} {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(contents), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	command := exec.Command("sh", installerPath, "--server", "https://dock.example.test", "--token", "one-use-token")
+	command.Env = append(withoutEnvironment(os.Environ(), "PATH", "DOCKER_CALLS"), "PATH="+binDir+":"+os.Getenv("PATH"), "DOCKER_CALLS="+callsPath)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("run generated installer: %v\n%s", err, output)
+	}
+	calls := readTestFile(t, callsPath)
+	if !strings.Contains(calls, "pull "+reference) || strings.Contains(calls, "jobdock-agent:latest") {
+		t.Fatalf("generated installer did not pull its release agent by default:\n%s", calls)
+	}
+}
+
+func withoutEnvironment(environment []string, names ...string) []string {
+	filtered := make([]string, 0, len(environment))
+	for _, entry := range environment {
+		keep := true
+		for _, name := range names {
+			if strings.HasPrefix(entry, name+"=") {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
 }
 
 func readTestFile(t *testing.T, path string) string {
