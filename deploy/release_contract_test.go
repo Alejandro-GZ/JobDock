@@ -32,7 +32,7 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 		"agent_digest:",
 		"builder_digest:",
 		"release:",
-		"needs: [validate, verify]",
+		"needs: [validate, verify, release-e2e]",
 		"gh release create",
 		"deploy/prepare-release-assets.sh",
 		"release-assets/docker-compose.yml",
@@ -40,6 +40,12 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 		"release-assets/SHA256SUMS",
 		"--generate-notes",
 		"--latest=false",
+		"release-e2e:",
+		"Validate published release end to end",
+		"JOBDOCK_RELEASE_SERVER_IMAGE: ghcr.io/alejandro-gz/jobdock-server@${{ needs.verify.outputs.server_digest }}",
+		"JOBDOCK_RELEASE_AGENT_IMAGE: ghcr.io/alejandro-gz/jobdock-agent@${{ needs.verify.outputs.agent_digest }}",
+		"JOBDOCK_RELEASE_BUILDER_IMAGE: ghcr.io/alejandro-gz/jobdock-builder@${{ needs.verify.outputs.builder_digest }}",
+		"python3 tests/release_e2e.py",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("release workflow is missing %q", required)
@@ -65,6 +71,17 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 	for _, required := range []string{"release-manifest.json", "docker-compose.yml", "install-agent.sh", "SHA256SUMS", "## Highlights", "## Changes", "sha256sum"} {
 		if !strings.Contains(assets, required) {
 			t.Fatalf("release asset packager is missing %q", required)
+		}
+	}
+	releaseE2E := readReleaseFile(t, "tests", "release_e2e.py")
+	for _, required := range []string{"/api/v1/nodes/enrollment-tokens", `"mode": "RAILPACK"`, "/confirm", "artifact_reference", "alpine:3.20", `"SUCCEEDED"`} {
+		if !strings.Contains(releaseE2E, required) {
+			t.Fatalf("published release E2E is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"go build", "docker build", "npm run build"} {
+		if strings.Contains(releaseE2E, forbidden) {
+			t.Fatalf("published release E2E must not compile JobDock locally: found %q", forbidden)
 		}
 	}
 }

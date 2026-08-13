@@ -184,7 +184,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [validate, verify]
+    needs: [validate, verify, release-e2e]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -225,3 +225,25 @@ jobs:
             release-assets/docker-compose.yml \
             release-assets/install-agent.sh \
             release-assets/SHA256SUMS
+
+  release-e2e:
+    name: Validate published release end to end
+    needs: [validate, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Exercise published server, builder, and agent
+        env:
+          JOBDOCK_RELEASE_SERVER_IMAGE: ghcr.io/alejandro-gz/jobdock-server@${{ needs.verify.outputs.server_digest }}
+          JOBDOCK_RELEASE_AGENT_IMAGE: ghcr.io/alejandro-gz/jobdock-agent@${{ needs.verify.outputs.agent_digest }}
+          JOBDOCK_RELEASE_BUILDER_IMAGE: ghcr.io/alejandro-gz/jobdock-builder@${{ needs.verify.outputs.builder_digest }}
+        run: python3 tests/release_e2e.py
