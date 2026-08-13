@@ -41,7 +41,13 @@ def test_non_tag_build_has_explicit_development_version(tmp_path: Path) -> None:
 
 def test_built_wheel_metadata_and_public_version_match_release_tag(tmp_path: Path) -> None:
     wheel_dir = tmp_path / "wheel"
-    env = {**os.environ, "JOBDOCK_RELEASE_TAG": "v0.3.0-rc.1", "JOBDOCK_PRODUCT_VERSION": "0.3.0-rc.1"}
+    env = {
+        **os.environ,
+        "GITHUB_REF_TYPE": "tag",
+        "GITHUB_REF_NAME": "v0.3.0-rc.1",
+        "JOBDOCK_RELEASE_TAG": "v0.3.0-rc.1",
+        "JOBDOCK_PRODUCT_VERSION": "0.3.0-rc.1",
+    }
     subprocess.run(
         [sys.executable, "-m", "pip", "wheel", ".", "--no-deps", "--wheel-dir", str(wheel_dir)],
         cwd=SDK_ROOT,
