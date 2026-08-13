@@ -92,9 +92,45 @@ def test_explicit_checkpoint_sync_waits_for_confirmation(tmp_path: Path, monkeyp
     monkeypatch.setattr(job, "_request", request)
     monkeypatch.setattr("jobdock.client.time.sleep", lambda _: None)
     assert job.sync(timeout=1.0) is True
-    assert calls == [
-        ("POST", "checkpoints", {}),
-        ("GET", "checkpoints/sync-1", None),
-        ("GET", "checkpoints/sync-1", None),
-    ]
+    assert calls[0][0:2] == ("POST", "checkpoints")
+    assert calls[0][2]["timestamp"].endswith("Z")
+    assert calls[1:] == [("GET", "checkpoints/sync-1", None), ("GET", "checkpoints/sync-1", None)]
+    job.close()
+
+
+def test_progress_milestones_matrices_and_checkpoint_context(tmp_path: Path, monkeypatch):
+    job = Job("id", "http://jobdock.test", "token", tmp_path)
+    queued = []
+    monkeypatch.setattr(job, "_enqueue", lambda endpoint, payload: queued.append((endpoint, payload)))
+    observed = datetime(2026, 8, 13, 9, 15, tzinfo=timezone.utc)
+    job.define_milestones([Milestone("prepare", .2), Milestone("train", .8, {"owner": "ml"})])
+    job.milestone("prepare", step=1, timestamp=observed)
+    job.progress(.5, milestone="train", step=5, timestamp=observed, metadata={"epoch": 1})
+    job.confusion_matrix("validation", [[8, 2], [1, 9]], ["cat", "dog"], step=5, timestamp=observed)
+    assert queued[0] == ("milestones", {"items": [{"name": "prepare", "weight": .2}, {"name": "train", "weight": .8, "metadata": {"owner": "ml"}}]})
+    assert queued[1][0] == "milestones/reached" and queued[1][1]["milestone"] == "prepare"
+    assert queued[2][0] == "progress" and queued[2][1]["value"] == .5 and queued[2][1]["milestone"] == "train"
+    assert queued[3][0] == "matrices" and queued[3][1]["values"] == [[8.0, 2.0], [1.0, 9.0]]
+
+    responses = iter([{"id": "sync-rich"}, {"status": "CONFIRMED"}])
+    calls = []
+    def request(method, endpoint, payload, *, timeout):
+        calls.append((method, endpoint, payload))
+        return next(responses)
+    monkeypatch.setattr(job, "_request", request)
+    assert job.sync(label="best", step=5, timestamp=observed, metadata={"score": .9})
+    assert calls[0][2] == {"label": "best", "step": 5, "timestamp": "2026-08-13T09:15:00Z", "metadata": {"score": .9}}
+    job.close()
+
+
+def test_rich_observation_validation_is_bounded(tmp_path: Path):
+    job = Job("id", "http://jobdock.test", "token", tmp_path)
+    with pytest.raises(ValueError, match="positive finite"):
+        job.define_milestones([Milestone("train", 0)])
+    with pytest.raises(ValueError, match="NxN"):
+        job.confusion_matrix("broken", [[1, 2]], ["cat"])
+    with pytest.raises(ValueError, match="finite"):
+        job.confusion_matrix("broken", [[float("inf")]], ["cat"])
+    with pytest.raises(ValueError, match="timezone-aware"):
+        job.progress(.5, timestamp=datetime(2026, 1, 1))
     job.close()

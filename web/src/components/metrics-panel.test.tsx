@@ -13,7 +13,7 @@ class FakeEventSource {
   static instance: FakeEventSource;
   onopen: (()=>void)|null=null;onerror: (()=>void)|null=null;
   listener?: (event: MessageEvent)=>void;
-  constructor(public url:string){FakeEventSource.instance=this}
+  constructor(public url:string){if(url.includes("/series/stream"))FakeEventSource.instance=this}
   addEventListener(type:string,listener:EventListener){if(type==="series")this.listener=listener as (event:MessageEvent)=>void}
   close=vi.fn();
   emit(update:SeriesUpdate){this.listener?.(new MessageEvent("series",{data:JSON.stringify(update)}))}
@@ -24,7 +24,7 @@ const job:Job={id:"job",owner_id:"owner",attempt_id:"attempt",status:"RUNNING",d
 describe("MetricsPanel live updates",()=>{
   afterEach(()=>vi.unstubAllGlobals());
   it("merges an SSE delta without requesting history again",async()=>{
-    const fetchMock=vi.fn((input:string|URL|Request)=>{const path=String(input),body=path.includes("/metrics?")?{attempt_id:"attempt",cursor:4,from:"2026-08-12T10:00:00Z",to:"2026-08-12T10:01:00Z",resolution_seconds:0,truncated:false,series:[{name:"loss",points:[{cursor:4,captured_at:"2026-08-12T10:01:00Z",value:2,sample_count:1}],last:2,min:2,max:2,sample_count:1},{name:"throughput",points:[{cursor:4,captured_at:"2026-08-12T10:01:00Z",value:80,sample_count:1}],last:80,min:80,max:80,sample_count:1}]}:{attempt_id:"attempt",cursor:4,from:"2026-08-12T10:00:00Z",to:"2026-08-12T10:01:00Z",resolution_seconds:5,truncated:false,points:[]};return Promise.resolve(new Response(JSON.stringify(body),{status:200,headers:{"Content-Type":"application/json"}}))});
+    const fetchMock=vi.fn((input:string|URL|Request)=>{const path=String(input);let body:unknown;if(path.includes("/metrics?"))body={attempt_id:"attempt",cursor:4,from:"2026-08-12T10:00:00Z",to:"2026-08-12T10:01:00Z",resolution_seconds:0,truncated:false,series:[{name:"loss",points:[{cursor:4,captured_at:"2026-08-12T10:01:00Z",value:2,sample_count:1}],last:2,min:2,max:2,sample_count:1},{name:"throughput",points:[{cursor:4,captured_at:"2026-08-12T10:01:00Z",value:80,sample_count:1}],last:80,min:80,max:80,sample_count:1}]};else if(path.includes("/resources?"))body={attempt_id:"attempt",cursor:4,from:"2026-08-12T10:00:00Z",to:"2026-08-12T10:01:00Z",resolution_seconds:5,truncated:false,points:[]};else if(path.includes("/progress?"))body={attempt_id:"attempt",milestones:[],reached:[]};else if(path.includes("/checkpoints?")||path.includes("/matrices?"))body={attempt_id:"attempt",items:[]};else body={};return Promise.resolve(new Response(JSON.stringify(body),{status:200,headers:{"Content-Type":"application/json"}}))});
     vi.stubGlobal("fetch",fetchMock);vi.stubGlobal("EventSource",FakeEventSource);
     const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
     render(<QueryClientProvider client={client}><TooltipProvider><MetricsPanel job={job}/></TooltipProvider></QueryClientProvider>);

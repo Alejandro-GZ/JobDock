@@ -15,7 +15,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
-from .observability import JSONValue, Metric
+from .observability import CheckpointObservation, JSONValue, MatrixObservation, Metric, Milestone, ProgressObservation
 
 logger = logging.getLogger("jobdock")
 
@@ -32,13 +32,17 @@ class NoopJob:
     id: str | None = None
     output_dir: Path = Path.cwd()
 
-    def progress(self, value: float) -> None: pass
+    def progress(self, value: float, *, milestone: str | None = None, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None: pass
+    def define_milestones(self, items: Iterable[Milestone]) -> None: pass
+    def milestone(self, name: str, *, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None: pass
+    def matrix(self, observation: MatrixObservation) -> None: pass
+    def confusion_matrix(self, name: str, values: Iterable[Iterable[float]], labels: Iterable[str], *, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None: pass
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None: pass
     def metrics(self, items: Iterable[Metric]) -> None: pass
     def param(self, name: str, value: str | int | float | bool) -> None: pass
     def event(self, event_type: str, payload: dict[str, Any] | None = None) -> None: pass
     def artifact(self, relative_path: str | os.PathLike[str]) -> Path: return Path(relative_path)
-    def sync(self, timeout: float = 30.0) -> bool: return False
+    def sync(self, timeout: float = 30.0, *, label: str | None = None, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> bool: return False
     def should_stop(self) -> bool: return False
     def close(self, timeout: float = 0.0) -> None: pass
 
@@ -58,10 +62,49 @@ class Job:
         self._worker.start()
         atexit.register(self.close)
 
-    def progress(self, value: float) -> None:
+    def progress(self, value: float, *, milestone: str | None = None, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None:
         if not 0.0 <= value <= 1.0:
             raise ValueError("progress must be between 0.0 and 1.0")
-        self._enqueue("progress", {"value": float(value)})
+        if milestone is not None and (not milestone.strip() or len(milestone.strip()) > 128):
+            raise ValueError("milestone name must contain 1-128 characters")
+        milestone = milestone.strip() if milestone is not None else None
+        observation = ProgressObservation(float(value), milestone, step, timestamp, metadata)
+        self._enqueue("progress", _observation_payload(observation, value=float(value), milestone=milestone))
+
+    def define_milestones(self, items: Iterable[Milestone]) -> None:
+        payload = []
+        seen: set[str] = set()
+        for item in items:
+            name = item.name.strip()
+            if not name or len(name) > 128 or name in seen or item.weight is not None and (item.weight <= 0 or not math.isfinite(item.weight)):
+                raise ValueError("milestone requires a name and an optional positive finite weight")
+            seen.add(name)
+            entry: dict[str, Any] = {"name": name}
+            if item.weight is not None: entry["weight"] = item.weight
+            metadata = _validated_metadata(item.metadata)
+            if metadata is not None: entry["metadata"] = metadata
+            payload.append(entry)
+        if not payload or len(payload) > 128: raise ValueError("milestones must contain 1-128 unique items")
+        self._enqueue("milestones", {"items": payload})
+
+    def milestone(self, name: str, *, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None:
+        if not name.strip() or len(name.strip()) > 128: raise ValueError("milestone name must contain 1-128 characters")
+        observation = ProgressObservation(0, name.strip(), step, timestamp, metadata)
+        self._enqueue("milestones/reached", _observation_payload(observation, milestone=name.strip()))
+
+    def matrix(self, observation: MatrixObservation) -> None:
+        values = [[float(value) for value in row] for row in observation.values]
+        labels = list(observation.labels)
+        size = len(values)
+        if not observation.name.strip() or len(observation.name.strip()) > 128 or size == 0 or size > 128 or len(labels) != size or any(len(row) != size for row in values) or any(not label or len(label) > 128 for label in labels):
+            raise ValueError("matrix requires a name, NxN values, and one label per dimension")
+        if any(not math.isfinite(value) for row in values for value in row): raise ValueError("matrix values must be finite")
+        payload = _observation_payload(observation, name=observation.name.strip(), values=values, labels=labels)
+        if len(json.dumps(payload, separators=(",", ":")).encode()) > 1 << 20: raise ValueError("matrix payload must not exceed 1 MiB")
+        self._enqueue("matrices", payload)
+
+    def confusion_matrix(self, name: str, values: Iterable[Iterable[float]], labels: Iterable[str], *, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None:
+        self.matrix(MatrixObservation(name, [list(row) for row in values], list(labels), step, timestamp, metadata))
 
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None:
         """Report one scalar metric while preserving the original call shape."""
@@ -109,7 +152,7 @@ class Job:
             logger.debug("Unable to query cooperative cancellation", exc_info=True)
         return cached
 
-    def sync(self, timeout: float = 30.0) -> bool:
+    def sync(self, timeout: float = 30.0, *, label: str | None = None, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> bool:
         """Durably synchronize the current output directory as a checkpoint.
 
         Files should be written with an atomic rename before calling this method.
@@ -118,9 +161,13 @@ class Job:
         """
         if timeout <= 0:
             raise ValueError("checkpoint sync timeout must be positive")
+        if label is not None and len(label.strip()) > 128:
+            raise ValueError("checkpoint label must contain at most 128 characters")
+        label = label.strip() if label is not None else None
         deadline = time.monotonic() + timeout
         try:
-            created = self._request("POST", "checkpoints", {}, timeout=min(5.0, timeout))
+            observation = CheckpointObservation(label, step, timestamp, metadata)
+            created = self._request("POST", "checkpoints", _observation_payload(observation, label=label), timeout=min(5.0, timeout))
             sync_id = str(created["id"])
             while time.monotonic() < deadline:
                 remaining = deadline - time.monotonic()
@@ -286,3 +333,14 @@ def _validate_json_value(value: JSONValue, depth: int, keys: list[int]) -> None:
             raise ValueError("metric metadata numbers must be finite")
     else:
         raise ValueError("metric metadata contains an unsupported JSON value")
+
+
+def _observation_payload(observation: Any, **fields: Any) -> dict[str, Any]:
+    payload = {key: value for key, value in fields.items() if value is not None}
+    if observation.step is not None: payload["step"] = observation.step
+    timestamp = observation.timestamp or datetime.now(timezone.utc)
+    if timestamp.tzinfo is None or timestamp.utcoffset() is None: raise ValueError("observation timestamp must be timezone-aware")
+    payload["timestamp"] = timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    metadata = _validated_metadata(observation.metadata)
+    if metadata is not None: payload["metadata"] = metadata
+    return payload

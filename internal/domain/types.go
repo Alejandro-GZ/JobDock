@@ -276,14 +276,19 @@ type Assignment struct {
 }
 
 type CheckpointSync struct {
-	ID          string     `json:"id"`
-	JobID       string     `json:"job_id"`
-	AttemptID   string     `json:"attempt_id"`
-	Status      string     `json:"status"`
-	FileCount   int        `json:"file_count"`
-	ByteCount   int64      `json:"byte_count"`
-	RequestedAt time.Time  `json:"requested_at"`
-	ConfirmedAt *time.Time `json:"confirmed_at,omitempty"`
+	Cursor      int64          `json:"cursor,omitempty"`
+	ID          string         `json:"id"`
+	JobID       string         `json:"job_id"`
+	AttemptID   string         `json:"attempt_id"`
+	Status      string         `json:"status"`
+	FileCount   int            `json:"file_count"`
+	ByteCount   int64          `json:"byte_count"`
+	RequestedAt time.Time      `json:"requested_at"`
+	ConfirmedAt *time.Time     `json:"confirmed_at,omitempty"`
+	Label       string         `json:"label,omitempty"`
+	Step        *int64         `json:"step,omitempty"`
+	ObservedAt  *time.Time     `json:"timestamp,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
 type CheckpointFile struct {
@@ -375,10 +380,23 @@ type ProgressObservation struct {
 }
 
 type MatrixObservation struct {
-	Name   string      `json:"name"`
-	Values [][]float64 `json:"values"`
-	Labels []string    `json:"labels,omitempty"`
+	ID        int64       `json:"id,omitempty"`
+	JobID     string      `json:"-"`
+	AttemptID string      `json:"attempt_id,omitempty"`
+	Name      string      `json:"name"`
+	Values    [][]float64 `json:"values"`
+	Labels    []string    `json:"labels,omitempty"`
 	ObservationContext
+}
+
+type ProgressState struct {
+	AttemptID      string               `json:"attempt_id"`
+	Simple         *ProgressObservation `json:"simple,omitempty"`
+	Current        *ProgressObservation `json:"current,omitempty"`
+	Milestones     []Milestone          `json:"milestones"`
+	Reached        []string             `json:"reached"`
+	GlobalProgress *float64             `json:"global_progress,omitempty"`
+	UpdatedAt      *time.Time           `json:"updated_at,omitempty"`
 }
 
 func IsActive(status JobStatus) bool {

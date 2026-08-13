@@ -16,7 +16,7 @@ job.metric("throughput", 128.4, step=10, unit="samples/s", metadata={"split": "t
 # durable, resumable synchronization. The result is True only after the server
 # confirms the complete immutable generation.
 save_checkpoint(job.output_dir / "epoch-10.pt")
-checkpoint_confirmed = job.sync(timeout=60)
+checkpoint_confirmed = job.sync(label="epoch 10", step=10, metadata={"score": 0.91}, timeout=60)
 
 if job.should_stop():
     save_checkpoint()
@@ -37,7 +37,32 @@ job.metrics([
 
 `unit` and `metadata` are series descriptors for one metric name and attempt. Omitted descriptor fields inherit the existing values; conflicting values are rejected as a whole batch. Use distinct names such as `train/loss` and `validation/loss` for semantically different series.
 
-The SDK also exports presentation-independent `CheckpointObservation`, `ProgressObservation`, `Milestone`, and `MatrixObservation` contracts. Their specialized reporting and query behavior is introduced by the corresponding observability features; these types contain no chart or React concepts.
+Milestones can describe weighted stages. JobDock calculates global progress while retaining the current segment and upcoming stages independently for each attempt:
+
+```python
+from jobdock import Milestone
+
+job.define_milestones([
+    Milestone("prepare", weight=0.1),
+    Milestone("train", weight=0.8),
+    Milestone("evaluate", weight=0.1),
+])
+job.milestone("prepare")
+job.progress(0.5, milestone="train", step=10)
+```
+
+Confusion matrices remain structured data rather than rendered images. They support an explicit step and timestamp and are bounded to 128 classes and a 1 MiB encoded payload:
+
+```python
+job.confusion_matrix(
+    "validation",
+    [[48, 2], [3, 47]],
+    ["negative", "positive"],
+    step=10,
+)
+```
+
+The SDK exports presentation-independent `CheckpointObservation`, `ProgressObservation`, `Milestone`, and `MatrixObservation` contracts. These types contain no chart or React concepts.
 
 Outside JobDock, `current_job()` returns a no-op object. Use `current_job(required=True)` when missing execution context should be an error.
 

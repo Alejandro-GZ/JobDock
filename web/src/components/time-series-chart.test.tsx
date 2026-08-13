@@ -18,4 +18,13 @@ describe("TimeSeriesChart", () => {
     await user.click(screen.getByRole("button", {name:"Zoom out loss"}));
     await user.click(screen.getByRole("button", {name:"Reset zoom loss"}));
   });
+
+  it("renders checkpoint markers as accessible artifact links", async () => {
+    const user = userEvent.setup();
+    render(<TooltipProvider><TimeSeriesChart title="loss" points={[{timestamp:1_000,value:4},{timestamp:2_000,value:2}]} markers={[{id:"checkpoint-1",timestamp:1_500,label:"best model",step:7,href:"/checkpoint.zip"}]}/></TooltipProvider>);
+    const marker = screen.getByRole("button", {name:"Checkpoint best model"});
+    await user.hover(marker);
+    expect(screen.getByText("Checkpoint · best model")).toBeTruthy();
+    expect(screen.getByText(/step 7/)).toBeTruthy();
+  });
 });

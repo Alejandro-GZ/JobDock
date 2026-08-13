@@ -342,6 +342,31 @@ paths:
         '200': {description: Metric series or CSV export, content: {application/json: {schema: {$ref: '#/components/schemas/MetricSeriesResponse'}}, text/csv: {schema: {type: string}}}}
         '404': {$ref: '#/components/responses/Problem'}
         '422': {$ref: '#/components/responses/Problem'}
+  /jobs/{jobId}/checkpoints:
+    get:
+      operationId: listJobCheckpoints
+      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDQuery'}, {name: after, in: query, schema: {type: integer, format: int64, minimum: 0}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500}}]
+      responses: {'200': {description: Bounded confirmed checkpoints for one attempt, content: {application/json: {schema: {$ref: '#/components/schemas/CheckpointList'}}}}}
+  /jobs/{jobId}/progress:
+    get:
+      operationId: getJobProgress
+      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDQuery'}]
+      responses: {'200': {description: Attempt-scoped simple, segment, milestone and computed global progress, content: {application/json: {schema: {$ref: '#/components/schemas/ProgressState'}}}}}
+  /jobs/{jobId}/matrices:
+    get:
+      operationId: listJobMatrices
+      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDQuery'}, {name: name, in: query, schema: {type: string}}, {name: step, in: query, schema: {type: integer, format: int64}}]
+      responses: {'200': {description: Latest matrices by name or matrices selected by step, content: {application/json: {schema: {$ref: '#/components/schemas/MatrixList'}}}}}
+  /jobs/{jobId}/observations/stream:
+    get:
+      operationId: streamJobObservations
+      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDQuery'}, {name: after, in: query, description: Resume cursor or latest to receive only new observations, schema: {oneOf: [{type: integer, format: int64, minimum: 0}, {type: string, enum: [latest]}]}}, {name: Last-Event-ID, in: header, schema: {type: integer, format: int64, minimum: 0}}]
+      responses: {'200': {description: Resumable checkpoint, progress and matrix update stream}}
+  /jobs/{jobId}/attempts/{attemptId}/checkpoints/{syncId}/archive.zip:
+    get:
+      operationId: downloadCheckpointArchive
+      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDPath'}, {name: syncId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses: {'200': {description: Files from one confirmed checkpoint, content: {application/zip: {schema: {type: string, format: binary}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /jobs/{jobId}/resources:
     get:
       operationId: getJobResources
@@ -661,8 +686,31 @@ paths:
             schema:
               type: object
               required: [value]
-              properties: {value: {type: number, format: double, minimum: 0, maximum: 1}}
+              properties:
+                value: {type: number, format: double, minimum: 0, maximum: 1}
+                milestone: {type: string}
+                step: {type: integer, format: int64}
+                timestamp: {type: string, format: date-time}
+                metadata: {$ref: '#/components/schemas/ObservationMetadata'}
       responses: {'202': {description: Progress accepted}}
+  /job-context/milestones:
+    post:
+      security: [{bearerToken: []}]
+      operationId: defineMilestones
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [items], properties: {items: {type: array, minItems: 1, maxItems: 128, items: {$ref: '#/components/schemas/Milestone'}}}}}}}
+      responses: {'202': {description: Ordered milestones accepted}}
+  /job-context/milestones/reached:
+    post:
+      security: [{bearerToken: []}]
+      operationId: reachMilestone
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ProgressObservation'}}}}
+      responses: {'202': {description: Reached milestone accepted}}
+  /job-context/matrices:
+    post:
+      security: [{bearerToken: []}]
+      operationId: reportMatrix
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/MatrixObservation'}}}}
+      responses: {'202': {description: Structured matrix accepted}, '413': {$ref: '#/components/responses/Problem'}, '422': {$ref: '#/components/responses/Problem'}}
   /job-context/metrics:
     post:
       security: [{bearerToken: []}]
@@ -704,6 +752,7 @@ paths:
     post:
       security: [{bearerToken: []}]
       operationId: requestCheckpointSync
+      requestBody: {content: {application/json: {schema: {$ref: '#/components/schemas/CheckpointObservation'}}}}
       responses: {'202': {description: Checkpoint synchronization requested, content: {application/json: {schema: {$ref: '#/components/schemas/CheckpointSync'}}}}}
   /job-context/checkpoints/{syncId}:
     get:
@@ -1214,6 +1263,18 @@ components:
         byte_count: {type: integer, format: int64, minimum: 0}
         requested_at: {type: string, format: date-time}
         confirmed_at: {type: string, format: date-time}
+        cursor: {type: integer, format: int64, minimum: 0}
+        label: {type: string}
+        step: {type: integer, format: int64}
+        timestamp: {type: string, format: date-time}
+        metadata: {$ref: '#/components/schemas/ObservationMetadata'}
+    CheckpointList:
+      type: object
+      required: [attempt_id, items, has_more]
+      properties:
+        attempt_id: {type: string, format: uuid}
+        items: {type: array, maxItems: 500, items: {$ref: '#/components/schemas/CheckpointSync'}}
+        has_more: {type: boolean}
     MetricBatch:
       type: object
       additionalProperties: false
@@ -1245,13 +1306,13 @@ components:
     CheckpointObservation:
       allOf:
         - {$ref: '#/components/schemas/ObservationContext'}
-        - {type: object, properties: {label: {type: string}}}
+        - {type: object, properties: {label: {type: string, maxLength: 128}}}
     Milestone:
       type: object
       required: [name]
       properties:
-        name: {type: string}
-        weight: {type: number, format: double, minimum: 0}
+        name: {type: string, minLength: 1, maxLength: 128}
+        weight: {type: number, format: double, exclusiveMinimum: 0}
         metadata: {$ref: '#/components/schemas/ObservationMetadata'}
     ProgressObservation:
       allOf:
@@ -1263,9 +1324,28 @@ components:
         - type: object
           required: [name, values]
           properties:
-            name: {type: string}
-            values: {type: array, items: {type: array, items: {type: number, format: double}}}
-            labels: {type: array, items: {type: string}}
+            id: {type: integer, format: int64}
+            attempt_id: {type: string, format: uuid}
+            name: {type: string, minLength: 1, maxLength: 128}
+            values: {type: array, minItems: 1, maxItems: 128, items: {type: array, minItems: 1, maxItems: 128, items: {type: number, format: double}}}
+            labels: {type: array, minItems: 1, maxItems: 128, items: {type: string, minLength: 1, maxLength: 128}}
+    MatrixList:
+      type: object
+      required: [attempt_id, items]
+      properties:
+        attempt_id: {type: string, format: uuid}
+        items: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/MatrixObservation'}}
+    ProgressState:
+      type: object
+      required: [attempt_id, milestones, reached]
+      properties:
+        attempt_id: {type: string, format: uuid}
+        simple: {$ref: '#/components/schemas/ProgressObservation'}
+        current: {$ref: '#/components/schemas/ProgressObservation'}
+        milestones: {type: array, items: {$ref: '#/components/schemas/Milestone'}}
+        reached: {type: array, items: {type: string}}
+        global_progress: {type: number, minimum: 0, maximum: 1}
+        updated_at: {type: string, format: date-time}
     ParameterBatch:
       type: object
       additionalProperties: false

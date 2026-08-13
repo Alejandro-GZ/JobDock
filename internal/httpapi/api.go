@@ -105,6 +105,11 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/jobs/{id}", a.withSession(false, true, a.deleteJob))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/events", a.withSession(false, false, a.jobEvents))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/metrics", a.withSession(false, false, a.jobMetrics))
+	mux.HandleFunc("GET /api/v1/jobs/{id}/checkpoints", a.withSession(false, false, a.jobCheckpoints))
+	mux.HandleFunc("GET /api/v1/jobs/{id}/progress", a.withSession(false, false, a.jobProgress))
+	mux.HandleFunc("GET /api/v1/jobs/{id}/matrices", a.withSession(false, false, a.jobMatrices))
+	mux.HandleFunc("GET /api/v1/jobs/{id}/observations/stream", a.withSession(false, false, a.jobObservationsStream))
+	mux.HandleFunc("GET /api/v1/jobs/{id}/attempts/{attempt}/checkpoints/{sync}/archive.zip", a.withSession(false, false, a.checkpointArchive))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/resources", a.withSession(false, false, a.jobResources))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/series/stream", a.withSession(false, false, a.jobSeriesStream))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/stream", a.withSession(false, false, a.jobStream))
@@ -135,6 +140,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/agent/checkpoint-syncs/{sync}/files/{path...}", a.withAgent(a.putCheckpoint))
 	mux.HandleFunc("POST /api/v1/agent/checkpoint-syncs/{sync}/complete", a.withAgent(a.completeCheckpoint))
 	mux.HandleFunc("POST /api/v1/job-context/progress", a.withJob(a.sdkProgress))
+	mux.HandleFunc("POST /api/v1/job-context/milestones", a.withJob(a.sdkMilestones))
+	mux.HandleFunc("POST /api/v1/job-context/milestones/reached", a.withJob(a.sdkMilestoneReached))
+	mux.HandleFunc("POST /api/v1/job-context/matrices", a.withJob(a.sdkMatrix))
 	mux.HandleFunc("POST /api/v1/job-context/metrics", a.withJob(a.sdkMetrics))
 	mux.HandleFunc("POST /api/v1/job-context/params", a.withJob(a.sdkParams))
 	mux.HandleFunc("POST /api/v1/job-context/events", a.withJob(a.sdkEvents))
@@ -1098,15 +1106,19 @@ func (a *API) completeCheckpoint(w http.ResponseWriter, r *http.Request) {
 			writeStoreError(w, err)
 			return
 		}
-		_ = a.store.AppendServerEvent(r.Context(), job.ID, "checkpoint_confirmed", map[string]any{"sync_id": item.ID, "file_count": len(body.Files)})
+		observedAt := item.RequestedAt
+		if item.ObservedAt != nil {
+			observedAt = *item.ObservedAt
+		}
+		_ = a.store.AppendObservationUpdate(r.Context(), job.ID, item.AttemptID, "checkpoint", observedAt)
+		_ = a.store.AppendServerEvent(r.Context(), job.ID, "checkpoint_confirmed", map[string]any{"sync_id": item.ID, "file_count": len(body.Files), "label": item.Label, "step": item.Step})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (a *API) sdkProgress(w http.ResponseWriter, r *http.Request) { a.sdkRecord(w, r, "progress") }
-func (a *API) sdkMetrics(w http.ResponseWriter, r *http.Request)  { a.sdkMetricSamples(w, r) }
-func (a *API) sdkParams(w http.ResponseWriter, r *http.Request)   { a.sdkRecord(w, r, "params") }
-func (a *API) sdkEvents(w http.ResponseWriter, r *http.Request)   { a.sdkRecord(w, r, "sdk_event") }
+func (a *API) sdkMetrics(w http.ResponseWriter, r *http.Request) { a.sdkMetricSamples(w, r) }
+func (a *API) sdkParams(w http.ResponseWriter, r *http.Request)  { a.sdkRecord(w, r, "params") }
+func (a *API) sdkEvents(w http.ResponseWriter, r *http.Request)  { a.sdkRecord(w, r, "sdk_event") }
 func (a *API) sdkRecord(w http.ResponseWriter, r *http.Request, eventType string) {
 	job := jobContext(r)
 	var payload map[string]any
@@ -1130,7 +1142,24 @@ func (a *API) sdkCheckpoint(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusConflict, "job_not_active", "Checkpoint sync requires an active job attempt")
 		return
 	}
-	item := domain.CheckpointSync{ID: ids.New(), JobID: job.ID, AttemptID: job.AttemptID, Status: "PENDING", RequestedAt: time.Now().UTC()}
+	var observation domain.CheckpointObservation
+	if !decodeJSON(w, r, &observation) {
+		return
+	}
+	observation.Label = strings.TrimSpace(observation.Label)
+	if len(observation.Label) > 128 || validateObservationMetadata(observation.Metadata) != nil {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_checkpoint_observation", "Checkpoint label or metadata is invalid")
+		return
+	}
+	observedAt := time.Now().UTC()
+	if observation.CapturedAt != nil {
+		observedAt = observation.CapturedAt.UTC()
+	}
+	if observedAt.After(time.Now().UTC().Add(5 * time.Minute)) {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_checkpoint_timestamp", "Checkpoint timestamps cannot be more than five minutes in the future")
+		return
+	}
+	item := domain.CheckpointSync{ID: ids.New(), JobID: job.ID, AttemptID: job.AttemptID, Status: "PENDING", RequestedAt: time.Now().UTC(), Label: observation.Label, Step: observation.Step, ObservedAt: &observedAt, Metadata: observation.Metadata}
 	if err := a.store.CreateCheckpointSync(r.Context(), item); err != nil {
 		writeStoreError(w, err)
 		return

@@ -1,4 +1,4 @@
-import type{AuditEvent,Build,BuildPlan,Job,JobAttempt,JobEvent,JobSpec,MetricSeriesResponse,Node,PersonalAccessToken,ResourceSeriesResponse,Secret,User}from "./types";
+import type{AuditEvent,Build,BuildPlan,Checkpoint,Job,JobAttempt,JobEvent,JobSpec,MatrixObservation,MetricSeriesResponse,Node,PersonalAccessToken,ProgressState,ResourceSeriesResponse,Secret,User}from "./types";
 import { jobFormData } from "@/lib/job-inputs";
 import { buildFormData,type BuildMode,type DockerfileConfig } from "@/lib/builds";
 let csrfToken="";
@@ -17,6 +17,10 @@ export const api={
   events:async(id:string,after=0,attemptId="")=>(await request<{items:JobEvent[]|null}>(`/jobs/${id}/events?after=${after}${attemptId?`&attempt_id=${encodeURIComponent(attemptId)}`:""}`)).items??[],
   metrics:(id:string,query:string)=>request<MetricSeriesResponse>(`/jobs/${id}/metrics?${query}`),
   resources:(id:string,query:string)=>request<ResourceSeriesResponse>(`/jobs/${id}/resources?${query}`),
+  checkpoints:async(id:string,attemptId:string)=>(await request<{items:Checkpoint[]}>(`/jobs/${id}/checkpoints?attempt_id=${encodeURIComponent(attemptId)}&limit=500`)).items,
+  progress:(id:string,attemptId:string)=>request<ProgressState>(`/jobs/${id}/progress?attempt_id=${encodeURIComponent(attemptId)}`),
+  matrices:async(id:string,attemptId:string)=>(await request<{items:MatrixObservation[]}>(`/jobs/${id}/matrices?attempt_id=${encodeURIComponent(attemptId)}`)).items,
+  openObservationStream:(id:string,attemptId:string)=>new EventSource(`/api/v1/jobs/${encodeURIComponent(id)}/observations/stream?attempt_id=${encodeURIComponent(attemptId)}&after=latest`),
   openSeriesStream:(id:string,attemptId:string,after:number)=>new EventSource(`/api/v1/jobs/${encodeURIComponent(id)}/series/stream?attempt_id=${encodeURIComponent(attemptId)}&after=${after}`),
   metricsCSV:(id:string,query:string)=>seriesCSV(id,"metrics",query),
   resourcesCSV:(id:string,query:string)=>seriesCSV(id,"resources",query),

@@ -661,29 +661,20 @@ func (s *Store) StopRequestsForNode(ctx context.Context, nodeID string) ([]strin
 }
 
 func (s *Store) CreateCheckpointSync(ctx context.Context, sync domain.CheckpointSync) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO checkpoint_syncs(id,job_id,attempt_id,requested_at) VALUES(?,?,?,?)`, sync.ID, sync.JobID, sync.AttemptID, formatTime(sync.RequestedAt))
+	metadata, _ := json.Marshal(sync.Metadata)
+	if len(sync.Metadata) == 0 {
+		metadata = nil
+	}
+	var observed any
+	if sync.ObservedAt != nil {
+		observed = sync.ObservedAt.UTC().UnixMilli()
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO checkpoint_syncs(id,job_id,attempt_id,requested_at,label,step,observed_at,metadata_json) VALUES(?,?,?,?,?,?,?,?)`, sync.ID, sync.JobID, sync.AttemptID, formatTime(sync.RequestedAt), nullableString(sync.Label), sync.Step, observed, metadata)
 	return mapConstraint(err)
 }
 
 func (s *Store) CheckpointSync(ctx context.Context, id string) (domain.CheckpointSync, error) {
-	var item domain.CheckpointSync
-	var requested string
-	var confirmed sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id,job_id,attempt_id,requested_at,confirmed_at,file_count,byte_count FROM checkpoint_syncs WHERE id=?`, id).Scan(&item.ID, &item.JobID, &item.AttemptID, &requested, &confirmed, &item.FileCount, &item.ByteCount)
-	if errors.Is(err, sql.ErrNoRows) {
-		return item, ErrNotFound
-	}
-	if err != nil {
-		return item, err
-	}
-	item.RequestedAt, _ = time.Parse(time.RFC3339Nano, requested)
-	item.Status = "PENDING"
-	if confirmed.Valid {
-		value, _ := time.Parse(time.RFC3339Nano, confirmed.String)
-		item.ConfirmedAt = &value
-		item.Status = "CONFIRMED"
-	}
-	return item, nil
+	return scanCheckpointObservation(s.db.QueryRowContext(ctx, `SELECT id,job_id,attempt_id,requested_at,confirmed_at,file_count,byte_count,label,step,observed_at,metadata_json FROM checkpoint_syncs WHERE id=?`, id))
 }
 
 func (s *Store) PendingCheckpointSyncsForNode(ctx context.Context, nodeID string) ([]domain.CheckpointSync, error) {
