@@ -18,6 +18,7 @@ describe("dashboard widget model",()=>{
     const original=defaultDashboardWidgets(sources),snapshot=structuredClone(original);
     const added=widgetCatalog.map((item,index)=>createDashboardWidget(item.type,sources,`new-${index}`));
     expect(added.map(widget=>widget.sources[0]?.kind)).toEqual(["metric","metric","metric","matrix","progress"]);
+    expect(added[2].sources.map(source=>source.role)).toEqual(["x","y"]);
     const removed=removeDashboardWidget(original,original[1].id);
     expect(original).toEqual(snapshot);
     expect(removed).toHaveLength(original.length-1);

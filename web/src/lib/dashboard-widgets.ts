@@ -1,6 +1,7 @@
 export type DashboardWidgetType = "lineplot" | "barplot" | "scatterplot" | "confusion_matrix" | "progress";
 export type DashboardSourceKind = "metric" | "resource" | "matrix" | "progress";
-export type DashboardWidgetSource = { kind: DashboardSourceKind; name: string };
+export type DashboardSourceRole = "x" | "y";
+export type DashboardWidgetSource = { kind: DashboardSourceKind; name: string; role?: DashboardSourceRole };
 export type DashboardWidgetSize = { columns: 1 | 2; rows: 1 | 2 };
 export type DashboardWidgetPosition = { x: number; y: number };
 
@@ -10,6 +11,7 @@ export type DashboardWidget = {
   size: DashboardWidgetSize;
   position: DashboardWidgetPosition;
   sources: DashboardWidgetSource[];
+  x_axis?: "time" | "step";
 };
 
 export type DashboardSources = {
@@ -39,17 +41,20 @@ export function defaultDashboardWidgets(sources: DashboardSources): DashboardWid
     size: { columns: definition.type === "progress" ? 2 : 1, rows: 1 },
     position: { x: 0, y: 0 },
     sources: [definition.source],
+    x_axis: "time",
   })) as DashboardWidget[]);
 }
 
 export function createDashboardWidget(type: DashboardWidgetType, sources: DashboardSources, id = newWidgetID()): DashboardWidget {
   const source = firstCompatibleSource(type, sources);
+  const numeric=[...sources.metrics.map(name=>({kind:"metric" as const,name})),...sources.resources.map(name=>({kind:"resource" as const,name}))];
   return {
     id,
     type,
     size: { columns: type === "progress" ? 2 : 1, rows: 1 },
     position: { x: 0, y: Number.MAX_SAFE_INTEGER },
-    sources: source ? [source] : [],
+    sources: type==="scatterplot"&&numeric.length?[{...numeric[0],role:"x"},{...(numeric[1]??numeric[0]),role:"y"}]:source ? [source] : [],
+    x_axis: "time",
   };
 }
 

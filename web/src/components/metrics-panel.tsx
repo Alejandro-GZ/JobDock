@@ -32,13 +32,13 @@ export function MetricsPanel({ job }: { job: Job }) {
   useEffect(()=>{if(!job.attempt_id||job.finished_at)return;const source=api.openObservationStream(job.id,job.attempt_id);source.addEventListener("observation",()=>{queryClient.invalidateQueries({queryKey:["job-checkpoints",job.id,job.attempt_id]});queryClient.invalidateQueries({queryKey:["job-progress",job.id,job.attempt_id]});queryClient.invalidateQueries({queryKey:["job-matrices",job.id,job.attempt_id]})});return()=>source.close()},[job.id,job.attempt_id,job.finished_at,queryClient]);
   const markers=(checkpoints.data??[]).flatMap(checkpoint=>checkpoint.timestamp?[{id:checkpoint.id,timestamp:Date.parse(checkpoint.timestamp),label:checkpoint.label||checkpoint.id.slice(0,8),step:checkpoint.step,href:`/api/v1/jobs/${job.id}/attempts/${checkpoint.attempt_id}/checkpoints/${checkpoint.id}/archive.zip`}]:[]);
   const allResourceSeries:NumericWidgetSource[] = resources.data ? [
-    { kind:"resource",name:"cpu",title: "CPU", points: resourcePoints(resources.data.points, point => point.cpu_millis, 1000), format: cores, color: "#3b82f6" },
-    { kind:"resource",name:"memory",title: "Memory", points: resourcePoints(resources.data.points, point => point.memory_bytes, 1073741824), format: gib, color: "#8b5cf6" },
-    { kind:"resource",name:"gpu-utilization",title: "GPU utilization", points: resourcePoints(resources.data.points, point => point.gpu_utilization_basis_points, 100), format: percent, color: "#f59e0b" },
-    { kind:"resource",name:"gpu-memory",title: "GPU memory", points: resourcePoints(resources.data.points, point => point.gpu_memory_bytes, 1073741824), format: gib, color: "#ef4444" },
+    { kind:"resource",name:"cpu",title: "CPU", unit:"cores",points: resourcePoints(resources.data.points, point => point.cpu_millis, 1000), format: cores, color: "#3b82f6" },
+    { kind:"resource",name:"memory",title: "Memory", unit:"GiB",points: resourcePoints(resources.data.points, point => point.memory_bytes, 1073741824), format: gib, color: "#8b5cf6" },
+    { kind:"resource",name:"gpu-utilization",title: "GPU utilization",unit:"%", points: resourcePoints(resources.data.points, point => point.gpu_utilization_basis_points, 100), format: percent, color: "#f59e0b" },
+    { kind:"resource",name:"gpu-memory",title: "GPU memory",unit:"GiB", points: resourcePoints(resources.data.points, point => point.gpu_memory_bytes, 1073741824), format: gib, color: "#ef4444" },
   ] : [];
   const resourceSeries=allResourceSeries.filter(item => item.points.length > 0);
-  const metricSeries:NumericWidgetSource[]=(metrics.data?.series??[]).map(series=>({kind:"metric",name:series.name,title:series.unit?`${series.name} · ${series.unit}`:series.name,points:metricPoints(series.points),summary:{last:series.last,min:series.min,max:series.max}}));
+  const metricSeries:NumericWidgetSource[]=(metrics.data?.series??[]).map(series=>({kind:"metric",name:series.name,title:series.name,unit:series.unit||"unitless",points:metricPoints(series.points),summary:{last:series.last,min:series.min,max:series.max}}));
   const dashboardReady=metrics.isSuccess&&resources.isSuccess&&(!job.attempt_id||(checkpoints.isSuccess&&progress.isSuccess&&matrices.isSuccess));
   const liveStatus=!job.finished_at?(live === "connected" ? <span className="ml-1 flex items-center gap-1 text-[10px] text-emerald-600"><Radio className="size-3 animate-pulse"/>Live</span> : <span className="ml-1 flex items-center gap-1 text-[10px] text-amber-600"><WifiOff className="size-3"/>{live === "connecting" ? "Connecting" : "Reconnecting"}</span>):undefined;
   return <div className="space-y-4">
