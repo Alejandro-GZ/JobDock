@@ -287,9 +287,12 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 		a.fail(record, "input_workspace_invalid", errors.New("input workspace escapes the configured job workspace"))
 		return
 	}
+	inputsCleaned := false
 	defer func() {
-		if err := removeMaterializedInputs(inputDir); err != nil {
-			a.log.Warn("input_cleanup_failed", "error", err, "job_id", record.JobID)
+		if !inputsCleaned {
+			if err := removeMaterializedInputs(inputDir); err != nil {
+				a.log.Warn("input_cleanup_failed", "error", err, "job_id", record.JobID)
+			}
 		}
 	}()
 	for _, dir := range []string{jobDir, logsDir, secretsDir} {
@@ -401,6 +404,15 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 		a.log.Warn("output_upload_incomplete", "error", outputErr, "job_id", record.JobID)
 		_ = a.sendEvent(record, "output_upload_warning", "", nil, outputErr.Error(), "", map[string]any{})
 	}
+	// A terminal event is the externally visible completion boundary. Remove the
+	// immutable materialization before publishing it so a completed attempt never
+	// leaves readable input data in the agent workspace, even if the agent exits
+	// immediately after acknowledging the event.
+	if err := removeMaterializedInputs(inputDir); err != nil {
+		a.fail(record, "input_cleanup_failed", err)
+		return
+	}
+	inputsCleaned = true
 	status := domain.JobSucceeded
 	eventType := "completed"
 	reason := ""

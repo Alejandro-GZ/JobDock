@@ -298,7 +298,7 @@ func (h *harness) submitWithInput(name, path string, content []byte, expectedSta
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	specPart, _ := writer.CreateFormField("spec")
-	spec := map[string]any{"name": name, "image": "alpine:3.20", "command": []string{"sh", "-c", `value=$(cat /jobdock/input/dataset/value.txt) || exit 2; [ "$value" = "immutable-input" ] || exit 3; if printf changed > /jobdock/input/dataset/value.txt 2>/dev/null; then exit 4; fi; printf %s "$value" > /jobdock/output/copied.txt`}, "resources": map[string]any{"cpu_millis": 100, "memory_bytes": 32 << 20, "gpu": map[string]any{"count": 0, "min_vram_bytes": 0}}}
+	spec := map[string]any{"name": name, "image": "alpine:3.20", "command": []string{"sh", "-c", `value=$(cat /jobdock/input/dataset/value.txt) || exit 2; [ "$value" = "seed" ] || exit 3; if printf changed > /jobdock/input/dataset/value.txt 2>/dev/null; then exit 4; fi; printf %s "$value" > /jobdock/output/copied.txt`}, "resources": map[string]any{"cpu_millis": 100, "memory_bytes": 32 << 20, "gpu": map[string]any{"count": 0, "min_vram_bytes": 0}}}
 	_ = json.NewEncoder(specPart).Encode(spec)
 	inputPart, _ := writer.CreateFormFile("input:"+path, filepath.Base(path))
 	_, _ = inputPart.Write(content)
@@ -418,8 +418,8 @@ func (h *harness) testHappyPath(t *testing.T) {
 }
 
 func (h *harness) testInputs(t *testing.T) {
-	created := h.submitWithInput("e2e-inputs", "dataset/value.txt", []byte("immutable-input"), http.StatusCreated)
-	if len(created.Spec.Inputs) != 1 || created.Spec.Inputs[0].Path != "dataset/value.txt" || created.Spec.Inputs[0].Size != int64(len("immutable-input")) || len(created.Spec.Inputs[0].SHA256) != 64 {
+	created := h.submitWithInput("e2e-inputs", "dataset/value.txt", []byte("seed"), http.StatusCreated)
+	if len(created.Spec.Inputs) != 1 || created.Spec.Inputs[0].Path != "dataset/value.txt" || created.Spec.Inputs[0].Size != int64(len("seed")) || len(created.Spec.Inputs[0].SHA256) != 64 {
 		t.Fatalf("input manifest missing: %#v", created.Spec.Inputs)
 	}
 	finished := h.waitJob(created.ID, 60*time.Second, "SUCCEEDED")
@@ -429,8 +429,9 @@ func (h *harness) testInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	foundInput := false
+	foundCopy := false
 	for _, item := range archive.File {
-		if item.Name != "inputs/dataset/value.txt" {
+		if item.Name != "inputs/dataset/value.txt" && item.Name != "output/copied.txt" {
 			continue
 		}
 		reader, openErr := item.Open()
@@ -439,10 +440,17 @@ func (h *harness) testInputs(t *testing.T) {
 		}
 		data, _ := io.ReadAll(reader)
 		_ = reader.Close()
-		foundInput = string(data) == "immutable-input"
+		if item.Name == "inputs/dataset/value.txt" {
+			foundInput = string(data) == "seed"
+		} else {
+			foundCopy = string(data) == "seed"
+		}
 	}
 	if !foundInput {
 		t.Fatal("job archive does not retain the reproducible input generation")
+	}
+	if !foundCopy {
+		t.Fatal("copied.txt does not retain the original immutable input value")
 	}
 	h.eventually(10*time.Second, func() bool {
 		_, err := os.Stat(filepath.Join(h.root, "agent-workspace", created.ID, finished.AttemptID, "input"))

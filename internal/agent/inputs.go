@@ -99,8 +99,11 @@ func (a *Agent) downloadInput(ctx context.Context, endpoint, destination string,
 	if response.StatusCode != http.StatusOK {
 		return readAPIError(response)
 	}
-	if digest := response.Header.Get("X-JobDock-Content-SHA256"); digest != "" && digest != expected.SHA256 {
+	if digest := response.Header.Get("X-JobDock-Content-SHA256"); digest == "" || digest != expected.SHA256 {
 		return errors.New("server digest does not match the assignment manifest")
+	}
+	if response.ContentLength != expected.Size {
+		return fmt.Errorf("server size does not match the assignment manifest: expected %d bytes, received %d", expected.Size, response.ContentLength)
 	}
 	temporary, err := os.CreateTemp(filepath.Dir(destination), ".jobdock-input-*")
 	if err != nil {

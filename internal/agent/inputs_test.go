@@ -53,3 +53,35 @@ func TestMaterializeInputsVerifiesManifestAndCleansFailures(t *testing.T) {
 		t.Fatalf("failed materialization was not cleaned: %v", err)
 	}
 }
+
+func TestMaterializeInputsRejectsIncompleteServerCommitment(t *testing.T) {
+	content := []byte("immutable data")
+	digest := sha256.Sum256(content)
+	includeDigest := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if includeDigest {
+			w.Header().Set("X-JobDock-Content-SHA256", hex.EncodeToString(digest[:]))
+			w.Header().Set("Content-Length", "1")
+		}
+		_, _ = w.Write(content)
+	}))
+	defer server.Close()
+	workspace := t.TempDir()
+	agent := &Agent{config: config.Agent{ServerURL: server.URL, WorkspaceDir: workspace}, http: server.Client(), credential: "node-token"}
+	root := filepath.Join(workspace, "job", "input")
+	manifest := []domain.InputFile{{Path: "dataset/value.txt", Size: int64(len(content)), SHA256: hex.EncodeToString(digest[:])}}
+
+	if err := agent.materializeInputs(context.Background(), "job", manifest, root); err == nil {
+		t.Fatal("a response without a committed digest was accepted")
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("digest-header failure left materialized inputs: %v", err)
+	}
+	includeDigest = true
+	if err := agent.materializeInputs(context.Background(), "job", manifest, root); err == nil {
+		t.Fatal("a response with an incorrect committed size was accepted")
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("size-header failure left materialized inputs: %v", err)
+	}
+}
