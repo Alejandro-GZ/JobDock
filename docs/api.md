@@ -27,6 +27,13 @@ must not be emitted by generated clients in logs.
 
 ## Time-series queries
 
+Scalar metrics accept optional `timestamp`, `unit`, and bounded JSON `metadata`.
+Unit and metadata are stable descriptors for a metric name within one attempt;
+omitting them inherits the descriptor, while a conflicting explicit descriptor
+rejects the entire batch. Legacy `{name, value, step}` payloads remain valid.
+The server derives `attempt_id` from the job credential and returns descriptors
+through snapshots, incremental updates, and CSV exports.
+
 SDK metrics are stored as attempt-scoped structured samples and are available
 from `GET /api/v1/jobs/{jobId}/metrics`. Automatic CPU, memory, GPU utilization,
 and GPU memory samples are available from

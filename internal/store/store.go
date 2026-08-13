@@ -25,6 +25,7 @@ var migrations embed.FS
 var ErrNotFound = errors.New("not found")
 var ErrConflict = errors.New("conflict")
 var ErrRawTelemetry = errors.New("raw resource telemetry is not persisted")
+var ErrMetricDescriptorConflict = errors.New("metric descriptor conflicts with the existing series")
 
 type Store struct {
 	db *sql.DB

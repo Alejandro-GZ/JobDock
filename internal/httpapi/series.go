@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jobdock/jobdock/internal/domain"
+	"github.com/jobdock/jobdock/internal/store"
 )
 
 const (
@@ -54,9 +56,12 @@ func (a *API) sdkMetricSamples(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Items []struct {
-			Name  string  `json:"name"`
-			Value float64 `json:"value"`
-			Step  *int64  `json:"step,omitempty"`
+			Name      string         `json:"name"`
+			Value     float64        `json:"value"`
+			Step      *int64         `json:"step,omitempty"`
+			Timestamp *time.Time     `json:"timestamp,omitempty"`
+			Unit      string         `json:"unit,omitempty"`
+			Metadata  map[string]any `json:"metadata,omitempty"`
 		} `json:"items"`
 	}
 	if !decodeJSON(w, r, &body) {
@@ -66,17 +71,37 @@ func (a *API) sdkMetricSamples(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusUnprocessableEntity, "invalid_metrics", "Metrics batches must contain between 1 and 256 points")
 		return
 	}
-	capturedAt := time.Now().UTC()
 	samples := make([]domain.MetricSample, 0, len(body.Items))
 	for _, item := range body.Items {
 		item.Name = strings.TrimSpace(item.Name)
+		item.Unit = strings.TrimSpace(item.Unit)
 		if item.Name == "" || len(item.Name) > 128 || math.IsNaN(item.Value) || math.IsInf(item.Value, 0) {
 			writeProblem(w, http.StatusUnprocessableEntity, "invalid_metric", "Metric names must contain 1-128 characters and values must be finite")
 			return
 		}
-		samples = append(samples, domain.MetricSample{JobID: job.ID, AttemptID: job.AttemptID, Name: item.Name, Step: item.Step, Value: item.Value, CapturedAt: capturedAt})
+		if len(item.Unit) > 64 {
+			writeProblem(w, http.StatusUnprocessableEntity, "invalid_metric_unit", "Metric units must contain at most 64 characters")
+			return
+		}
+		if err := validateObservationMetadata(item.Metadata); err != nil {
+			writeProblem(w, http.StatusUnprocessableEntity, "invalid_metric_metadata", err.Error())
+			return
+		}
+		capturedAt := time.Now().UTC()
+		if item.Timestamp != nil {
+			capturedAt = item.Timestamp.UTC()
+		}
+		if capturedAt.After(time.Now().UTC().Add(5 * time.Minute)) {
+			writeProblem(w, http.StatusUnprocessableEntity, "invalid_metric_timestamp", "Metric timestamps cannot be more than five minutes in the future")
+			return
+		}
+		samples = append(samples, domain.MetricSample{JobID: job.ID, AttemptID: job.AttemptID, Name: item.Name, Step: item.Step, Value: item.Value, CapturedAt: capturedAt, Unit: item.Unit, Metadata: item.Metadata})
 	}
 	if err := a.store.AppendMetricSamples(r.Context(), samples); err != nil {
+		if errors.Is(err, store.ErrMetricDescriptorConflict) {
+			writeProblem(w, http.StatusConflict, "metric_descriptor_conflict", err.Error())
+			return
+		}
 		writeStoreError(w, err)
 		return
 	}
@@ -379,14 +404,18 @@ func writeMetricCSV(w http.ResponseWriter, jobID string, response metricSeriesRe
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="job-%s-metrics.csv"`, jobID))
 	writer := csv.NewWriter(w)
-	_ = writer.Write([]string{"attempt_id", "name", "captured_at", "step", "value", "sample_count"})
+	_ = writer.Write([]string{"attempt_id", "name", "unit", "metadata", "captured_at", "step", "value", "sample_count"})
 	for _, series := range response.Series {
+		metadata, _ := json.Marshal(series.Metadata)
+		if series.Metadata == nil {
+			metadata = nil
+		}
 		for _, point := range series.Points {
 			step := ""
 			if point.Step != nil {
 				step = strconv.FormatInt(*point.Step, 10)
 			}
-			_ = writer.Write([]string{response.AttemptID, series.Name, point.CapturedAt.Format(time.RFC3339Nano), step, strconv.FormatFloat(point.Value, 'g', -1, 64), strconv.FormatInt(point.SampleCount, 10)})
+			_ = writer.Write([]string{response.AttemptID, series.Name, series.Unit, string(metadata), point.CapturedAt.Format(time.RFC3339Nano), step, strconv.FormatFloat(point.Value, 'g', -1, 64), strconv.FormatInt(point.SampleCount, 10)})
 		}
 	}
 	writer.Flush()

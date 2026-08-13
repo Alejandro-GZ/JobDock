@@ -3,6 +3,7 @@ from __future__ import annotations
 import atexit
 import json
 import logging
+import math
 import os
 import queue
 import threading
@@ -11,7 +12,10 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Iterable, Mapping
+
+from .observability import JSONValue, Metric
 
 logger = logging.getLogger("jobdock")
 
@@ -29,7 +33,8 @@ class NoopJob:
     output_dir: Path = Path.cwd()
 
     def progress(self, value: float) -> None: pass
-    def metric(self, name: str, value: float, step: int | None = None) -> None: pass
+    def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None: pass
+    def metrics(self, items: Iterable[Metric]) -> None: pass
     def param(self, name: str, value: str | int | float | bool) -> None: pass
     def event(self, event_type: str, payload: dict[str, Any] | None = None) -> None: pass
     def artifact(self, relative_path: str | os.PathLike[str]) -> Path: return Path(relative_path)
@@ -58,13 +63,15 @@ class Job:
             raise ValueError("progress must be between 0.0 and 1.0")
         self._enqueue("progress", {"value": float(value)})
 
-    def metric(self, name: str, value: float, step: int | None = None) -> None:
-        if not name:
-            raise ValueError("metric name is required")
-        item: dict[str, Any] = {"name": name, "value": float(value)}
-        if step is not None:
-            item["step"] = int(step)
-        self._enqueue("metrics", {"items": [item]})
+    def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None:
+        """Report one scalar metric while preserving the original call shape."""
+        self.metrics([Metric(name, value, step, timestamp, unit, metadata)])
+
+    def metrics(self, items: Iterable[Metric]) -> None:
+        """Report typed scalar metrics as one ordered, non-blocking batch."""
+        payload = [_metric_payload(item) for item in items]
+        if payload:
+            self._enqueue("metrics", {"items": payload})
 
     def param(self, name: str, value: str | int | float | bool) -> None:
         if not name or not isinstance(value, (str, int, float, bool)):
@@ -213,3 +220,69 @@ def current_job(*, required: bool = False) -> Job | NoopJob:
             raise RuntimeError("Unable to read JOBDOCK_JOB_TOKEN_FILE") from exc
         return NoopJob()
     return Job(job_id, api_url, token, Path(output_dir))
+
+
+def _metric_payload(metric: Metric) -> dict[str, Any]:
+    name = metric.name.strip()
+    if not name or len(name) > 128:
+        raise ValueError("metric name must contain between 1 and 128 characters")
+    value = float(metric.value)
+    if not math.isfinite(value):
+        raise ValueError("metric value must be finite")
+    if metric.step is not None and (isinstance(metric.step, bool) or not isinstance(metric.step, int)):
+        raise ValueError("metric step must be an integer")
+    unit = metric.unit.strip() if metric.unit is not None else None
+    if unit is not None and (not unit or len(unit) > 64):
+        raise ValueError("metric unit must contain between 1 and 64 characters")
+    timestamp = metric.timestamp or datetime.now(timezone.utc)
+    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+        raise ValueError("metric timestamp must be timezone-aware")
+    metadata = _validated_metadata(metric.metadata)
+    item: dict[str, Any] = {"name": name, "value": value, "timestamp": timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")}
+    if metric.step is not None:
+        item["step"] = metric.step
+    if unit is not None:
+        item["unit"] = unit
+    if metadata is not None:
+        item["metadata"] = metadata
+    return item
+
+
+def _validated_metadata(metadata: Mapping[str, JSONValue] | None) -> dict[str, JSONValue] | None:
+    if metadata is None:
+        return None
+    normalized = dict(metadata)
+    keys = [0]
+    _validate_json_value(normalized, 1, keys)
+    encoded = json.dumps(normalized, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+    if len(encoded) > 16 << 10:
+        raise ValueError("metric metadata must not exceed 16 KiB")
+    return normalized
+
+
+def _validate_json_value(value: JSONValue, depth: int, keys: list[int]) -> None:
+    if depth > 4:
+        raise ValueError("metric metadata nesting must not exceed four levels")
+    if isinstance(value, dict):
+        for key, child in value.items():
+            keys[0] += 1
+            if keys[0] > 64:
+                raise ValueError("metric metadata must contain at most 64 keys")
+            if not isinstance(key, str) or not key or len(key) > 128:
+                raise ValueError("metric metadata keys must contain 1-128 characters")
+            _validate_json_value(child, depth + 1, keys)
+    elif isinstance(value, list):
+        if len(value) > 64:
+            raise ValueError("metric metadata arrays must contain at most 64 items")
+        for child in value:
+            _validate_json_value(child, depth + 1, keys)
+    elif isinstance(value, str):
+        if len(value) > 1024:
+            raise ValueError("metric metadata strings must contain at most 1024 characters")
+    elif isinstance(value, bool) or value is None:
+        return
+    elif isinstance(value, (int, float)):
+        if not math.isfinite(float(value)):
+            raise ValueError("metric metadata numbers must be finite")
+    else:
+        raise ValueError("metric metadata contains an unsupported JSON value")

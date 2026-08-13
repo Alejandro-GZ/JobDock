@@ -17,9 +17,9 @@ describe("series helpers", () => {
   });
   it("appends only new attempt-scoped live deltas", () => {
     const metrics={attempt_id:"attempt",cursor:4,from:"2026-08-12T10:00:00Z",to:"2026-08-12T10:01:00Z",resolution_seconds:0,truncated:false,series:[{name:"loss",points:[],last:2,min:2,max:2,sample_count:1}]};
-    const metricUpdate={cursor:5,attempt_id:"attempt",kind:"metrics" as const,captured_at:"2026-08-12T10:01:05Z",metrics:[{cursor:5,attempt_id:"attempt",name:"loss",value:1,step:2,captured_at:"2026-08-12T10:01:05Z"}]};
+    const metricUpdate={cursor:5,attempt_id:"attempt",kind:"metrics" as const,captured_at:"2026-08-12T10:01:05Z",metrics:[{cursor:5,attempt_id:"attempt",name:"loss",value:1,step:2,captured_at:"2026-08-12T10:01:05Z",unit:"ratio",metadata:{split:"train"}}]};
     const nextMetrics=appendMetricUpdate(metrics,metricUpdate)!;
-    expect(nextMetrics.cursor).toBe(5);expect(nextMetrics.series[0]).toMatchObject({last:1,min:1,max:2,sample_count:2});expect(nextMetrics.series[0].points).toHaveLength(1);
+    expect(nextMetrics.cursor).toBe(5);expect(nextMetrics.series[0]).toMatchObject({last:1,min:1,max:2,sample_count:2,unit:"ratio",metadata:{split:"train"}});expect(nextMetrics.series[0].points).toHaveLength(1);
     expect(appendMetricUpdate(nextMetrics,metricUpdate)).toBe(nextMetrics);
     const resources={attempt_id:"attempt",cursor:5,from:metrics.from,to:metrics.to,resolution_seconds:5,truncated:false,points:[]};
     const resourceUpdate={cursor:6,attempt_id:"attempt",kind:"resources" as const,captured_at:"2026-08-12T10:01:10Z",resource:{cursor:6,attempt_id:"attempt",captured_at:"2026-08-12T10:01:10Z",resolution_seconds:5,sample_count:1,cpu_millis:500,memory_bytes:1024}};

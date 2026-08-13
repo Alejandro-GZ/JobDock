@@ -318,13 +318,15 @@ type ResourceSample struct {
 }
 
 type MetricSample struct {
-	Cursor     int64     `json:"cursor,omitempty"`
-	JobID      string    `json:"-"`
-	AttemptID  string    `json:"attempt_id"`
-	Name       string    `json:"name"`
-	Step       *int64    `json:"step,omitempty"`
-	Value      float64   `json:"value"`
-	CapturedAt time.Time `json:"captured_at"`
+	Cursor     int64          `json:"cursor,omitempty"`
+	JobID      string         `json:"-"`
+	AttemptID  string         `json:"attempt_id"`
+	Name       string         `json:"name"`
+	Step       *int64         `json:"step,omitempty"`
+	Value      float64        `json:"value"`
+	CapturedAt time.Time      `json:"captured_at"`
+	Unit       string         `json:"unit,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
 type MetricPoint struct {
@@ -336,12 +338,47 @@ type MetricPoint struct {
 }
 
 type MetricSeries struct {
-	Name        string        `json:"name"`
-	Points      []MetricPoint `json:"points"`
-	Last        float64       `json:"last"`
-	Min         float64       `json:"min"`
-	Max         float64       `json:"max"`
-	SampleCount int64         `json:"sample_count"`
+	Name        string         `json:"name"`
+	Unit        string         `json:"unit,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+	Points      []MetricPoint  `json:"points"`
+	Last        float64        `json:"last"`
+	Min         float64        `json:"min"`
+	Max         float64        `json:"max"`
+	SampleCount int64          `json:"sample_count"`
+}
+
+// ObservationContext is the presentation-agnostic context shared by richer
+// observability primitives. Specialized persistence is introduced by the
+// stories that make each primitive queryable.
+type ObservationContext struct {
+	Step       *int64         `json:"step,omitempty"`
+	CapturedAt *time.Time     `json:"timestamp,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+}
+
+type CheckpointObservation struct {
+	Label string `json:"label,omitempty"`
+	ObservationContext
+}
+
+type Milestone struct {
+	Name     string         `json:"name"`
+	Weight   *float64       `json:"weight,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+type ProgressObservation struct {
+	Value     float64 `json:"value"`
+	Milestone string  `json:"milestone,omitempty"`
+	ObservationContext
+}
+
+type MatrixObservation struct {
+	Name   string      `json:"name"`
+	Values [][]float64 `json:"values"`
+	Labels []string    `json:"labels,omitempty"`
+	ObservationContext
 }
 
 func IsActive(status JobStatus) bool {

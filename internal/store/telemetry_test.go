@@ -93,7 +93,7 @@ func TestMetricSeriesAreAttemptAwareBoundedAndAggregated(t *testing.T) {
 	base := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
 	step1, step2 := int64(1), int64(2)
 	samples := []domain.MetricSample{
-		{JobID: job.ID, AttemptID: attemptID, Name: "loss", Step: &step1, Value: 4, CapturedAt: base},
+		{JobID: job.ID, AttemptID: attemptID, Name: "loss", Step: &step1, Value: 4, CapturedAt: base, Unit: "ratio", Metadata: map[string]any{"split": "train"}},
 		{JobID: job.ID, AttemptID: attemptID, Name: "loss", Step: &step2, Value: 2, CapturedAt: base.Add(10 * time.Second)},
 		{JobID: job.ID, AttemptID: attemptID, Name: "accuracy", Step: &step2, Value: .75, CapturedAt: base.Add(10 * time.Second)},
 	}
@@ -106,6 +106,12 @@ func TestMetricSeriesAreAttemptAwareBoundedAndAggregated(t *testing.T) {
 	}
 	if series[0].Points[0].Value != 3 || series[0].Points[0].SampleCount != 2 || series[0].Last != 2 || series[0].Min != 2 || series[0].Max != 4 || series[0].SampleCount != 2 {
 		t.Fatalf("metric aggregation or statistics are wrong: %#v", series[0])
+	}
+	if series[0].Unit != "ratio" || series[0].Metadata["split"] != "train" {
+		t.Fatalf("metric descriptor was not preserved: %#v", series[0])
+	}
+	if err = repository.AppendMetricSamples(ctx, []domain.MetricSample{{JobID: job.ID, AttemptID: attemptID, Name: "loss", Value: 99, CapturedAt: base.Add(15 * time.Second), Unit: "seconds"}}); !errors.Is(err, store.ErrMetricDescriptorConflict) {
+		t.Fatalf("descriptor conflict: %v", err)
 	}
 	_, truncated, err = repository.MetricSeries(ctx, job.ID, attemptID, nil, base.Add(-time.Second), base.Add(time.Minute), 0, 1)
 	if err != nil || !truncated {
@@ -126,6 +132,20 @@ func TestMetricSeriesAreAttemptAwareBoundedAndAggregated(t *testing.T) {
 	updates, hasMore, err := repository.SeriesUpdates(ctx, job.ID, attemptID, snapshotCursor, 10)
 	if err != nil || hasMore || len(updates) != 1 || updates[0].Cursor <= snapshotCursor || len(updates[0].Metrics) != 1 || updates[0].Metrics[0].Value != 1 {
 		t.Fatalf("incremental metric updates: %#v more=%v err=%v", updates, hasMore, err)
+	}
+	if err = repository.AppendMetricSamples(ctx, []domain.MetricSample{{JobID: job.ID, AttemptID: attemptID, Name: "loss", Value: 3, CapturedAt: base.Add(5 * time.Second)}}); err != nil {
+		t.Fatal(err)
+	}
+	raw, _, err := repository.MetricSeries(ctx, job.ID, attemptID, []string{"loss"}, base.Add(-time.Second), base.Add(time.Minute), 0, 100)
+	if err != nil || len(raw) != 1 || len(raw[0].Points) != 4 || !raw[0].Points[1].CapturedAt.Equal(base.Add(5*time.Second)) {
+		t.Fatalf("out-of-arrival samples are not in temporal order: %#v %v", raw, err)
+	}
+	secondAttempt := ids.New()
+	if _, err = repository.DB().ExecContext(ctx, `INSERT INTO job_attempts(id,job_id,attempt_number,node_id,assignment_id,status,job_token_hash,created_at) VALUES(?,?,2,?,?,?,?,?)`, secondAttempt, job.ID, node.ID, ids.New(), "RUNNING", ids.New(), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.AppendMetricSamples(ctx, []domain.MetricSample{{JobID: job.ID, AttemptID: secondAttempt, Name: "loss", Value: 9, CapturedAt: base, Unit: "seconds"}}); err != nil {
+		t.Fatalf("descriptor leaked between attempts: %v", err)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jobdock/jobdock/internal/domain"
 	_ "modernc.org/sqlite"
 )
 
@@ -60,6 +61,17 @@ func TestAttemptAwareSeriesMigrationPreservesLegacyData(t *testing.T) {
 	metrics, _, err := repository.MetricSeries(ctx, "job", "attempt", nil, time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC), time.Date(2026, 8, 12, 11, 0, 0, 0, time.UTC), 0, 10)
 	if err != nil || len(metrics) != 1 || metrics[0].Name != "loss" || metrics[0].Last != .25 {
 		t.Fatalf("migrated metrics: %#v %v", metrics, err)
+	}
+	var descriptorCount int
+	if err = repository.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM job_metric_descriptors WHERE attempt_id='attempt' AND name='loss' AND unit IS NULL AND metadata_json IS NULL`).Scan(&descriptorCount); err != nil || descriptorCount != 1 {
+		t.Fatalf("migrated metric descriptor: count=%d err=%v", descriptorCount, err)
+	}
+	if err = repository.AppendMetricSamples(ctx, []domain.MetricSample{{JobID: "job", AttemptID: "attempt", Name: "loss", Value: .2, CapturedAt: time.Date(2026, 8, 12, 10, 30, 0, 0, time.UTC), Unit: "ratio", Metadata: map[string]any{"split": "train"}}}); err != nil {
+		t.Fatalf("enrich migrated descriptor: %v", err)
+	}
+	var unit, metadata string
+	if err = repository.DB().QueryRowContext(ctx, `SELECT unit,metadata_json FROM job_metric_descriptors WHERE attempt_id='attempt' AND name='loss'`).Scan(&unit, &metadata); err != nil || unit != "ratio" || metadata != `{"split":"train"}` {
+		t.Fatalf("enriched migrated descriptor: unit=%q metadata=%q err=%v", unit, metadata, err)
 	}
 	events, err := repository.Events(ctx, "job", 0)
 	if err != nil || len(events) != 0 {

@@ -1048,6 +1048,8 @@ components:
       required: [name, points, last, min, max, sample_count]
       properties:
         name: {type: string}
+        unit: {type: string, maxLength: 64}
+        metadata: {$ref: '#/components/schemas/ObservationMetadata'}
         points: {type: array, items: {$ref: '#/components/schemas/MetricPoint'}}
         last: {type: number, format: double}
         min: {type: number, format: double}
@@ -1085,6 +1087,8 @@ components:
         step: {type: integer, format: int64}
         value: {type: number, format: double}
         captured_at: {type: string, format: date-time}
+        unit: {type: string, maxLength: 64}
+        metadata: {$ref: '#/components/schemas/ObservationMetadata'}
     SeriesUpdate:
       type: object
       required: [cursor, attempt_id, kind, captured_at]
@@ -1224,6 +1228,44 @@ components:
               name: {type: string, minLength: 1}
               value: {type: number, format: double}
               step: {type: integer}
+              timestamp: {type: string, format: date-time, description: Observation time; defaults to server receipt time for legacy clients.}
+              unit: {type: string, minLength: 1, maxLength: 64}
+              metadata: {$ref: '#/components/schemas/ObservationMetadata'}
+    ObservationMetadata:
+      type: object
+      maxProperties: 64
+      description: Portable JSON metadata bounded to 16 KiB, four nesting levels and 64 total keys.
+      additionalProperties: true
+    ObservationContext:
+      type: object
+      properties:
+        step: {type: integer, format: int64}
+        timestamp: {type: string, format: date-time}
+        metadata: {$ref: '#/components/schemas/ObservationMetadata'}
+    CheckpointObservation:
+      allOf:
+        - {$ref: '#/components/schemas/ObservationContext'}
+        - {type: object, properties: {label: {type: string}}}
+    Milestone:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string}
+        weight: {type: number, format: double, minimum: 0}
+        metadata: {$ref: '#/components/schemas/ObservationMetadata'}
+    ProgressObservation:
+      allOf:
+        - {$ref: '#/components/schemas/ObservationContext'}
+        - {type: object, required: [value], properties: {value: {type: number, format: double, minimum: 0, maximum: 1}, milestone: {type: string}}}
+    MatrixObservation:
+      allOf:
+        - {$ref: '#/components/schemas/ObservationContext'}
+        - type: object
+          required: [name, values]
+          properties:
+            name: {type: string}
+            values: {type: array, items: {type: array, items: {type: number, format: double}}}
+            labels: {type: array, items: {type: string}}
     ParameterBatch:
       type: object
       additionalProperties: false

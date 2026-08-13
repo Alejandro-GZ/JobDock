@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -19,7 +21,7 @@ func (s *Store) AppendMetricSamples(ctx context.Context, samples []domain.Metric
 		return err
 	}
 	defer tx.Rollback()
-	cursor, err := insertSeriesUpdate(ctx, tx, samples[0].JobID, samples[0].AttemptID, "metrics", samples[0].CapturedAt)
+	cursor, err := insertSeriesUpdate(ctx, tx, samples[0].JobID, samples[0].AttemptID, "metrics", time.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -32,11 +34,59 @@ func (s *Store) AppendMetricSamples(ctx context.Context, samples []domain.Metric
 		if sample.JobID != samples[0].JobID || sample.AttemptID != samples[0].AttemptID {
 			return fmt.Errorf("metric batch spans multiple job attempts")
 		}
+		if err = ensureMetricDescriptor(ctx, tx, sample); err != nil {
+			return err
+		}
 		if _, err = statement.ExecContext(ctx, sample.JobID, sample.AttemptID, sample.Name, sample.Step, sample.Value, sample.CapturedAt.UTC().UnixMilli(), cursor); err != nil {
 			return mapConstraint(err)
 		}
 	}
 	return tx.Commit()
+}
+
+func ensureMetricDescriptor(ctx context.Context, tx *sql.Tx, sample domain.MetricSample) error {
+	var currentUnit, currentMetadata sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT unit,metadata_json FROM job_metric_descriptors WHERE attempt_id=? AND name=?`, sample.AttemptID, sample.Name).Scan(&currentUnit, &currentMetadata)
+	metadata := ""
+	if len(sample.Metadata) > 0 {
+		encoded, marshalErr := json.Marshal(sample.Metadata)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		metadata = string(encoded)
+	}
+	now := time.Now().UTC().UnixMilli()
+	if errors.Is(err, sql.ErrNoRows) {
+		var unitValue, metadataValue any
+		if sample.Unit != "" {
+			unitValue = sample.Unit
+		}
+		if metadata != "" {
+			metadataValue = metadata
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO job_metric_descriptors(job_id,attempt_id,name,unit,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, sample.JobID, sample.AttemptID, sample.Name, unitValue, metadataValue, now, now)
+		return mapConstraint(err)
+	}
+	if err != nil {
+		return err
+	}
+	if sample.Unit != "" && currentUnit.Valid && currentUnit.String != sample.Unit {
+		return ErrMetricDescriptorConflict
+	}
+	if metadata != "" && currentMetadata.Valid && currentMetadata.String != metadata {
+		return ErrMetricDescriptorConflict
+	}
+	if (sample.Unit != "" && !currentUnit.Valid) || (metadata != "" && !currentMetadata.Valid) {
+		_, err = tx.ExecContext(ctx, `UPDATE job_metric_descriptors SET unit=COALESCE(unit,?),metadata_json=COALESCE(metadata_json,?),updated_at=? WHERE attempt_id=? AND name=?`, nullableString(sample.Unit), nullableString(metadata), now, sample.AttemptID, sample.Name)
+	}
+	return err
+}
+
+func nullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func (s *Store) MetricSeries(ctx context.Context, jobID, attemptID string, names []string, from, to time.Time, resolutionSeconds, limit int) ([]domain.MetricSeries, bool, error) {
@@ -65,10 +115,10 @@ func (s *Store) metricSeries(ctx context.Context, jobID, attemptID string, names
 	}
 	var query string
 	if resolutionSeconds <= 0 {
-		query = `SELECT name,step,value,captured_at,1,COALESCE(series_cursor,0) FROM job_metric_samples WHERE job_id=? AND attempt_id=? AND captured_at>=? AND captured_at<=?` + nameClause + cursorClause + ` ORDER BY name,captured_at,id LIMIT ?`
+		query = `SELECT s.name,s.step,s.value,s.captured_at,1,COALESCE(s.series_cursor,0),COALESCE(d.unit,''),COALESCE(d.metadata_json,'') FROM job_metric_samples s LEFT JOIN job_metric_descriptors d ON d.attempt_id=s.attempt_id AND d.name=s.name WHERE s.job_id=? AND s.attempt_id=? AND s.captured_at>=? AND s.captured_at<=?` + strings.ReplaceAll(nameClause, " name ", " s.name ") + strings.ReplaceAll(cursorClause, "series_cursor", "s.series_cursor") + ` ORDER BY s.name,s.captured_at,s.id LIMIT ?`
 	} else {
 		bucketMilliseconds := int64(resolutionSeconds) * 1000
-		query = `SELECT name,MAX(step),AVG(value),(captured_at/?)*?,COUNT(*),MAX(COALESCE(series_cursor,0)) FROM job_metric_samples WHERE job_id=? AND attempt_id=? AND captured_at>=? AND captured_at<=?` + nameClause + cursorClause + ` GROUP BY name,(captured_at/?) ORDER BY name,(captured_at/?) LIMIT ?`
+		query = `SELECT s.name,MAX(s.step),AVG(s.value),(s.captured_at/?)*?,COUNT(*),MAX(COALESCE(s.series_cursor,0)),COALESCE(d.unit,''),COALESCE(d.metadata_json,'') FROM job_metric_samples s LEFT JOIN job_metric_descriptors d ON d.attempt_id=s.attempt_id AND d.name=s.name WHERE s.job_id=? AND s.attempt_id=? AND s.captured_at>=? AND s.captured_at<=?` + strings.ReplaceAll(nameClause, " name ", " s.name ") + strings.ReplaceAll(cursorClause, "series_cursor", "s.series_cursor") + ` GROUP BY s.name,(s.captured_at/?) ORDER BY s.name,(s.captured_at/?) LIMIT ?`
 		arguments = append([]any{bucketMilliseconds, bucketMilliseconds}, arguments...)
 		arguments = append(arguments, bucketMilliseconds, bucketMilliseconds)
 	}
@@ -86,12 +136,16 @@ func (s *Store) metricSeries(ctx context.Context, jobID, attemptID string, names
 		var step sql.NullInt64
 		var value float64
 		var captured, sampleCount, cursor int64
-		if err = rows.Scan(&name, &step, &value, &captured, &sampleCount, &cursor); err != nil {
+		var unit, metadata string
+		if err = rows.Scan(&name, &step, &value, &captured, &sampleCount, &cursor, &unit, &metadata); err != nil {
 			return nil, false, err
 		}
 		item := seriesByName[name]
 		if item == nil {
-			item = &domain.MetricSeries{Name: name, Points: []domain.MetricPoint{}}
+			item = &domain.MetricSeries{Name: name, Unit: unit, Points: []domain.MetricPoint{}}
+			if metadata != "" {
+				_ = json.Unmarshal([]byte(metadata), &item.Metadata)
+			}
 			seriesByName[name] = item
 			order = append(order, name)
 		}

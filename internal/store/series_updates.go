@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -67,7 +68,7 @@ func (s *Store) SeriesUpdates(ctx context.Context, jobID, attemptID string, afte
 		placeholders[index], arguments[index] = "?", updates[index].Cursor
 	}
 	inClause := strings.Join(placeholders, ",")
-	metricRows, err := s.db.QueryContext(ctx, `SELECT series_cursor,name,step,value,captured_at FROM job_metric_samples WHERE series_cursor IN (`+inClause+`) ORDER BY series_cursor,id`, arguments...)
+	metricRows, err := s.db.QueryContext(ctx, `SELECT s.series_cursor,s.name,s.step,s.value,s.captured_at,COALESCE(d.unit,''),COALESCE(d.metadata_json,'') FROM job_metric_samples s LEFT JOIN job_metric_descriptors d ON d.attempt_id=s.attempt_id AND d.name=s.name WHERE s.series_cursor IN (`+inClause+`) ORDER BY s.series_cursor,s.id`, arguments...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -75,7 +76,8 @@ func (s *Store) SeriesUpdates(ctx context.Context, jobID, attemptID string, afte
 		var sample domain.MetricSample
 		var step sql.NullInt64
 		var captured int64
-		if err = metricRows.Scan(&sample.Cursor, &sample.Name, &step, &sample.Value, &captured); err != nil {
+		var metadata string
+		if err = metricRows.Scan(&sample.Cursor, &sample.Name, &step, &sample.Value, &captured, &sample.Unit, &metadata); err != nil {
 			metricRows.Close()
 			return nil, false, err
 		}
@@ -83,6 +85,9 @@ func (s *Store) SeriesUpdates(ctx context.Context, jobID, attemptID string, afte
 		if step.Valid {
 			value := step.Int64
 			sample.Step = &value
+		}
+		if metadata != "" {
+			_ = json.Unmarshal([]byte(metadata), &sample.Metadata)
 		}
 		if update := byCursor[sample.Cursor]; update != nil {
 			update.Metrics = append(update.Metrics, sample)

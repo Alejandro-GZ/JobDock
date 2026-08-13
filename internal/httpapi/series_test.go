@@ -61,7 +61,11 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 	server := httptest.NewServer(api.Handler())
 	defer server.Close()
 
-	metricRequest, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/job-context/metrics", strings.NewReader(`{"items":[{"name":"loss","value":0.5,"step":1},{"name":"accuracy","value":0.8,"step":1}]}`))
+	metricPayload, _ := json.Marshal(map[string]any{"items": []any{
+		map[string]any{"name": "loss", "value": .5, "step": 1, "timestamp": base.Add(20 * time.Second), "unit": "ratio", "metadata": map[string]any{"split": "train"}},
+		map[string]any{"name": "accuracy", "value": .8, "step": 1, "timestamp": base.Add(20 * time.Second)},
+	}})
+	metricRequest, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/job-context/metrics", bytes.NewReader(metricPayload))
 	metricRequest.Header.Set("Content-Type", "application/json")
 	metricRequest.Header.Set("Authorization", "Bearer "+jobToken)
 	metricResponse, err := http.DefaultClient.Do(metricRequest)
@@ -87,6 +91,14 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 	if metrics.AttemptID != attemptID || len(metrics.Series) != 2 || metrics.Truncated {
 		t.Fatalf("metric response: %#v", metrics)
 	}
+	for _, series := range metrics.Series {
+		if series.Name == "loss" && (series.Unit != "ratio" || series.Metadata["split"] != "train") {
+			t.Fatalf("enriched metric descriptor: %#v", series)
+		}
+		if series.Name == "loss" && (len(series.Points) != 1 || !series.Points[0].CapturedAt.Equal(base.Add(20*time.Second))) {
+			t.Fatalf("client metric timestamp was not preserved: %#v", series.Points)
+		}
+	}
 	resourceURL := server.URL + "/api/v1/jobs/" + job.ID + "/resources?attempt_id=" + attemptID + "&from=" + from + "&to=" + to + "&resolution=5s"
 	var resources resourceSeriesResponse
 	getSeriesJSON(t, ownerClient, resourceURL, &resources)
@@ -100,8 +112,45 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 		t.Fatal(err)
 	}
 	metricUpdate := readSeriesSSE(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/series/stream?attempt_id="+attemptID+"&after="+strconv.FormatInt(metrics.Cursor, 10), "")
-	if metricUpdate.Cursor <= metrics.Cursor || metricUpdate.Kind != "metrics" || len(metricUpdate.Metrics) != 1 || metricUpdate.Metrics[0].Name != "loss" {
+	if metricUpdate.Cursor <= metrics.Cursor || metricUpdate.Kind != "metrics" || len(metricUpdate.Metrics) != 1 || metricUpdate.Metrics[0].Name != "loss" || metricUpdate.Metrics[0].Unit != "ratio" {
 		t.Fatalf("metric live update: %#v", metricUpdate)
+	}
+	conflict, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/job-context/metrics", strings.NewReader(`{"items":[{"name":"loss","value":0.1,"unit":"seconds"}]}`))
+	conflict.Header.Set("Content-Type", "application/json")
+	conflict.Header.Set("Authorization", "Bearer "+jobToken)
+	conflictResponse, err := http.DefaultClient.Do(conflict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var problem map[string]any
+	_ = json.NewDecoder(conflictResponse.Body).Decode(&problem)
+	conflictResponse.Body.Close()
+	if conflictResponse.StatusCode != http.StatusConflict || problem["code"] != "metric_descriptor_conflict" {
+		t.Fatalf("descriptor conflict response: %d %#v", conflictResponse.StatusCode, problem)
+	}
+	invalidCases := []struct {
+		payload string
+		status  int
+		code    string
+	}{
+		{`{"items":[{"name":"future","value":1,"timestamp":"` + time.Now().UTC().Add(10*time.Minute).Format(time.RFC3339) + `"}]}`, http.StatusUnprocessableEntity, "invalid_metric_timestamp"},
+		{`{"items":[{"name":"unsafe","value":1,"metadata":{"a":{"b":{"c":{"d":"too deep"}}}}}]}`, http.StatusUnprocessableEntity, "invalid_metric_metadata"},
+		{`{"items":[{"name":"forged","value":1,"attempt_id":"other"}]}`, http.StatusBadRequest, "invalid_json"},
+	}
+	for _, item := range invalidCases {
+		request, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/job-context/metrics", strings.NewReader(item.payload))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+jobToken)
+		response, requestErr := http.DefaultClient.Do(request)
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		problem = map[string]any{}
+		_ = json.NewDecoder(response.Body).Decode(&problem)
+		response.Body.Close()
+		if response.StatusCode != item.status || problem["code"] != item.code {
+			t.Fatalf("invalid metric status=%d problem=%#v", response.StatusCode, problem)
+		}
 	}
 	if err = repository.AppendResourceSample(ctx, domain.ResourceSample{JobID: job.ID, AttemptID: attemptID, CapturedAt: base.Add(25 * time.Second), CPUMillis: 900, MemoryBytes: 256 << 20}); err != nil {
 		t.Fatal(err)
@@ -119,6 +168,9 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 		response.Body.Close()
 		if response.StatusCode != http.StatusOK || !strings.HasPrefix(response.Header.Get("Content-Type"), "text/csv") || !bytes.Contains(data, []byte(attemptID)) {
 			t.Fatalf("CSV response status=%d headers=%v body=%s", response.StatusCode, response.Header, data)
+		}
+		if strings.Contains(endpoint, "/metrics?") && (!bytes.Contains(data, []byte("ratio")) || !bytes.Contains(data, []byte(`{""split"":""train""}`))) {
+			t.Fatalf("metric CSV is missing descriptor columns: %s", data)
 		}
 	}
 	otherClient := loginSeriesUser(t, server.URL, other.Username)
