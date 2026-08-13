@@ -78,15 +78,15 @@ jobs:
           JOBDOCK_RELEASE_TAG: ${{ github.ref_name }}
           JOBDOCK_PRODUCT_VERSION: ${{ needs.validate.outputs.version }}
           JOBDOCK_SDK_VERSION: ${{ needs.validate.outputs.sdk_version }}
-        run: python -m build --wheel --sdist sdk/python --outdir sdk-dist
+        run: python -m build --wheel --sdist sdk/python --outdir sdk-dist/packages
       - name: Validate package metadata and artifact identity
         env:
           SDK_VERSION: ${{ needs.validate.outputs.sdk_version }}
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t wheels < <(find sdk-dist -maxdepth 1 -type f -name '*.whl')
-          mapfile -t sdists < <(find sdk-dist -maxdepth 1 -type f -name '*.tar.gz')
+          mapfile -t wheels < <(find sdk-dist/packages -maxdepth 1 -type f -name '*.whl')
+          mapfile -t sdists < <(find sdk-dist/packages -maxdepth 1 -type f -name '*.tar.gz')
           test "${#wheels[@]}" -eq 1
           test "${#sdists[@]}" -eq 1
           [[ "$(basename "${wheels[0]}")" == "jobdock_sdk-${SDK_VERSION}-"*.whl ]]
@@ -99,13 +99,13 @@ jobs:
         run: |
           set -euo pipefail
           python -m venv "$RUNNER_TEMP/jobdock-sdk-smoke"
-          "$RUNNER_TEMP/jobdock-sdk-smoke/bin/python" -m pip install --disable-pip-version-check --no-deps sdk-dist/*.whl
+          "$RUNNER_TEMP/jobdock-sdk-smoke/bin/python" -m pip install --disable-pip-version-check --no-deps sdk-dist/packages/*.whl
           actual_version="$("$RUNNER_TEMP/jobdock-sdk-smoke/bin/python" -c 'import jobdock; from importlib.metadata import metadata; assert metadata("jobdock-sdk")["Name"] == "jobdock-sdk"; print(jobdock.__version__)')"
           test "$actual_version" = "$SDK_VERSION"
       - name: Generate and verify SHA-256 checksums
         working-directory: sdk-dist
         run: |
-          sha256sum *.whl *.tar.gz > SHA256SUMS.sdk
+          sha256sum packages/*.whl packages/*.tar.gz > SHA256SUMS.sdk
           sha256sum --check SHA256SUMS.sdk
       - name: Preserve validated SDK artifacts
         uses: actions/upload-artifact@v4
@@ -249,7 +249,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [validate, verify, release-e2e, sdk-package]
+    needs: [validate, verify, release-e2e, sdk-package, verify-sdk-pypi]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -297,9 +297,61 @@ jobs:
             release-assets/docker-compose.yml \
             release-assets/install-agent.sh \
             release-assets/SHA256SUMS \
-            sdk-dist/*.whl \
-            sdk-dist/*.tar.gz \
+            sdk-dist/packages/*.whl \
+            sdk-dist/packages/*.tar.gz \
             sdk-dist/SHA256SUMS.sdk
+
+  publish-sdk-pypi:
+    name: Publish Python SDK to PyPI
+    needs: [validate, sdk-package, verify, release-e2e]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/jobdock-sdk/${{ needs.validate.outputs.sdk_version }}/
+    permissions:
+      id-token: write
+    steps:
+      - name: Retrieve validated SDK distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: jobdock-sdk-${{ needs.validate.outputs.sdk_version }}
+          path: sdk-dist
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: sdk-dist/packages
+
+  verify-sdk-pypi:
+    name: Verify Python SDK from PyPI
+    needs: [validate, publish-sdk-pypi]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.13'}
+      - name: Resolve and install the exact published version
+        env:
+          SDK_VERSION: ${{ needs.validate.outputs.sdk_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/jobdock-sdk-pypi"
+          for attempt in 1 2 3 4 5 6; do
+            if "$RUNNER_TEMP/jobdock-sdk-pypi/bin/python" -m pip install \
+              --disable-pip-version-check \
+              --no-cache-dir \
+              --only-binary=:all: \
+              --index-url=https://pypi.org/simple \
+              "jobdock-sdk==${SDK_VERSION}"; then
+              break
+            fi
+            if [ "$attempt" -eq 6 ]; then
+              exit 1
+            fi
+            sleep 10
+          done
+          actual_version="$("$RUNNER_TEMP/jobdock-sdk-pypi/bin/python" -c 'import jobdock; from importlib.metadata import version; assert version("jobdock-sdk") == jobdock.__version__; print(jobdock.__version__)')"
+          test "$actual_version" = "$SDK_VERSION"
 
   release-e2e:
     name: Validate published release end to end

@@ -13,7 +13,7 @@ release set in GitHub Container Registry:
 4. A stable tag publishes the immutable patch tag (`0.1.0`), the moving minor tag (`0.1`), and `latest`. A prerelease such as `v0.2.0-rc.1` publishes only `0.2.0-rc.1`; it never changes `0.2` or `latest`.
 5. Each matrix build persists its published digest. The verification phase assembles these values, the version, tag, and source commit into `release-manifest.json`, pulls those exact digests, and proves that each exact-version tag resolves to the same package. It never rebuilds an image for validation.
 6. After digest verification, the release E2E starts the published server, builder, and agent images by digest. It completes enrollment, a Railpack/BuildKit source build, managed-image scheduling and execution, and a separate existing-OCI job. It never compiles a JobDock component locally.
-7. Only after all required CI, publication, digest verification, and published-package E2E jobs succeed does the workflow create the GitHub Release. Stable releases are marked latest; prereleases are explicitly marked prerelease and never latest. Highlights and the exact component references are prepended to GitHub's generated change notes.
+7. Only after all required CI, publication, digest verification, and published-package E2E jobs succeed does the workflow publish the already validated SDK distributions to PyPI through Trusted Publishing. A separate unprivileged job installs exactly `jobdock-sdk==VERSION` from PyPI and checks the imported version. The workflow creates the GitHub Release only after this verification. Stable releases are marked latest; prereleases are explicitly marked prerelease and never latest. Highlights and the exact component references are prepended to GitHub's generated change notes.
 8. Every GitHub Release contains `release-manifest.json`, a digest-pinned `docker-compose.yml`, a digest-pinned `install-agent.sh`, the already validated SDK wheel and sdist, and their checksum manifests. Verify deployment downloads with `sha256sum --check SHA256SUMS` and SDK artifacts with `sha256sum --check SHA256SUMS.sdk` before installation.
 9. On the first release, set all three package visibilities to public in the repository package settings.
 10. Run the downloaded server/builder Compose file and CPU/NVIDIA agent installer on disposable hosts. Confirm component versions and agent enrollment before announcing the release.
@@ -29,3 +29,16 @@ tags map directly (`v0.3.0` to `0.3.0`) and common prereleases map to PEP 440
 `JOBDOCK_PRODUCT_VERSION` agree. Outside an exact release tag, package metadata
 uses `0.0.0.dev0+g<commit>` so a development wheel cannot be mistaken for a
 release artifact.
+
+## PyPI Trusted Publisher setup
+
+Create a GitHub environment named `pypi` and protect it with required reviewers.
+In the `jobdock-sdk` project on PyPI, register a GitHub Trusted Publisher with
+owner `Alejandro-GZ`, repository `JobDock`, workflow
+`release-images.yml`, and environment `pypi`. A pending publisher may be created
+before the first project release. No PyPI API token belongs in GitHub Secrets.
+
+Only the `Publish Python SDK to PyPI` job receives `id-token: write`. It has two
+steps: download the artifact produced by the SDK packaging job and invoke the
+official PyPA publisher. The workflow does not enable `skip-existing`; attempting
+to reuse a published version is an error and blocks the release.
