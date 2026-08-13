@@ -6,6 +6,7 @@ JobDock is a lightweight, self-hosted control plane for running containerized ba
 
 The repository contains:
 
+- `jobdock`: the scoped command-line client for local and CI automation.
 - `jobdock-server`: the API, scheduler, persistent state, artifact store, and web application.
 - `jobdock-builder`: an isolated source-build worker that drives rootless BuildKit and publishes managed images without a user registry.
 - `jobdock-agent`: a trusted per-host Docker executor.
@@ -21,6 +22,7 @@ The versioned HTTP surface and client-generation contract are documented in
 sync with the Go router is in [`docs/api.md`](docs/api.md).
 Real-Docker release verification is described in
 [`docs/testing.md`](docs/testing.md).
+Terminal and CI usage is documented in the [CLI guide](docs/cli.md).
 
 ## Install a stable release
 
