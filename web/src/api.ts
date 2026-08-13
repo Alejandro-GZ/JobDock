@@ -16,6 +16,8 @@ export const api={
   createJob:(spec:JobSpec,inputs:File[]=[])=>request<Job>("/jobs",{method:"POST",body:inputs.length?jobFormData(spec,inputs):JSON.stringify(spec)}),stopJob:(id:string)=>request(`/jobs/${id}/stop`,{method:"POST"}),rerunJob:(id:string)=>request<Job>(`/jobs/${id}/rerun`,{method:"POST"}),deleteJob:(id:string)=>request(`/jobs/${id}`,{method:"DELETE"}),
   attempts:async(id:string)=>(await request<{items:JobAttempt[]|null}>(`/jobs/${id}/attempts`)).items??[],
   events:async(id:string,after=0,attemptId="")=>(await request<{items:JobEvent[]|null}>(`/jobs/${id}/events?after=${after}${attemptId?`&attempt_id=${encodeURIComponent(attemptId)}`:""}`)).items??[],
+  eventsDownload:(id:string,attemptId:string)=>`/api/v1/jobs/${encodeURIComponent(id)}/events?attempt_id=${encodeURIComponent(attemptId)}&download=true`,
+  attemptOutput:(id:string,attemptId:string,path:string)=>`/api/v1/jobs/${encodeURIComponent(id)}/attempts/${encodeURIComponent(attemptId)}/outputs/${path.split("/").map(encodeURIComponent).join("/")}`,
   metrics:(id:string,query:string)=>request<MetricSeriesResponse>(`/jobs/${id}/metrics?${query}`),
   metricCatalog:async(id:string,attemptId?:string)=>(await request<{attempt_id:string;items:import("./types").MetricDescriptor[]}>(`/jobs/${id}/metrics/catalog${attemptId?`?attempt_id=${encodeURIComponent(attemptId)}`:""}`)).items,
   dashboard:(id:string)=>request<{schema_version:number;widgets:DashboardWidget[]|null;updated_at?:string;fallback_reason?:string}>(`/jobs/${id}/dashboard`),

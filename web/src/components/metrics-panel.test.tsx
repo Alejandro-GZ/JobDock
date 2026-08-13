@@ -2,8 +2,7 @@
 
 import { act } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MetricsPanel } from "./metrics-panel";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -29,10 +28,6 @@ describe("MetricsPanel live updates",()=>{
     const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
     render(<QueryClientProvider client={client}><TooltipProvider><MetricsPanel job={job}/></TooltipProvider></QueryClientProvider>);
     await waitFor(()=>expect(FakeEventSource.instance.url).toContain("after=4"));
-    const lossRange = screen.getByLabelText("loss time range"), throughputRange = screen.getByLabelText("throughput time range");
-    await userEvent.click(within(lossRange).getByRole("button",{name:"1h"}));
-    expect(within(lossRange).getByRole("button",{name:"1h"}).getAttribute("aria-pressed")).toBe("true");
-    expect(within(throughputRange).getByRole("button",{name:"1h"}).getAttribute("aria-pressed")).toBe("false");
     expect(screen.getByRole("button",{name:/loss statistics: last 2,/})).toBeTruthy();const metricRequests=fetchMock.mock.calls.filter(call=>String(call[0]).includes("/metrics?")).length;
     act(()=>FakeEventSource.instance.emit({cursor:5,attempt_id:"attempt",kind:"metrics",captured_at:"2026-08-12T10:01:05Z",metrics:[{cursor:5,attempt_id:"attempt",name:"loss",value:1,captured_at:"2026-08-12T10:01:05Z"}]}));
     await waitFor(()=>expect(screen.getByRole("button",{name:/loss statistics: last 1,/})).toBeTruthy());expect(fetchMock.mock.calls.filter(call=>String(call[0]).includes("/metrics?"))).toHaveLength(metricRequests);

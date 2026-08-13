@@ -718,6 +718,30 @@ func (s *Store) AppendAttemptOutput(jobID, attemptID, relativePath string, offse
 	return s.appendOutput(jobID, attemptID, relativePath, offset, source)
 }
 
+func (s *Store) OpenAttemptOutput(jobID, attemptID, relativePath string) (*os.File, error) {
+	clean, err := safeRelativePath(relativePath)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := s.dataDir(jobID, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	root := filepath.Join(dir, "output")
+	path := filepath.Join(root, clean)
+	if !within(root, path) {
+		return nil, errors.New("output path escapes job directory")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("output is not a regular file")
+	}
+	return os.Open(path)
+}
+
 func (s *Store) appendOutput(jobID, attemptID, relativePath string, offset int64, source io.Reader) (int64, error) {
 	clean, err := safeRelativePath(relativePath)
 	if err != nil {

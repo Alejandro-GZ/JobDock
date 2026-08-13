@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Radio, TriangleAlert, WifiOff } from "lucide-react";
+import { TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { ObservabilityDashboard, type NumericWidgetSource } from "@/components/observability-dashboard";
@@ -8,7 +8,7 @@ import { appendMetricUpdate, appendResourceUpdate, metricPoints, resourcePoints,
 import type { Job, MetricSeriesResponse, ResourceSeriesResponse, SeriesUpdate } from "@/types";
 import type { DashboardWidget } from "@/lib/dashboard-widgets";
 
-export function MetricsPanel({ job }: { job: Job }) {
+export function MetricsPanel({ job, editMode=false }: { job: Job;editMode?:boolean }) {
   const queryClient = useQueryClient();
   const saveTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
   const pendingSave=useRef<{jobID:string;widgets:DashboardWidget[]}|undefined>(undefined);
@@ -52,12 +52,11 @@ export function MetricsPanel({ job }: { job: Job }) {
   const dashboardReady=dashboard.isSuccess&&catalog.isSuccess&&metrics.isSuccess&&resources.isSuccess&&(!job.attempt_id||(checkpoints.isSuccess&&progress.isSuccess&&matrices.isSuccess));
   const saveDashboard=useCallback((widgets:DashboardWidget[])=>{setDashboardWidgets(widgets);if(saveTimer.current)clearTimeout(saveTimer.current);const pending={jobID:job.id,widgets};pendingSave.current=pending;saveTimer.current=setTimeout(()=>{api.saveDashboard(pending.jobID,pending.widgets).catch((error:Error)=>toast.error("Dashboard could not be saved",{description:error.message}));if(pendingSave.current===pending)pendingSave.current=undefined},400)},[job.id]);
   useEffect(()=>()=>{if(saveTimer.current)clearTimeout(saveTimer.current);const pending=pendingSave.current;if(pending){pendingSave.current=undefined;void api.saveDashboard(pending.jobID,pending.widgets).catch(()=>undefined)}},[job.id]);
-  const liveStatus=!job.finished_at?(live === "connected" ? <span className="ml-1 flex items-center gap-1 text-[10px] text-emerald-600"><Radio className="size-3 animate-pulse"/>Live</span> : <span className="ml-1 flex items-center gap-1 text-[10px] text-amber-600"><WifiOff className="size-3"/>{live === "connecting" ? "Connecting" : "Reconnecting"}</span>):undefined;
-  return <div className="space-y-4">
+  return <div className="flex h-full min-h-0 flex-col gap-2">
     {(metrics.data?.truncated || resources.data?.truncated) && <p className="flex shrink-0 items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-amber-700 dark:text-amber-300"><TriangleAlert className="size-4"/>The selected range exceeded the point limit. Choose a shorter range.</p>}
     {(dashboard.isError||catalog.isError||metrics.isError||resources.isError||progress.isError||matrices.isError||checkpoints.isError)
       ? <div role="alert" className="grid min-h-[320px] place-items-center rounded-md border border-destructive/30 text-sm text-destructive">The observability dashboard could not be loaded.</div>
-      : <ObservabilityDashboard attemptID={job.attempt_id??"unassigned"} ready={dashboardReady} numericSources={[...metricSeries,...resourceSeries]} progress={progress.data} matrices={matrices.data??[]} markers={markers} metricsDownloadURL={api.metricsCSV(job.id,query)} resourcesDownloadURL={api.resourcesCSV(job.id,query)} initialWidgets={dashboard.data?.widgets} onWidgetsChange={saveDashboard} live={liveStatus}/>
+      : <div className="min-h-0 flex-1"><ObservabilityDashboard jobID={job.id} attemptID={job.attempt_id??"unassigned"} ready={dashboardReady} numericSources={[...metricSeries,...resourceSeries]} progress={progress.data} matrices={matrices.data??[]} markers={markers} initialWidgets={dashboard.data?.widgets} onWidgetsChange={saveDashboard} editMode={editMode}/></div>
     }
   </div>;
 }

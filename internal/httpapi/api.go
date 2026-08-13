@@ -101,6 +101,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/jobs/{id}/attempts", a.withSession(false, false, a.listJobAttempts))
 	mux.HandleFunc("POST /api/v1/jobs/{id}/rerun", a.withSession(false, true, a.rerunJob))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/attempts/{attempt}/archive.zip", a.withSession(false, false, a.attemptArchive))
+	mux.HandleFunc("GET /api/v1/jobs/{id}/attempts/{attempt}/outputs/{path...}", a.withSession(false, false, a.attemptOutput))
 	mux.HandleFunc("POST /api/v1/jobs/{id}/stop", a.withAccess(scopeJobsWrite, true, a.stopJob))
 	mux.HandleFunc("DELETE /api/v1/jobs/{id}", a.withSession(false, true, a.deleteJob))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/events", a.withSession(false, false, a.jobEvents))
@@ -445,6 +446,9 @@ func (a *API) jobEvents(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeProblem(w, 500, "database_error", err.Error())
 		return
+	}
+	if r.URL.Query().Get("download") == "true" {
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="job-%s-events.json"`, job.ID))
 	}
 	writeJSON(w, 200, map[string]any{"items": events})
 }

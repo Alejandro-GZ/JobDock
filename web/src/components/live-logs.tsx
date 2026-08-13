@@ -1,55 +1,32 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertCircle, Radio } from "lucide-react";
 import { api } from "@/api";
-import { appendVisibleLog, decodeBase64Bytes, type VisibleLog } from "@/lib/live-logs";
+import { decodeBase64Bytes } from "@/lib/live-logs";
 
-type StreamName = "stdout" | "stderr";
+export type StreamName = "stdout" | "stderr";
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Chunk = { stream: StreamName; start_offset: number; next_offset: number; data: string };
+type LogFragment = { id:number;stream:StreamName;text:string };
+const visibleLimit=2_000_000;
 
-export function LiveLogs({ jobId, attemptId }: { jobId: string; attemptId: string }) {
-  return <div className="grid h-[calc(100dvh-13rem)] min-h-[430px] grid-rows-2 gap-3 overflow-hidden xl:grid-cols-2 xl:grid-rows-1"><LiveLog jobId={jobId} attemptId={attemptId} stream="stdout"/><LiveLog jobId={jobId} attemptId={attemptId} stream="stderr"/></div>;
+export function LiveLogs({ jobId, attemptId, streams=["stdout","stderr"], embedded=false, actions }: { jobId:string;attemptId:string;streams?:StreamName[];embedded?:boolean;actions?:ReactNode }) {
+  const [fragments,setFragments]=useState<LogFragment[]>([]),[truncated,setTruncated]=useState(false),sequence=useRef(0),output=useRef<HTMLPreElement>(null);
+  useEffect(()=>{setFragments([]);setTruncated(false);sequence.current=0},[jobId,attemptId,streams.join(":")]);
+  const append=useCallback((stream:StreamName,text:string)=>setFragments(current=>{
+    let next=[...current,{id:sequence.current++,stream,text}],length=next.reduce((total,item)=>total+item.text.length,0);
+    if(length<=visibleLimit)return next;setTruncated(true);
+    while(next.length>1&&length>visibleLimit){length-=next[0].text.length;next=next.slice(1)}
+    return next;
+  }),[]);
+  const stdout=useLogStream(jobId,attemptId,"stdout",streams.includes("stdout"),append),stderr=useLogStream(jobId,attemptId,"stderr",streams.includes("stderr"),append);
+  useEffect(()=>{if(output.current)output.current.scrollTop=output.current.scrollHeight},[fragments]);
+  const states=streams.map(stream=>stream==="stdout"?stdout:stderr),live=states.length>0&&states.every(state=>state==="live");
+  const console=<div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border"><div className="flex items-center border-b bg-muted/40 px-3 py-2 text-xs"><span className="font-medium">Logs</span>{actions&&<span className="ml-1">{actions}</span>}<span className={live?"ml-auto flex items-center gap-1.5 text-emerald-600":"ml-auto flex items-center gap-1.5 text-amber-600"} title={live?"Receiving incremental log updates":"The stream will reconnect automatically"}>{live?<Radio className="size-3.5"/>:<AlertCircle className="size-3.5"/>}{live?"Live":states.some(state=>state==="reconnecting")?"Reconnecting":"Connecting"}</span></div>{truncated&&<p className="border-b bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300">Earlier output is hidden to keep the browser responsive. The complete log remains available in the ZIP.</p>}<pre ref={output} className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap bg-zinc-950 p-4 font-mono text-xs text-zinc-100">{fragments.length?fragments.map(fragment=><span key={fragment.id} className={fragment.stream==="stderr"?"text-red-300":undefined}>{fragment.text}</span>):"No output yet."}</pre></div>;
+  return embedded?<section className="flex h-full min-h-0 flex-col rounded-md bg-card">{console}</section>:<div className="h-[calc(100dvh-13rem)] min-h-[430px]">{console}</div>;
 }
 
-function LiveLog({ jobId, attemptId, stream }: { jobId: string; attemptId: string; stream: StreamName }) {
-  const [log, setLog] = useState<VisibleLog>({ text: "", truncated: false });
-  const [connection, setConnection] = useState<ConnectionState>("connecting");
-  const cursor = useRef<number | undefined>(undefined);
-  const decoder = useRef(new TextDecoder());
-  const output = useRef<HTMLPreElement>(null);
-
-  useEffect(() => {
-    setLog({ text: "", truncated: false });
-    setConnection("connecting");
-    cursor.current = undefined;
-    decoder.current = new TextDecoder();
-    const source = api.openLogStream(jobId, attemptId, stream);
-    source.onopen = () => setConnection("live");
-    source.onerror = () => setConnection("reconnecting");
-    source.addEventListener("log", (event) => {
-      const chunk = JSON.parse((event as MessageEvent<string>).data) as Chunk;
-      const bytes = decodeBase64Bytes(chunk.data);
-      const knownOffset = cursor.current;
-      const duplicateBytes = knownOffset === undefined ? 0 : Math.max(0, knownOffset - chunk.start_offset);
-      if (duplicateBytes >= bytes.length) return;
-      const text = decoder.current.decode(bytes.subarray(duplicateBytes), { stream: true });
-      cursor.current = chunk.next_offset;
-      setLog(current => appendVisibleLog(current, text));
-      setConnection("live");
-    });
-    return () => source.close();
-  }, [jobId, attemptId, stream]);
-
-  useEffect(() => { if (output.current) output.current.scrollTop = output.current.scrollHeight; }, [log.text]);
-  const live = connection === "live";
-  return <div className="flex min-h-0 flex-col overflow-hidden rounded-md border">
-    <div className="flex items-center justify-between border-b bg-muted/40 px-3 py-2 font-mono text-xs">
-      <span>{stream}</span>
-      <span className={live ? "flex items-center gap-1.5 text-emerald-600" : "flex items-center gap-1.5 text-amber-600"} title={live ? "Receiving incremental log updates" : "The stream will reconnect automatically"}>
-        {live ? <Radio className="size-3.5"/> : <AlertCircle className="size-3.5"/>}{live ? "Live" : connection === "connecting" ? "Connecting" : "Reconnecting"}
-      </span>
-    </div>
-    {log.truncated && <p className="border-b bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300">Earlier output is hidden to keep the browser responsive. The complete log remains available in the ZIP.</p>}
-    <pre ref={output} className="min-h-0 flex-1 overflow-auto bg-zinc-950 p-4 text-xs text-zinc-100">{log.text || "No output yet."}</pre>
-  </div>;
+function useLogStream(jobId:string,attemptId:string,stream:StreamName,enabled:boolean,onChunk:(stream:StreamName,text:string)=>void){
+  const [connection,setConnection]=useState<ConnectionState>("connecting"),cursor=useRef<number|undefined>(undefined),decoder=useRef(new TextDecoder());
+  useEffect(()=>{if(!enabled)return;setConnection("connecting");cursor.current=undefined;decoder.current=new TextDecoder();const source=api.openLogStream(jobId,attemptId,stream);source.onopen=()=>setConnection("live");source.onerror=()=>setConnection("reconnecting");source.addEventListener("log",event=>{const chunk=JSON.parse((event as MessageEvent<string>).data) as Chunk,bytes=decodeBase64Bytes(chunk.data),duplicate=cursor.current===undefined?0:Math.max(0,cursor.current-chunk.start_offset);if(duplicate>=bytes.length)return;onChunk(stream,decoder.current.decode(bytes.subarray(duplicate),{stream:true}));cursor.current=chunk.next_offset;setConnection("live")});return()=>source.close()},[jobId,attemptId,stream,enabled,onChunk]);
+  return connection;
 }

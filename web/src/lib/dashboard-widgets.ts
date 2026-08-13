@@ -1,8 +1,8 @@
-export type DashboardWidgetType = "lineplot" | "barplot" | "scatterplot" | "confusion_matrix" | "progress";
-export type DashboardSourceKind = "metric" | "resource" | "matrix" | "progress";
+export type DashboardWidgetType = "lineplot" | "barplot" | "scatterplot" | "confusion_matrix" | "progress" | "logs" | "gauge";
+export type DashboardSourceKind = "metric" | "resource" | "matrix" | "progress" | "log";
 export type DashboardSourceRole = "x" | "y";
 export type DashboardWidgetSource = { kind: DashboardSourceKind; name: string; role?: DashboardSourceRole };
-export type DashboardWidgetSize = { columns: 1 | 2; rows: 1 | 2 };
+export type DashboardWidgetSize = { columns: number; rows: number };
 export type DashboardWidgetPosition = { x: number; y: number };
 
 export type DashboardWidget = {
@@ -12,6 +12,10 @@ export type DashboardWidget = {
   position: DashboardWidgetPosition;
   sources: DashboardWidgetSource[];
   x_axis?: "time" | "step";
+  grid_columns?: 4 | 12;
+  time_range?: "1h" | "6h" | "24h" | "7d" | "all";
+  gauge_max_mode?: "historical" | "fixed";
+  gauge_max_value?: number;
 };
 
 export type DashboardSources = {
@@ -19,6 +23,7 @@ export type DashboardSources = {
   resources: string[];
   matrices: string[];
   progress: boolean;
+  logs?: boolean;
 };
 
 export const widgetCatalog: ReadonlyArray<{ type: DashboardWidgetType; label: string; description: string }> = [
@@ -27,19 +32,22 @@ export const widgetCatalog: ReadonlyArray<{ type: DashboardWidgetType; label: st
   { type: "scatterplot", label: "Scatter plot", description: "Observations plotted by step or capture time." },
   { type: "confusion_matrix", label: "Confusion matrix", description: "Absolute or normalized classification outcomes." },
   { type: "progress", label: "Progress", description: "Global progress, current stage and upcoming milestones." },
+  { type: "logs", label: "Logs", description: "Live stdout, stderr, or both streams." },
+  { type: "gauge", label: "Gauge", description: "Current value against a fixed or historical maximum." },
 ];
 
 export const dashboardSchemaVersion=1;
 
 export function restoreDashboardWidgets(value:unknown):DashboardWidget[]|null{
   if(!Array.isArray(value)||value.length>64)return null;
-  const types=new Set(widgetCatalog.map(item=>item.type)),kinds=new Set<DashboardSourceKind>(["metric","resource","matrix","progress"]);
+  const types=new Set(widgetCatalog.map(item=>item.type)),kinds=new Set<DashboardSourceKind>(["metric","resource","matrix","progress","log"]);
   const widgets:DashboardWidget[]=[];
   for(const candidate of value){
     if(!candidate||typeof candidate!=="object")return null;const item=candidate as Partial<DashboardWidget>;
     if(typeof item.id!=="string"||!item.id||!types.has(item.type as DashboardWidgetType)||!item.size||!item.position||!Array.isArray(item.sources))return null;
     if(item.sources.some(source=>!source||!kinds.has(source.kind)||typeof source.name!=="string"||!source.name))return null;
-    widgets.push({id:item.id,type:item.type as DashboardWidgetType,size:{columns:item.size.columns>=2?2:1,rows:item.size.rows>=2?2:1},position:{x:Math.max(0,Math.min(1,item.position.x||0)),y:Math.max(0,item.position.y||0)},sources:item.sources.map(source=>({...source})),x_axis:item.x_axis==="step"?"step":"time"});
+    const factor=item.grid_columns===12?1:item.grid_columns===4?3:6;
+    widgets.push({id:item.id,type:item.type as DashboardWidgetType,size:{columns:clampColumns(item.size.columns*factor),rows:clampRows(item.size.rows*factor)},position:{x:Math.max(0,Math.min(11,(item.position.x||0)*factor)),y:Math.max(0,(item.position.y||0)*factor)},sources:item.sources.map(source=>({...source})),x_axis:item.x_axis==="step"?"step":"time",grid_columns:12,time_range:validRange(item.time_range)?item.time_range:"all",gauge_max_mode:item.gauge_max_mode==="fixed"?"fixed":"historical",gauge_max_value:typeof item.gauge_max_value==="number"&&Number.isFinite(item.gauge_max_value)&&item.gauge_max_value>0?item.gauge_max_value:undefined});
   }
   if(new Set(widgets.map(widget=>widget.id)).size!==widgets.length)return null;
   return layoutDashboardWidgets(widgets);
@@ -54,10 +62,11 @@ export function defaultDashboardWidgets(sources: DashboardSources): DashboardWid
   return layoutDashboardWidgets(definitions.map(definition => ({
     id: `default-${definition.source.kind}-${safeID(definition.source.name)}`,
     type: definition.type,
-    size: { columns: definition.type === "progress" ? 2 : 1, rows: 1 },
+    size: { columns: definition.type === "progress" ? 12 : 6, rows: 3 },
     position: { x: 0, y: 0 },
     sources: [definition.source],
     x_axis: "time",
+    grid_columns:12,time_range:"all",
   })) as DashboardWidget[]);
 }
 
@@ -67,10 +76,11 @@ export function createDashboardWidget(type: DashboardWidgetType, sources: Dashbo
   return {
     id,
     type,
-    size: { columns: type === "progress" ? 2 : 1, rows: 1 },
+    size: { columns: type === "progress" || type === "logs" ? 12 : 6, rows: type === "logs" ? 6 : 3 },
     position: { x: 0, y: Number.MAX_SAFE_INTEGER },
-    sources: type==="scatterplot"&&numeric.length?[{...numeric[0],role:"x"},{...(numeric[1]??numeric[0]),role:"y"}]:source ? [source] : [],
+    sources: type==="logs"?[{kind:"log",name:"stdout"}]:type==="scatterplot"&&numeric.length?[{...numeric[0],role:"x"},{...(numeric[1]??numeric[0]),role:"y"}]:source ? [source] : [],
     x_axis: "time",
+    grid_columns:12,time_range:"all",gauge_max_mode:"historical",
   };
 }
 
@@ -81,15 +91,15 @@ export function removeDashboardWidget(widgets: DashboardWidget[], id: string) {
 export function layoutDashboardWidgets(widgets: DashboardWidget[]) {
   const occupied = new Set<string>();
   return widgets.map(widget => {
-    const columns = clampSize(widget.size.columns), rows = clampSize(widget.size.rows);
+    const columns = clampColumns(widget.size.columns), rows = clampRows(widget.size.rows);
     let position = { x: 0, y: 0 };
     placement: for (let y = 0; ; y++) {
-      for (let x = 0; x <= 2 - columns; x++) {
+      for (let x = 0; x <= 12 - columns; x++) {
         if (fits(occupied, x, y, columns, rows)) { position = { x, y }; break placement; }
       }
     }
     occupy(occupied, position.x, position.y, columns, rows);
-    return {...widget,size:{columns,rows},position};
+    return {...widget,size:{columns,rows},position,grid_columns:12 as const};
   });
 }
 
@@ -104,17 +114,19 @@ export function moveDashboardWidget(widgets: DashboardWidget[], id: string, targ
 }
 
 export function resizeDashboardWidget(widgets: DashboardWidget[], id: string, size: DashboardWidgetSize) {
-  return layoutDashboardWidgets(widgets.map(widget=>widget.id===id?{...widget,size:{columns:clampSize(size.columns),rows:clampSize(size.rows)}}:widget));
+  return layoutDashboardWidgets(widgets.map(widget=>widget.id===id?{...widget,size:{columns:clampColumns(size.columns),rows:clampRows(size.rows)}}:widget));
 }
 
 export function compatibleSourceKinds(type: DashboardWidgetType): DashboardSourceKind[] {
   if (type === "confusion_matrix") return ["matrix"];
   if (type === "progress") return ["progress"];
+  if(type === "logs") return ["log"];
   return ["metric", "resource"];
 }
 
 function firstCompatibleSource(type: DashboardWidgetType, sources: DashboardSources): DashboardWidgetSource | undefined {
   if (type === "progress") return sources.progress ? { kind: "progress", name: "progress" } : undefined;
+  if(type === "logs")return sources.logs?{kind:"log",name:"stdout"}:undefined;
   if (type === "confusion_matrix") return sources.matrices[0] ? { kind: "matrix", name: sources.matrices[0] } : undefined;
   if (sources.metrics[0]) return { kind: "metric", name: sources.metrics[0] };
   if (sources.resources[0]) return { kind: "resource", name: sources.resources[0] };
@@ -123,6 +135,8 @@ function firstCompatibleSource(type: DashboardWidgetType, sources: DashboardSour
 
 function safeID(value: string) { return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "source"; }
 function newWidgetID() { return typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `widget-${Date.now()}-${Math.random().toString(16).slice(2)}`; }
-function clampSize(value:number):1|2{return value>=2?2:1}
+function clampColumns(value:number){return Math.max(1,Math.min(12,Math.round(value)||1))}
+function clampRows(value:number){return Math.max(1,Math.min(12,Math.round(value)||1))}
+function validRange(value:unknown):value is DashboardWidget["time_range"]{return ["1h","6h","24h","7d","all"].includes(String(value))}
 function fits(occupied:Set<string>,x:number,y:number,columns:number,rows:number){for(let row=y;row<y+rows;row++)for(let column=x;column<x+columns;column++)if(occupied.has(`${column}:${row}`))return false;return true}
 function occupy(occupied:Set<string>,x:number,y:number,columns:number,rows:number){for(let row=y;row<y+rows;row++)for(let column=x;column<x+columns;column++)occupied.add(`${column}:${row}`)}

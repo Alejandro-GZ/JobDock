@@ -16,12 +16,16 @@ type dashboardConfig struct {
 	Widgets []dashboardWidget `json:"widgets"`
 }
 type dashboardWidget struct {
-	ID       string                  `json:"id"`
-	Type     string                  `json:"type"`
-	Size     dashboardWidgetSize     `json:"size"`
-	Position dashboardWidgetPosition `json:"position"`
-	Sources  []dashboardWidgetSource `json:"sources"`
-	XAxis    string                  `json:"x_axis,omitempty"`
+	ID            string                  `json:"id"`
+	Type          string                  `json:"type"`
+	Size          dashboardWidgetSize     `json:"size"`
+	Position      dashboardWidgetPosition `json:"position"`
+	Sources       []dashboardWidgetSource `json:"sources"`
+	XAxis         string                  `json:"x_axis,omitempty"`
+	GridColumns   int                     `json:"grid_columns,omitempty"`
+	TimeRange     string                  `json:"time_range,omitempty"`
+	GaugeMaxMode  string                  `json:"gauge_max_mode,omitempty"`
+	GaugeMaxValue *float64                `json:"gauge_max_value,omitempty"`
 }
 type dashboardWidgetSize struct {
 	Columns int `json:"columns"`
@@ -103,8 +107,8 @@ func validateDashboardConfig(config dashboardConfig) error {
 		return dashboardError("A dashboard may contain at most 64 widgets")
 	}
 	ids := map[string]bool{}
-	validTypes := map[string]bool{"lineplot": true, "barplot": true, "scatterplot": true, "confusion_matrix": true, "progress": true}
-	validKinds := map[string]bool{"metric": true, "resource": true, "matrix": true, "progress": true}
+	validTypes := map[string]bool{"lineplot": true, "barplot": true, "scatterplot": true, "confusion_matrix": true, "progress": true, "logs": true, "gauge": true}
+	validKinds := map[string]bool{"metric": true, "resource": true, "matrix": true, "progress": true, "log": true}
 	for _, widget := range config.Widgets {
 		if len(widget.ID) < 1 || len(widget.ID) > 128 || ids[widget.ID] {
 			return dashboardError("Widget IDs must be unique and contain 1-128 characters")
@@ -113,14 +117,29 @@ func validateDashboardConfig(config dashboardConfig) error {
 		if !validTypes[widget.Type] {
 			return dashboardError("Widget type is not supported")
 		}
-		if widget.Size.Columns < 1 || widget.Size.Columns > 2 || widget.Size.Rows < 1 || widget.Size.Rows > 2 {
-			return dashboardError("Widget size must fit the two-column grid")
+		if widget.Size.Columns < 1 || widget.Size.Columns > 12 || widget.Size.Rows < 1 || widget.Size.Rows > 12 {
+			return dashboardError("Widget size must fit the twelve-column grid")
 		}
-		if widget.Position.X < 0 || widget.Position.X > 1 || widget.Position.Y < 0 || widget.Position.Y > 1024 {
+		if widget.Position.X < 0 || widget.Position.X > 11 || widget.Position.Y < 0 || widget.Position.Y > 4096 {
 			return dashboardError("Widget position is outside the dashboard grid")
+		}
+		if widget.GridColumns != 0 && widget.GridColumns != 4 && widget.GridColumns != 12 {
+			return dashboardError("Widget grid_columns must be 4 or 12 when provided")
 		}
 		if widget.XAxis != "" && widget.XAxis != "time" && widget.XAxis != "step" {
 			return dashboardError("Widget x_axis must be time or step")
+		}
+		if widget.TimeRange != "" && widget.TimeRange != "1h" && widget.TimeRange != "6h" && widget.TimeRange != "24h" && widget.TimeRange != "7d" && widget.TimeRange != "all" {
+			return dashboardError("Widget time_range is invalid")
+		}
+		if widget.GaugeMaxMode != "" && widget.GaugeMaxMode != "historical" && widget.GaugeMaxMode != "fixed" {
+			return dashboardError("Widget gauge_max_mode is invalid")
+		}
+		if widget.GaugeMaxValue != nil && (*widget.GaugeMaxValue <= 0 || *widget.GaugeMaxValue > 1e300) {
+			return dashboardError("Widget gauge_max_value must be a positive finite number")
+		}
+		if widget.Type == "gauge" && widget.GaugeMaxMode == "fixed" && widget.GaugeMaxValue == nil {
+			return dashboardError("A gauge with a fixed maximum requires gauge_max_value")
 		}
 		if len(widget.Sources) > 64 {
 			return dashboardError("A widget may contain at most 64 sources")

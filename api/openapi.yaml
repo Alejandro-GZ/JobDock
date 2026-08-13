@@ -319,10 +319,18 @@ paths:
       responses:
         '200': {description: Attempt-scoped logs, outputs, immutable inputs and metadata, content: {application/zip: {schema: {type: string, format: binary}}}}
         '404': {$ref: '#/components/responses/Problem'}
+  /jobs/{jobId}/attempts/{attemptId}/outputs/{path}:
+    get:
+      operationId: downloadJobAttemptOutput
+      description: Download one regular output file declared by the selected attempt.
+      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDPath'}, {name: path, in: path, required: true, schema: {type: string, minLength: 1}}]
+      responses:
+        '200': {description: Attempt output, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+        '404': {$ref: '#/components/responses/Problem'}
   /jobs/{jobId}/events:
     get:
       operationId: listJobEvents
-      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDQuery'}, {name: after, in: query, schema: {type: integer, format: int64}}]
+      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDQuery'}, {name: after, in: query, schema: {type: integer, format: int64}}, {name: download, in: query, schema: {type: boolean, default: false}}]
       responses: {'200': {description: Ordered job events}}
   /jobs/{jobId}/metrics:
     get:
@@ -1160,7 +1168,7 @@ components:
       additionalProperties: false
       required: [kind, name]
       properties:
-        kind: {type: string, enum: [metric, resource, matrix, progress]}
+        kind: {type: string, enum: [metric, resource, matrix, progress, log]}
         name: {type: string, minLength: 1, maxLength: 128}
         role: {type: string, enum: [x, y]}
     DashboardWidget:
@@ -1169,19 +1177,23 @@ components:
       required: [id, type, size, position, sources]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
-        type: {type: string, enum: [lineplot, barplot, scatterplot, confusion_matrix, progress]}
+        type: {type: string, enum: [lineplot, barplot, scatterplot, confusion_matrix, progress, logs, gauge]}
         size:
           type: object
           additionalProperties: false
           required: [columns, rows]
-          properties: {columns: {type: integer, minimum: 1, maximum: 2}, rows: {type: integer, minimum: 1, maximum: 2}}
+          properties: {columns: {type: integer, minimum: 1, maximum: 12}, rows: {type: integer, minimum: 1, maximum: 12}}
         position:
           type: object
           additionalProperties: false
           required: [x, y]
-          properties: {x: {type: integer, minimum: 0, maximum: 1}, y: {type: integer, minimum: 0, maximum: 1024}}
+          properties: {x: {type: integer, minimum: 0, maximum: 11}, y: {type: integer, minimum: 0, maximum: 4096}}
         sources: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/DashboardWidgetSource'}}
+        grid_columns: {type: integer, enum: [4, 12]}
         x_axis: {type: string, enum: [time, step]}
+        time_range: {type: string, enum: [1h, 6h, 24h, 7d, all]}
+        gauge_max_mode: {type: string, enum: [historical, fixed]}
+        gauge_max_value: {type: number, exclusiveMinimum: 0}
     DashboardPreferenceWrite:
       type: object
       additionalProperties: false

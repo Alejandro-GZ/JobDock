@@ -190,6 +190,18 @@ func TestAttemptFilesRemainIsolatedAndArchiveKeepsInputs(t *testing.T) {
 	if _, err = store.AppendAttemptOutput("job", "attempt-one", "result.txt", 0, bytes.NewBufferString("one")); err != nil {
 		t.Fatal(err)
 	}
+	output, err := store.OpenAttemptOutput("job", "attempt-one", "result.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputData, _ := io.ReadAll(output)
+	_ = output.Close()
+	if string(outputData) != "one" {
+		t.Fatalf("attempt output = %q", outputData)
+	}
+	if _, err = store.OpenAttemptOutput("job", "attempt-one", "../result.txt"); err == nil {
+		t.Fatal("unsafe output path was accepted")
+	}
 	if _, err = store.AppendAttemptLog("job", "attempt-two", "stdout", 0, bytes.NewBufferString("second")); err != nil {
 		t.Fatal(err)
 	}

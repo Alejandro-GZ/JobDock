@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"fmt"
+	"mime"
 	"net/http"
+	"path/filepath"
 
 	"github.com/jobdock/jobdock/internal/domain"
 )
@@ -18,6 +20,49 @@ func (a *API) listJobAttempts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": attempts})
+}
+
+func (a *API) attemptOutput(w http.ResponseWriter, r *http.Request) {
+	job, ok := a.authorizeJob(w, r)
+	if !ok {
+		return
+	}
+	attempt, err := a.store.Attempt(r.Context(), job.ID, r.PathValue("attempt"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	path := r.PathValue("path")
+	allowed := false
+	for _, output := range attempt.Outputs {
+		if output.Path == path {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		writeProblem(w, http.StatusNotFound, "output_not_found", "The requested output does not belong to this attempt")
+		return
+	}
+	if attempt.AttemptNumber == 1 {
+		if err = a.files.PromoteLegacyAttempt(job.ID, attempt.ID); err != nil {
+			writeProblem(w, http.StatusInternalServerError, "attempt_storage_migration_failed", err.Error())
+			return
+		}
+	}
+	file, err := a.files.OpenAttemptOutput(job.ID, attempt.ID, path)
+	if err != nil {
+		writeProblem(w, http.StatusNotFound, "output_not_found", "The requested output is unavailable")
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "output_read_failed", err.Error())
+		return
+	}
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filepath.Base(path)}))
+	http.ServeContent(w, r, filepath.Base(path), info.ModTime(), file)
 }
 
 func (a *API) rerunJob(w http.ResponseWriter, r *http.Request) {

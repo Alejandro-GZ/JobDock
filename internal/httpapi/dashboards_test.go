@@ -59,7 +59,7 @@ func TestDashboardConfigurationPersistsAndFallsBackSafely(t *testing.T) {
 	if initial.SchemaVersion != 1 || string(initial.Widgets) != "null" {
 		t.Fatalf("initial dashboard: %#v", initial)
 	}
-	payload := `{"schema_version":1,"widgets":[{"id":"loss","type":"lineplot","size":{"columns":2,"rows":1},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}],"x_axis":"step"}]}`
+	payload := `{"schema_version":1,"widgets":[{"id":"loss","type":"lineplot","size":{"columns":6,"rows":3},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}],"x_axis":"step","time_range":"6h","grid_columns":12}]}`
 	request, _ := http.NewRequest(http.MethodPut, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard", bytes.NewBufferString(payload))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-CSRF-Token", session.CSRF)
@@ -96,5 +96,17 @@ func TestDashboardValidationRejectsUnsupportedWidgets(t *testing.T) {
 	err := validateDashboardConfig(dashboardConfig{Widgets: []dashboardWidget{{ID: "one", Type: "unknown", Size: dashboardWidgetSize{Columns: 1, Rows: 1}}}})
 	if err == nil {
 		t.Fatal("unsupported widget was accepted")
+	}
+}
+
+func TestDashboardValidationRequiresFixedGaugeMaximum(t *testing.T) {
+	config := dashboardConfig{Widgets: []dashboardWidget{{ID: "gauge", Type: "gauge", Size: dashboardWidgetSize{Columns: 3, Rows: 3}, Sources: []dashboardWidgetSource{{Kind: "metric", Name: "loss"}}, GaugeMaxMode: "fixed"}}}
+	if err := validateDashboardConfig(config); err == nil {
+		t.Fatal("fixed gauge without a maximum was accepted")
+	}
+	maximum := 100.0
+	config.Widgets[0].GaugeMaxValue = &maximum
+	if err := validateDashboardConfig(config); err != nil {
+		t.Fatalf("valid fixed gauge was rejected: %v", err)
 	}
 }
