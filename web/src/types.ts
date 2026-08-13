@@ -18,6 +18,7 @@ export type Secret={id:string;name:string;kind:string;created_at:string};
 export type JobEvent={id:number;job_id?:string;attempt_id?:string;sequence:number;type:string;status?:string;payload:Record<string,unknown>;created_at:string};
 export type JobUpdate={cursor:number;job_id:string;name:string;status:string;version:number;created_at:string};
 export type AuditEvent={id:number;actor_id?:string;action:string;target_type:string;target_id:string;metadata:Record<string,unknown>;created_at:string};
+export type PersonalAccessToken={id:string;user_id:string;name:string;prefix:string;scopes:string[];expires_at?:string;last_used_at?:string;revoked_at?:string;created_at:string};
 export type MetricPoint={cursor?:number;captured_at:string;step?:number;value:number;sample_count:number};
 export type MetricSeries={name:string;points:MetricPoint[];last:number;min:number;max:number;sample_count:number};
 export type MetricSeriesResponse={attempt_id:string;cursor:number;from:string;to:string;resolution_seconds:number;truncated:boolean;series:MetricSeries[]};

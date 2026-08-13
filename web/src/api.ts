@@ -1,4 +1,4 @@
-import type{AuditEvent,Build,BuildPlan,Job,JobAttempt,JobEvent,JobSpec,MetricSeriesResponse,Node,ResourceSeriesResponse,Secret,User}from "./types";
+import type{AuditEvent,Build,BuildPlan,Job,JobAttempt,JobEvent,JobSpec,MetricSeriesResponse,Node,PersonalAccessToken,ResourceSeriesResponse,Secret,User}from "./types";
 import { jobFormData } from "@/lib/job-inputs";
 import { buildFormData,type BuildMode,type DockerfileConfig } from "@/lib/builds";
 let csrfToken="";
@@ -25,6 +25,9 @@ export const api={
   secrets:async()=> (await request<{items:Secret[]|null}>("/secrets")).items??[],createSecret:(name:string,value:string,kind:string)=>request<Secret>("/secrets",{method:"POST",body:JSON.stringify({name,value,kind})}),deleteSecret:(id:string)=>request<void>(`/secrets/${id}`,{method:"DELETE"}),
   users:async()=> (await request<{items:User[]|null}>("/users")).items??[],createUser:(username:string,password:string,role:string)=>request<User>("/users",{method:"POST",body:JSON.stringify({username,password,role})}),
   audit:async()=> (await request<{items:AuditEvent[]|null}>("/audit")).items??[],
+  tokens:()=>request<{items:PersonalAccessToken[];available_scopes:string[]}>("/auth/tokens"),
+  createToken:(name:string,scopes:string[],expires_at?:string)=>request<{token:string;personal_access_token:PersonalAccessToken}>("/auth/tokens",{method:"POST",body:JSON.stringify({name,scopes,expires_at:expires_at||undefined})}),
+  revokeToken:(id:string)=>request<void>(`/auth/tokens/${id}`,{method:"DELETE"}),
 };
 function idempotencyKey(){if(typeof crypto.randomUUID==="function")return crypto.randomUUID();const bytes=crypto.getRandomValues(new Uint8Array(24));return Array.from(bytes,v=>v.toString(16).padStart(2,"0")).join("")}
 function seriesCSV(id:string,kind:"metrics"|"resources",query:string){const params=new URLSearchParams(query);params.set("format","csv");params.set("limit","10000");return `/api/v1/jobs/${encodeURIComponent(id)}/${kind}?${params}`}

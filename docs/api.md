@@ -6,6 +6,12 @@ surfaces served under `/api/v1`.
 
 ## Authentication scopes
 
+Browser requests use the secure session cookie and CSRF token. CLI and CI
+requests use personal access tokens in the `Authorization: Bearer` header.
+Personal tokens are stored only as hashes, can expire or be revoked, and grant
+one or more of `nodes:read`, `jobs:read`, `jobs:write`, `logs:read`, and
+`artifacts:read`. The plaintext secret is returned only by the create response.
+
 - Browser operations use the `jobdock_session` cookie. Mutations also require
   the session's `X-CSRF-Token` value.
 - Agent operations use the revocable node bearer credential returned by

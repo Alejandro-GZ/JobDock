@@ -72,6 +72,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/login", a.login)
 	mux.HandleFunc("POST /api/v1/auth/logout", a.withSession(false, true, a.logout))
 	mux.HandleFunc("GET /api/v1/auth/me", a.withSession(false, false, a.me))
+	mux.HandleFunc("GET /api/v1/auth/tokens", a.withSession(false, false, a.listPersonalAccessTokens))
+	mux.HandleFunc("POST /api/v1/auth/tokens", a.withSession(false, true, a.createPersonalAccessToken))
+	mux.HandleFunc("DELETE /api/v1/auth/tokens/{id}", a.withSession(false, true, a.revokePersonalAccessToken))
 	mux.HandleFunc("GET /api/v1/users", a.withSession(true, false, a.listUsers))
 	mux.HandleFunc("POST /api/v1/users", a.withSession(true, true, a.createUser))
 	mux.HandleFunc("GET /api/v1/audit", a.withSession(true, false, a.listAudit))
@@ -91,25 +94,25 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/builder/assignments/{id}/logs", a.withBuilder(a.putBuildLog))
 	mux.HandleFunc("PUT /api/v1/builder/assignments/{id}/artifact", a.withBuilder(a.putBuildArtifact))
 	mux.HandleFunc("POST /api/v1/builder/assignments/{id}/complete", a.withBuilder(a.completeBuildAssignment))
-	mux.HandleFunc("GET /api/v1/jobs", a.withSession(false, false, a.listJobs))
-	mux.HandleFunc("POST /api/v1/jobs", a.withSession(false, true, a.createJob))
+	mux.HandleFunc("GET /api/v1/jobs", a.withAccess(scopeJobsRead, false, a.listJobs))
+	mux.HandleFunc("POST /api/v1/jobs", a.withAccess(scopeJobsWrite, true, a.createJob))
 	mux.HandleFunc("GET /api/v1/jobs/stream", a.withSession(false, false, a.jobsStream))
-	mux.HandleFunc("GET /api/v1/jobs/{id}", a.withSession(false, false, a.getJob))
+	mux.HandleFunc("GET /api/v1/jobs/{id}", a.withAccess(scopeJobsRead, false, a.getJob))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/attempts", a.withSession(false, false, a.listJobAttempts))
 	mux.HandleFunc("POST /api/v1/jobs/{id}/rerun", a.withSession(false, true, a.rerunJob))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/attempts/{attempt}/archive.zip", a.withSession(false, false, a.attemptArchive))
-	mux.HandleFunc("POST /api/v1/jobs/{id}/stop", a.withSession(false, true, a.stopJob))
+	mux.HandleFunc("POST /api/v1/jobs/{id}/stop", a.withAccess(scopeJobsWrite, true, a.stopJob))
 	mux.HandleFunc("DELETE /api/v1/jobs/{id}", a.withSession(false, true, a.deleteJob))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/events", a.withSession(false, false, a.jobEvents))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/metrics", a.withSession(false, false, a.jobMetrics))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/resources", a.withSession(false, false, a.jobResources))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/series/stream", a.withSession(false, false, a.jobSeriesStream))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/stream", a.withSession(false, false, a.jobStream))
-	mux.HandleFunc("GET /api/v1/jobs/{id}/logs/{stream}", a.withSession(false, false, a.getLogs))
+	mux.HandleFunc("GET /api/v1/jobs/{id}/logs/{stream}", a.withAccess(scopeLogsRead, false, a.getLogs))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/logs/{stream}/tail", a.withSession(false, false, a.tailLogs))
-	mux.HandleFunc("GET /api/v1/jobs/{id}/archive.zip", a.withSession(false, false, a.archive))
+	mux.HandleFunc("GET /api/v1/jobs/{id}/archive.zip", a.withAccess(scopeArtifactsRead, false, a.archive))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/checkpoints/latest.zip", a.withSession(false, false, a.latestCheckpointArchive))
-	mux.HandleFunc("GET /api/v1/nodes", a.withSession(false, false, a.listNodes))
+	mux.HandleFunc("GET /api/v1/nodes", a.withAccess(scopeNodesRead, false, a.listNodes))
 	mux.HandleFunc("PATCH /api/v1/nodes/{id}", a.withSession(true, true, a.updateNodeMetadata))
 	mux.HandleFunc("DELETE /api/v1/nodes/{id}", a.withSession(true, true, a.deleteNode))
 	mux.HandleFunc("POST /api/v1/nodes/enrollment-tokens", a.withSession(true, true, a.createEnrollmentToken))
@@ -1198,6 +1201,38 @@ func (a *API) withSession(admin, csrf bool, next http.HandlerFunc) http.HandlerF
 			return
 		}
 		next(w, r.WithContext(context.WithValue(r.Context(), userContextKey{}, session)))
+	}
+}
+
+// withAccess accepts a browser session or a scoped personal access token. CSRF
+// applies only to cookie authentication; bearer credentials are never accepted
+// from cookies and therefore cannot be used for browser request forgery.
+func (a *API) withAccess(requiredScope string, csrf bool, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if token := bearer(r); token != "" {
+			pat, err := a.store.PersonalAccessTokenByHash(r.Context(), auth.TokenHash(token))
+			if err != nil {
+				writeProblem(w, http.StatusUnauthorized, "invalid_personal_access_token", "Personal access token is invalid")
+				return
+			}
+			if pat.RevokedAt != nil {
+				writeProblem(w, http.StatusUnauthorized, "personal_access_token_revoked", "Personal access token has been revoked")
+				return
+			}
+			if pat.ExpiresAt != nil && !pat.ExpiresAt.After(time.Now().UTC()) {
+				writeProblem(w, http.StatusUnauthorized, "personal_access_token_expired", "Personal access token has expired")
+				return
+			}
+			if !hasScope(pat.Scopes, requiredScope) {
+				writeProblem(w, http.StatusForbidden, "insufficient_scope", "Personal access token does not grant the required scope")
+				return
+			}
+			_ = a.store.TouchPersonalAccessToken(r.Context(), pat.ID, time.Now().UTC())
+			session := store.Session{User: pat.User}
+			next(w, r.WithContext(context.WithValue(r.Context(), userContextKey{}, session)))
+			return
+		}
+		a.withSession(false, csrf, next)(w, r)
 	}
 }
 func (a *API) withAgent(next http.HandlerFunc) http.HandlerFunc {
