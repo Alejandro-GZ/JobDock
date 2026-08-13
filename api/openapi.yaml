@@ -443,7 +443,7 @@ paths:
       parameters:
         - {$ref: '#/components/parameters/JobID'}
         - {$ref: '#/components/parameters/AttemptIDQuery'}
-        - {name: stream, in: path, required: true, schema: {type: string, enum: [stdout, stderr]}}
+        - {name: stream, in: path, required: true, schema: {type: string, enum: [stdout, stderr, combined]}}
         - {name: after, in: query, schema: {oneOf: [{type: integer, format: int64, minimum: 0}, {type: string, const: tail}], default: tail}}
         - {name: Last-Event-ID, in: header, description: Last acknowledged byte offset used for automatic SSE reconnection, schema: {type: integer, format: int64, minimum: 0}}
       responses:
@@ -671,7 +671,7 @@ paths:
       operationId: uploadJobLogChunk
       parameters:
         - {$ref: '#/components/parameters/JobID'}
-        - {$ref: '#/components/parameters/LogStream'}
+        - {$ref: '#/components/parameters/AgentLogStream'}
         - {$ref: '#/components/parameters/AttemptIDQuery'}
         - {$ref: '#/components/parameters/UploadOffset'}
       requestBody:
@@ -809,6 +809,7 @@ components:
     CSRFToken: {name: X-CSRF-Token, in: header, required: true, schema: {type: string}}
     IdempotencyKey: {name: Idempotency-Key, in: header, required: false, schema: {type: string, minLength: 16, maxLength: 128}}
     LogStream: {name: stream, in: path, required: true, schema: {type: string, enum: [stdout, stderr]}}
+    AgentLogStream: {name: stream, in: path, required: true, schema: {type: string, enum: [stdout, stderr, .order]}}
     UploadOffset: {name: offset, in: query, required: true, schema: {type: integer, format: int64, minimum: 0}}
     AttemptIDQuery: {name: attempt_id, in: query, description: Defaults to the current attempt, schema: {type: string, format: uuid}}
     SeriesFrom: {name: from, in: query, description: Inclusive RFC3339 start, schema: {type: string, format: date-time}}
@@ -1178,6 +1179,7 @@ components:
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
         type: {type: string, enum: [lineplot, barplot, scatterplot, confusion_matrix, progress, logs, gauge]}
+        title: {type: string, maxLength: 120, description: Optional compact overlay title. An omitted or empty title reserves no plot space.}
         size:
           type: object
           additionalProperties: false

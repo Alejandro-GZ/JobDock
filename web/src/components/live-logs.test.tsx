@@ -19,6 +19,6 @@ describe("LiveLogs",()=>{
     expect(screen.queryByText("stdout")).toBeNull();act(()=>FakeEventSource.instances[0].emit("failure"));const output=screen.getByText("failure");expect(output.className).toContain("text-red-300");expect(FakeEventSource.instances[0].url).toContain("/logs/stderr/tail");
   });
   it("merges stdout and stderr into one console while preserving stderr color",()=>{
-    vi.stubGlobal("EventSource",FakeEventSource);render(<LiveLogs jobId="job" attemptId="attempt" streams={["stdout","stderr"]} embedded/>);act(()=>{FakeEventSource.instances[0].emit("ready\n","stdout");FakeEventSource.instances[1].emit("warning\n","stderr")});expect(screen.getByText("ready").className).toBe("");expect(screen.getByText("warning").className).toContain("text-red-300");expect(screen.getAllByText("Logs").length).toBeGreaterThan(0);
+    vi.stubGlobal("EventSource",FakeEventSource);render(<LiveLogs jobId="job" attemptId="attempt" streams={["stdout","stderr"]} embedded/>);expect(FakeEventSource.instances[0].url).toContain("/logs/combined/tail");act(()=>{FakeEventSource.instances[0].onopen?.();FakeEventSource.instances[0].emit("ready\n","stdout");FakeEventSource.instances[0].emit("warning\n","stderr")});expect(screen.getByText("ready").className).toBe("");expect(screen.getByText("warning").className).toContain("text-red-300");expect(screen.getAllByText("Logs").length).toBeGreaterThan(0);
   });
 });

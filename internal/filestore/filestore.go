@@ -574,7 +574,7 @@ func (s *Store) AppendAttemptLog(jobID, attemptID, stream string, offset int64, 
 }
 
 func (s *Store) appendLog(jobID, attemptID, stream string, offset int64, source io.Reader) (int64, error) {
-	if stream != "stdout" && stream != "stderr" {
+	if !validLogStream(stream) {
 		return 0, errors.New("invalid log stream")
 	}
 	dir, err := s.dataDir(jobID, attemptID)
@@ -666,7 +666,7 @@ func (s *Store) readLogChunk(jobID, attemptID, stream string, offset, limit int6
 	if err != nil {
 		return nil, offset, err
 	}
-	if stream != "stdout" && stream != "stderr" {
+	if !validLogStream(stream) {
 		return nil, offset, errors.New("invalid log stream")
 	}
 	file, err := os.Open(filepath.Join(dir, "logs", stream+".log"))
@@ -693,7 +693,7 @@ func (s *Store) AttemptLogSize(jobID, attemptID, stream string) (int64, error) {
 }
 
 func (s *Store) logSize(jobID, attemptID, stream string) (int64, error) {
-	if stream != "stdout" && stream != "stderr" {
+	if !validLogStream(stream) {
 		return 0, errors.New("invalid log stream")
 	}
 	dir, err := s.dataDir(jobID, attemptID)
@@ -708,6 +708,25 @@ func (s *Store) logSize(jobID, attemptID, stream string) (int64, error) {
 		return 0, err
 	}
 	return info.Size(), nil
+}
+
+func (s *Store) AttemptLogExists(jobID, attemptID, stream string) (bool, error) {
+	if !validLogStream(stream) {
+		return false, errors.New("invalid log stream")
+	}
+	dir, err := s.dataDir(jobID, attemptID)
+	if err != nil {
+		return false, err
+	}
+	info, err := os.Stat(filepath.Join(dir, "logs", stream+".log"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil && info.Mode().IsRegular(), err
+}
+
+func validLogStream(stream string) bool {
+	return stream == "stdout" || stream == "stderr" || stream == ".order"
 }
 
 func (s *Store) AppendOutput(jobID, relativePath string, offset int64, source io.Reader) (int64, error) {
@@ -993,6 +1012,9 @@ func (s *Store) Archive(jobID string, destination io.Writer) error {
 			}
 			return nil
 		}
+		if entry.Name() == ".order.log" {
+			return nil
+		}
 		info, err := entry.Info()
 		if err != nil {
 			return err
@@ -1097,6 +1119,9 @@ func appendDirectoryToZip(archive *zip.Writer, root, prefix string) error {
 		if walkErr != nil || entry.IsDir() {
 			return walkErr
 		}
+		if entry.Name() == ".order.log" {
+			return nil
+		}
 		info, err := entry.Info()
 		if err != nil || !info.Mode().IsRegular() {
 			return err
@@ -1138,6 +1163,9 @@ func archiveDirectory(dir string, destination io.Writer) error {
 			return walkErr
 		}
 		if entry.IsDir() {
+			return nil
+		}
+		if entry.Name() == ".order.log" {
 			return nil
 		}
 		info, err := entry.Info()

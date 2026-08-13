@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -208,6 +209,24 @@ func TestLoginAndIdempotentJobCreation(t *testing.T) {
 	resumedChunk := readLogSSE(t, server.Client(), server.URL+"/api/v1/jobs/"+jobs[0].ID+"/logs/stdout/tail?after=0", cookie, "5")
 	if resumedChunk.StartOffset != 5 || resumedChunk.NextOffset != 11 || string(resumedChunk.Data) != " world" {
 		t.Fatalf("resumed log chunk downloaded old bytes: %#v", resumedChunk)
+	}
+	if _, err = files.AppendLog(jobs[0].ID, "stderr", 0, bytes.NewBufferString("warning")); err != nil {
+		t.Fatal(err)
+	}
+	firstOrder, _ := json.Marshal(combinedLogOrder{Sequence: 1, Stream: "stdout", StartOffset: 0, NextOffset: 5})
+	secondOrder, _ := json.Marshal(combinedLogOrder{Sequence: 2, Stream: "stderr", StartOffset: 0, NextOffset: 7})
+	orderData := append(append(firstOrder, '\n'), append(secondOrder, '\n')...)
+	if _, err = files.AppendLog(jobs[0].ID, ".order", 0, bytes.NewReader(orderData)); err != nil {
+		t.Fatal(err)
+	}
+	combinedURL := server.URL + "/api/v1/jobs/" + jobs[0].ID + "/logs/combined/tail?after=0"
+	orderedFirst := readLogSSE(t, server.Client(), combinedURL, cookie, "")
+	if orderedFirst.Stream != "stdout" || string(orderedFirst.Data) != "hello" {
+		t.Fatalf("first combined frame: %#v", orderedFirst)
+	}
+	orderedSecond := readLogSSE(t, server.Client(), combinedURL, cookie, strconv.Itoa(len(firstOrder)+1))
+	if orderedSecond.Stream != "stderr" || string(orderedSecond.Data) != "warning" {
+		t.Fatalf("second combined frame: %#v", orderedSecond)
 	}
 }
 

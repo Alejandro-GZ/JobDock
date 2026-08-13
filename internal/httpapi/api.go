@@ -458,6 +458,10 @@ func (a *API) getLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stream := r.PathValue("stream")
+	if stream != "stdout" && stream != "stderr" {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_log_stream", "Log stream must be stdout or stderr")
+		return
+	}
 	attemptID, ok := a.attemptIDForRequest(w, r, job)
 	if !ok {
 		return

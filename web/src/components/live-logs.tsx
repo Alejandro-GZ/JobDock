@@ -18,11 +18,18 @@ export function LiveLogs({ jobId, attemptId, streams=["stdout","stderr"], embedd
     while(next.length>1&&length>visibleLimit){length-=next[0].text.length;next=next.slice(1)}
     return next;
   }),[]);
-  const stdout=useLogStream(jobId,attemptId,"stdout",streams.includes("stdout"),append),stderr=useLogStream(jobId,attemptId,"stderr",streams.includes("stderr"),append);
+  const wantsCombined=streams.includes("stdout")&&streams.includes("stderr"),combined=useCombinedLogStream(jobId,attemptId,wantsCombined,append),useFallback=wantsCombined&&combined.fallback;
+  const stdout=useLogStream(jobId,attemptId,"stdout",streams.includes("stdout")&&(!wantsCombined||useFallback),append),stderr=useLogStream(jobId,attemptId,"stderr",streams.includes("stderr")&&(!wantsCombined||useFallback),append);
   useEffect(()=>{if(output.current)output.current.scrollTop=output.current.scrollHeight},[fragments]);
-  const states=streams.map(stream=>stream==="stdout"?stdout:stderr),live=states.length>0&&states.every(state=>state==="live");
+  const states=wantsCombined&&!useFallback?[combined.connection]:streams.map(stream=>stream==="stdout"?stdout:stderr),live=states.length>0&&states.every(state=>state==="live");
   const console=<div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border"><div className="flex items-center border-b bg-muted/40 px-3 py-2 text-xs"><span className="font-medium">Logs</span>{actions&&<span className="ml-1">{actions}</span>}<span className={live?"ml-auto flex items-center gap-1.5 text-emerald-600":"ml-auto flex items-center gap-1.5 text-amber-600"} title={live?"Receiving incremental log updates":"The stream will reconnect automatically"}>{live?<Radio className="size-3.5"/>:<AlertCircle className="size-3.5"/>}{live?"Live":states.some(state=>state==="reconnecting")?"Reconnecting":"Connecting"}</span></div>{truncated&&<p className="border-b bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300">Earlier output is hidden to keep the browser responsive. The complete log remains available in the ZIP.</p>}<pre ref={output} className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap bg-zinc-950 p-4 font-mono text-xs text-zinc-100">{fragments.length?fragments.map(fragment=><span key={fragment.id} className={fragment.stream==="stderr"?"text-red-300":undefined}>{fragment.text}</span>):"No output yet."}</pre></div>;
   return embedded?<section className="flex h-full min-h-0 flex-col rounded-md bg-card">{console}</section>:<div className="h-[calc(100dvh-13rem)] min-h-[430px]">{console}</div>;
+}
+
+function useCombinedLogStream(jobId:string,attemptId:string,enabled:boolean,onChunk:(stream:StreamName,text:string)=>void){
+  const [connection,setConnection]=useState<ConnectionState>("connecting"),[fallback,setFallback]=useState(false),decoders=useRef<Record<StreamName,TextDecoder>>({stdout:new TextDecoder(),stderr:new TextDecoder()});
+  useEffect(()=>{if(!enabled)return;setConnection("connecting");setFallback(false);decoders.current={stdout:new TextDecoder(),stderr:new TextDecoder()};let opened=false;const source=api.openLogStream(jobId,attemptId,"combined");source.onopen=()=>{opened=true;setConnection("live")};source.onerror=()=>{if(!opened){source.close();setFallback(true)}else setConnection("reconnecting")};source.addEventListener("log",event=>{const chunk=JSON.parse((event as MessageEvent<string>).data) as Chunk,bytes=decodeBase64Bytes(chunk.data);onChunk(chunk.stream,decoders.current[chunk.stream].decode(bytes,{stream:true}));setConnection("live")});return()=>source.close()},[jobId,attemptId,enabled,onChunk]);
+  return{connection,fallback};
 }
 
 function useLogStream(jobId:string,attemptId:string,stream:StreamName,enabled:boolean,onChunk:(stream:StreamName,text:string)=>void){

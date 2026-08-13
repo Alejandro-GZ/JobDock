@@ -47,16 +47,18 @@ type Agent struct {
 
 type runtimeAssignment struct {
 	domain.Assignment
-	ContainerID   string             `json:"container_id"`
-	Sequence      int64              `json:"sequence"`
-	StdoutOffset  int64              `json:"stdout_offset"`
-	StderrOffset  int64              `json:"stderr_offset"`
-	Completed     bool               `json:"completed"`
-	StopRequested bool               `json:"stop_requested"`
-	mu            sync.Mutex         `json:"-"`
-	eventMu       sync.Mutex         `json:"-"`
-	checkpointMu  sync.Mutex         `json:"-"`
-	cancel        context.CancelFunc `json:"-"`
+	ContainerID    string             `json:"container_id"`
+	Sequence       int64              `json:"sequence"`
+	StdoutOffset   int64              `json:"stdout_offset"`
+	StderrOffset   int64              `json:"stderr_offset"`
+	LogOrderOffset int64              `json:"log_order_offset"`
+	LogSequence    int64              `json:"log_sequence"`
+	Completed      bool               `json:"completed"`
+	StopRequested  bool               `json:"stop_requested"`
+	mu             sync.Mutex         `json:"-"`
+	eventMu        sync.Mutex         `json:"-"`
+	checkpointMu   sync.Mutex         `json:"-"`
+	cancel         context.CancelFunc `json:"-"`
 }
 
 type pollResponse struct {
@@ -69,6 +71,13 @@ type credentialState struct {
 	NodeID     string    `json:"node_id"`
 	Credential string    `json:"credential"`
 	RotatedAt  time.Time `json:"rotated_at"`
+}
+
+type logOrderRecord struct {
+	Sequence    int64  `json:"sequence"`
+	Stream      string `json:"stream"`
+	StartOffset int64  `json:"start_offset"`
+	NextOffset  int64  `json:"next_offset"`
 }
 
 type apiError struct {
@@ -508,7 +517,7 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 func (a *Agent) streamLogs(ctx context.Context, record *runtimeAssignment, logsDir string) {
 	stdoutRedactor, stderrRedactor := newRedactor(record.Secrets), newRedactor(record.Secrets)
 	files := map[string]*os.File{}
-	for _, stream := range []string{"stdout", "stderr"} {
+	for _, stream := range []string{"stdout", "stderr", ".order"} {
 		file, err := os.OpenFile(filepath.Join(logsDir, stream+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 		if err != nil {
 			return
@@ -525,17 +534,48 @@ func (a *Agent) streamLogs(ctx context.Context, record *runtimeAssignment, logsD
 		if len(safe) == 0 {
 			return nil
 		}
-		if _, err := files[stream].Write(safe); err != nil {
-			return err
-		}
-		return a.syncLog(ctx, record, stream, filepath.Join(logsDir, stream+".log"))
+		return a.appendOrderedLog(ctx, record, files[stream], files[".order"], stream, safe, logsDir)
 	})
-	for stream, redactor := range map[string]*streamRedactor{"stdout": stdoutRedactor, "stderr": stderrRedactor} {
+	for _, item := range []struct {
+		stream   string
+		redactor *streamRedactor
+	}{{"stdout", stdoutRedactor}, {"stderr", stderrRedactor}} {
+		stream, redactor := item.stream, item.redactor
 		if tail := redactor.Flush(); len(tail) > 0 {
-			_, _ = files[stream].Write(tail)
+			_ = a.appendOrderedLog(ctx, record, files[stream], files[".order"], stream, tail, logsDir)
 		}
 		_ = a.syncLog(ctx, record, stream, filepath.Join(logsDir, stream+".log"))
 	}
+}
+
+func (a *Agent) appendOrderedLog(ctx context.Context, record *runtimeAssignment, streamFile, orderFile *os.File, stream string, data []byte, logsDir string) error {
+	info, err := streamFile.Stat()
+	if err != nil {
+		return err
+	}
+	start := info.Size()
+	if _, err = streamFile.Write(data); err != nil {
+		return err
+	}
+	record.mu.Lock()
+	record.LogSequence++
+	order := logOrderRecord{Sequence: record.LogSequence, Stream: stream, StartOffset: start, NextOffset: start + int64(len(data))}
+	record.mu.Unlock()
+	encoded, err := json.Marshal(order)
+	if err != nil {
+		return err
+	}
+	encoded = append(encoded, '\n')
+	if _, err = orderFile.Write(encoded); err != nil {
+		return err
+	}
+	// Persist both pieces locally before either upload. If connectivity fails,
+	// the next frame resumes the stream first and then publishes every pending
+	// order record, so no emitted frame disappears from the combined timeline.
+	if err = a.syncLog(ctx, record, stream, filepath.Join(logsDir, stream+".log")); err != nil {
+		return err
+	}
+	return a.syncLog(ctx, record, ".order", filepath.Join(logsDir, ".order.log"))
 }
 
 func (a *Agent) syncLog(ctx context.Context, record *runtimeAssignment, stream, path string) error {
@@ -543,6 +583,8 @@ func (a *Agent) syncLog(ctx context.Context, record *runtimeAssignment, stream, 
 	offset := record.StdoutOffset
 	if stream == "stderr" {
 		offset = record.StderrOffset
+	} else if stream == ".order" {
+		offset = record.LogOrderOffset
 	}
 	record.mu.Unlock()
 	file, err := os.Open(path)
@@ -565,8 +607,10 @@ func (a *Agent) syncLog(ctx context.Context, record *runtimeAssignment, stream, 
 			record.mu.Lock()
 			if stream == "stdout" {
 				record.StdoutOffset = offset
-			} else {
+			} else if stream == "stderr" {
 				record.StderrOffset = offset
+			} else {
+				record.LogOrderOffset = offset
 			}
 			record.mu.Unlock()
 			_ = a.save(record)
