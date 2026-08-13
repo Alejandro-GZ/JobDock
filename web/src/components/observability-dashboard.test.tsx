@@ -46,4 +46,22 @@ describe("ObservabilityDashboard",()=>{
     expect(screen.getByRole("combobox",{name:"X series"})).toBeTruthy();
     expect(screen.getByRole("combobox",{name:"Y series"})).toBeTruthy();
   });
+
+  it("offers accessible reorder, resize, and default-layout actions",async()=>{
+    const user=userEvent.setup(),sources=[
+      {kind:"metric" as const,name:"loss",title:"loss",unit:"ratio",points:[{timestamp:1_000,value:.8}]},
+      {kind:"metric" as const,name:"accuracy",title:"accuracy",unit:"ratio",points:[{timestamp:1_000,value:.6}]},
+    ];
+    render(<TooltipProvider><ObservabilityDashboard attemptID="attempt-layout" ready numericSources={sources} matrices={[]} markers={[]} metricsDownloadURL="/metrics.csv" resourcesDownloadURL="/resources.csv"/></TooltipProvider>);
+    await waitFor(()=>expect(document.querySelectorAll("[data-widget-id]")).toHaveLength(2));
+    const initial=[...document.querySelectorAll<HTMLElement>("[data-widget-id]")].map(item=>item.dataset.widgetId);
+    await user.click(screen.getAllByRole("button",{name:"Move or resize widget"})[1]);
+    await user.click(await screen.findByText("Move earlier"));
+    expect([...document.querySelectorAll<HTMLElement>("[data-widget-id]")].map(item=>item.dataset.widgetId)).toEqual(initial.reverse());
+    await user.click(screen.getAllByRole("button",{name:"Move or resize widget"})[0]);
+    await user.click(await screen.findByText("Use full width"));
+    expect(document.querySelector<HTMLElement>("[data-widget-id]")?.dataset.size).toBe("2x1");
+    await user.click(screen.getByRole("button",{name:"Restore default layout"}));
+    expect(document.querySelector<HTMLElement>("[data-widget-id]")?.dataset.size).toBe("1x1");
+  });
 });

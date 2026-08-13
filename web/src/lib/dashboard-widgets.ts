@@ -63,13 +63,32 @@ export function removeDashboardWidget(widgets: DashboardWidget[], id: string) {
 }
 
 export function layoutDashboardWidgets(widgets: DashboardWidget[]) {
-  let x=0,y=0;
-  return widgets.map(widget=>{
-    if(widget.size.columns===2&&x!==0){x=0;y+=1}
-    const positioned={...widget,position:{x,y}};
-    if(widget.size.columns===2){x=0;y+=widget.size.rows}else{x+=1;if(x===2){x=0;y+=widget.size.rows}}
-    return positioned;
+  const occupied = new Set<string>();
+  return widgets.map(widget => {
+    const columns = clampSize(widget.size.columns), rows = clampSize(widget.size.rows);
+    let position = { x: 0, y: 0 };
+    placement: for (let y = 0; ; y++) {
+      for (let x = 0; x <= 2 - columns; x++) {
+        if (fits(occupied, x, y, columns, rows)) { position = { x, y }; break placement; }
+      }
+    }
+    occupy(occupied, position.x, position.y, columns, rows);
+    return {...widget,size:{columns,rows},position};
   });
+}
+
+export function moveDashboardWidget(widgets: DashboardWidget[], id: string, target: string | "earlier" | "later") {
+  const ordered = [...widgets].sort((a,b)=>a.position.y-b.position.y||a.position.x-b.position.x);
+  const from = ordered.findIndex(widget=>widget.id===id);
+  const to = target === "earlier" ? from-1 : target === "later" ? from+1 : ordered.findIndex(widget=>widget.id===target);
+  if (from < 0 || to < 0 || to >= ordered.length || from === to) return layoutDashboardWidgets(ordered);
+  const [item] = ordered.splice(from,1);
+  ordered.splice(to,0,item);
+  return layoutDashboardWidgets(ordered);
+}
+
+export function resizeDashboardWidget(widgets: DashboardWidget[], id: string, size: DashboardWidgetSize) {
+  return layoutDashboardWidgets(widgets.map(widget=>widget.id===id?{...widget,size:{columns:clampSize(size.columns),rows:clampSize(size.rows)}}:widget));
 }
 
 export function compatibleSourceKinds(type: DashboardWidgetType): DashboardSourceKind[] {
@@ -88,3 +107,6 @@ function firstCompatibleSource(type: DashboardWidgetType, sources: DashboardSour
 
 function safeID(value: string) { return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "source"; }
 function newWidgetID() { return typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `widget-${Date.now()}-${Math.random().toString(16).slice(2)}`; }
+function clampSize(value:number):1|2{return value>=2?2:1}
+function fits(occupied:Set<string>,x:number,y:number,columns:number,rows:number){for(let row=y;row<y+rows;row++)for(let column=x;column<x+columns;column++)if(occupied.has(`${column}:${row}`))return false;return true}
+function occupy(occupied:Set<string>,x:number,y:number,columns:number,rows:number){for(let row=y;row<y+rows;row++)for(let column=x;column<x+columns;column++)occupied.add(`${column}:${row}`)}

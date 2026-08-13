@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Activity, BarChart3, Download, LineChart, Plus, ScatterChart, Settings2, Target, Trash2, Workflow } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent, type ReactNode } from "react";
+import { Activity, BarChart3, Download, GripVertical, LineChart, Maximize2, Plus, RotateCcw, ScatterChart, Settings2, Target, Trash2, Workflow } from "lucide-react";
 import { ConfusionMatrixWidget } from "@/components/confusion-matrix-widget";
 import { ObservationPlot } from "@/components/observation-plot";
 import { ProgressWidget } from "@/components/progress-widget";
@@ -10,29 +10,33 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { createDashboardWidget, defaultDashboardWidgets, layoutDashboardWidgets, removeDashboardWidget, widgetCatalog, type DashboardSourceKind, type DashboardSources, type DashboardWidget, type DashboardWidgetType } from "@/lib/dashboard-widgets";
+import { createDashboardWidget, defaultDashboardWidgets, layoutDashboardWidgets, moveDashboardWidget, removeDashboardWidget, resizeDashboardWidget, widgetCatalog, type DashboardSourceKind, type DashboardSources, type DashboardWidget, type DashboardWidgetSize, type DashboardWidgetType } from "@/lib/dashboard-widgets";
 import type { SeriesPoint } from "@/lib/series";
 import type { MatrixObservation, ProgressState } from "@/types";
 
 export type NumericWidgetSource = { kind: "metric" | "resource"; name: string; title: string; unit: string; points: SeriesPoint[]; color?: string; format?: (value:number)=>string; summary?: {last:number;min:number;max:number} };
 
 export function ObservabilityDashboard({ attemptID, ready, numericSources, progress, matrices, markers, metricsDownloadURL, resourcesDownloadURL, live }: { attemptID: string; ready: boolean; numericSources: NumericWidgetSource[]; progress?: ProgressState; matrices: MatrixObservation[]; markers: ChartMarker[]; metricsDownloadURL: string; resourcesDownloadURL: string; live?: ReactNode }) {
-  const [widgets,setWidgets]=useState<DashboardWidget[]>([]),initializedAttempt=useRef("");
+  const [widgets,setWidgets]=useState<DashboardWidget[]>([]),[dragging,setDragging]=useState(""),initializedAttempt=useRef("");
   const sources=useMemo<DashboardSources>(()=>({metrics:numericSources.filter(item=>item.kind==="metric").map(item=>item.name),resources:numericSources.filter(item=>item.kind==="resource").map(item=>item.name),matrices:matrices.map(item=>item.name),progress:hasProgress(progress)}),[numericSources,matrices,progress]);
   useEffect(()=>{if(!ready||initializedAttempt.current===attemptID)return;initializedAttempt.current=attemptID;setWidgets(defaultDashboardWidgets(sources))},[attemptID,ready,sources]);
   const add=(type:DashboardWidgetType)=>setWidgets(current=>layoutDashboardWidgets([...current,createDashboardWidget(type,sources)]));
   const remove=(id:string)=>setWidgets(current=>removeDashboardWidget(current,id));
   const update=(next:DashboardWidget)=>setWidgets(current=>current.map(widget=>widget.id===next.id?next:widget));
+  const move=(id:string,target:string|"earlier"|"later")=>setWidgets(current=>moveDashboardWidget(current,id,target));
+  const resize=(id:string,size:DashboardWidgetSize)=>setWidgets(current=>resizeDashboardWidget(current,id,size));
+  const reset=()=>setWidgets(defaultDashboardWidgets(sources));
+  const drop=(event:DragEvent,id:string)=>{event.preventDefault();const source=event.dataTransfer.getData("text/jobdock-widget")||dragging;if(source&&source!==id)move(source,id);setDragging("")};
   const ordered=[...widgets].sort((a,b)=>a.position.y-b.position.y||a.position.x-b.position.x);
   return <section aria-label="Metrics dashboard">
-    <div className="mb-2 flex h-8 items-center gap-1.5"><h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Dashboard</h2>{live}<DownloadButton href={metricsDownloadURL} label="Download SDK metrics CSV"/><DownloadButton href={resourcesDownloadURL} label="Download resources CSV"/><div className="ml-auto"><AddWidgetMenu onAdd={add}/></div></div>
-    {!ready?<div className="min-h-[320px] animate-pulse rounded-md border bg-muted/30"/>:ordered.length===0?<EmptyDashboard onAdd={add}/>:<div className="grid gap-2 xl:grid-cols-2">{ordered.map(widget=><div key={widget.id} data-widget-id={widget.id} data-widget-type={widget.type} data-position={`${widget.position.x},${widget.position.y}`} data-size={`${widget.size.columns}x${widget.size.rows}`} className={cn("min-h-[320px]",widget.size.columns===2&&"xl:col-span-2")}><DashboardWidgetView widget={widget} numericSources={numericSources} progress={progress} matrices={matrices} markers={markers} onUpdate={update} onRemove={()=>remove(widget.id)}/></div>)}</div>}
+    <div className="mb-2 flex h-8 items-center gap-1.5"><h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Dashboard</h2>{live}<DownloadButton href={metricsDownloadURL} label="Download SDK metrics CSV"/><DownloadButton href={resourcesDownloadURL} label="Download resources CSV"/><Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="size-6" aria-label="Restore default layout" onClick={reset}><RotateCcw className="size-3"/></Button></TooltipTrigger><TooltipContent>Restore default layout</TooltipContent></Tooltip><div className="ml-auto"><AddWidgetMenu onAdd={add}/></div></div>
+    {!ready?<div className="min-h-[320px] animate-pulse rounded-md border bg-muted/30"/>:ordered.length===0?<EmptyDashboard onAdd={add}/>:<div className="grid grid-cols-1 gap-2 xl:grid-cols-2">{ordered.map((widget,index)=><div key={widget.id} data-widget-id={widget.id} data-widget-type={widget.type} data-position={`${widget.position.x},${widget.position.y}`} data-size={`${widget.size.columns}x${widget.size.rows}`} onDragOver={event=>event.preventDefault()} onDrop={event=>drop(event,widget.id)} className={cn("min-h-[320px] transition-opacity",widget.size.columns===2&&"xl:col-span-2",widget.size.rows===2&&"min-h-[648px]",dragging===widget.id&&"opacity-50")}><DashboardWidgetView widget={widget} numericSources={numericSources} progress={progress} matrices={matrices} markers={markers} onUpdate={update} onMove={direction=>move(widget.id,direction)} onResize={size=>resize(widget.id,size)} onDragStart={event=>{event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/jobdock-widget",widget.id);setDragging(widget.id)}} onDragEnd={()=>setDragging("")} canMoveEarlier={index>0} canMoveLater={index<ordered.length-1} onRemove={()=>remove(widget.id)}/></div>)}</div>}
   </section>;
 }
 
-function DashboardWidgetView({widget,numericSources,progress,matrices,markers,onUpdate,onRemove}:{widget:DashboardWidget;numericSources:NumericWidgetSource[];progress?:ProgressState;matrices:MatrixObservation[];markers:ChartMarker[];onUpdate:(widget:DashboardWidget)=>void;onRemove:()=>void}){
+function DashboardWidgetView({widget,numericSources,progress,matrices,markers,onUpdate,onMove,onResize,onDragStart,onDragEnd,canMoveEarlier,canMoveLater,onRemove}:{widget:DashboardWidget;numericSources:NumericWidgetSource[];progress?:ProgressState;matrices:MatrixObservation[];markers:ChartMarker[];onUpdate:(widget:DashboardWidget)=>void;onMove:(direction:"earlier"|"later")=>void;onResize:(size:DashboardWidgetSize)=>void;onDragStart:(event:DragEvent<HTMLElement>)=>void;onDragEnd:()=>void;canMoveEarlier:boolean;canMoveLater:boolean;onRemove:()=>void}){
   const configurable=widget.type==="lineplot"||widget.type==="barplot"||widget.type==="scatterplot";
-  const action=<div className="flex">{configurable&&<ConfigureWidget widget={widget} sources={numericSources} onUpdate={onUpdate}/>}<RemoveWidgetButton onRemove={onRemove}/></div>;
+  const action=<div className="flex"><LayoutControls widget={widget} onMove={onMove} onResize={onResize} onDragStart={onDragStart} onDragEnd={onDragEnd} canMoveEarlier={canMoveEarlier} canMoveLater={canMoveLater}/>{configurable&&<ConfigureWidget widget={widget} sources={numericSources} onUpdate={onUpdate}/>}<RemoveWidgetButton onRemove={onRemove}/></div>;
   const source=widget.sources[0];
   if(widget.type==="progress"&&progress&&hasProgress(progress))return <ProgressWidget state={progress} actions={action}/>;
   if(widget.type==="confusion_matrix"&&source){const matrix=matrices.find(item=>item.name===source.name);if(matrix)return <ConfusionMatrixWidget matrix={matrix} actions={action}/>}
@@ -42,6 +46,13 @@ function DashboardWidgetView({widget,numericSources,progress,matrices,markers,on
   if(numeric.length>0&&(widget.type==="lineplot"||widget.type==="barplot"))return <ObservationPlot type={widget.type} title={widget.type==="lineplot"?"Line plot":"Bar plot"} series={numeric} xAxis={widget.x_axis} markers={widgetMarkers} actions={action}/>;
   if(numeric.length>=2&&widget.type==="scatterplot"){const x=numeric.find(item=>item.role==="x")??numeric[0],y=numeric.find(item=>item.role==="y")??numeric[1];return <ObservationPlot type="scatterplot" title={`${y.title} by ${x.title}`} series={[x,y]} markers={widgetMarkers} actions={action}/>}
   return <UnavailableWidget type={widget.type} sourceKind={source?.kind} actions={action}/>;
+}
+
+function LayoutControls({widget,onMove,onResize,onDragStart,onDragEnd,canMoveEarlier,canMoveLater}:{widget:DashboardWidget;onMove:(direction:"earlier"|"later")=>void;onResize:(size:DashboardWidgetSize)=>void;onDragStart:(event:DragEvent<HTMLElement>)=>void;onDragEnd:()=>void;canMoveEarlier:boolean;canMoveLater:boolean}){
+  const origin=useRef<{x:number;y:number;size:DashboardWidgetSize}|undefined>(undefined);
+  const startResize=(event:PointerEvent<HTMLButtonElement>)=>{origin.current={x:event.clientX,y:event.clientY,size:widget.size};event.currentTarget.setPointerCapture(event.pointerId)};
+  const resize=(event:PointerEvent<HTMLButtonElement>)=>{if(!origin.current||!event.currentTarget.hasPointerCapture(event.pointerId))return;const columns=clampGrid(origin.current.size.columns+Math.round((event.clientX-origin.current.x)/120)),rows=clampGrid(origin.current.size.rows+Math.round((event.clientY-origin.current.y)/120));if(columns!==widget.size.columns||rows!==widget.size.rows)onResize({columns,rows})};
+  return <><DropdownMenu><Tooltip><TooltipTrigger asChild><DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" className="size-6 cursor-grab active:cursor-grabbing" aria-label="Move or resize widget" draggable onDragStart={onDragStart} onDragEnd={onDragEnd}><GripVertical className="size-3"/></Button></DropdownMenuTrigger></TooltipTrigger><TooltipContent>Drag to reorder</TooltipContent></Tooltip><DropdownMenuContent align="end"><DropdownMenuItem disabled={!canMoveEarlier} onSelect={()=>onMove("earlier")}>Move earlier</DropdownMenuItem><DropdownMenuItem disabled={!canMoveLater} onSelect={()=>onMove("later")}>Move later</DropdownMenuItem><DropdownMenuItem onSelect={()=>onResize({...widget.size,columns:widget.size.columns===1?2:1})}>{widget.size.columns===1?"Use full width":"Use half width"}</DropdownMenuItem><DropdownMenuItem onSelect={()=>onResize({...widget.size,rows:widget.size.rows===1?2:1})}>{widget.size.rows===1?"Make taller":"Use standard height"}</DropdownMenuItem></DropdownMenuContent></DropdownMenu><Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon" className="size-6 cursor-nwse-resize touch-none" aria-label="Drag to resize widget" onPointerDown={startResize} onPointerMove={resize} onPointerUp={()=>{origin.current=undefined}}><Maximize2 className="size-3"/></Button></TooltipTrigger><TooltipContent>Drag to resize</TooltipContent></Tooltip></>
 }
 
 function ConfigureWidget({widget,sources,onUpdate}:{widget:DashboardWidget;sources:NumericWidgetSource[];onUpdate:(widget:DashboardWidget)=>void}){
@@ -67,3 +78,4 @@ function RemoveWidgetButton({onRemove}:{onRemove:()=>void}){return <Tooltip><Too
 function DownloadButton({href,label}:{href:string;label:string}){return <Tooltip><TooltipTrigger asChild><Button asChild variant="ghost" size="icon" className="size-6"><a href={href} aria-label={label}><Download className="size-3"/></a></Button></TooltipTrigger><TooltipContent>Download CSV</TooltipContent></Tooltip>}
 function hasProgress(progress?:ProgressState){return !!progress&&(progress.global_progress!=null||progress.simple!=null||progress.current!=null||(progress.milestones?.length??0)>0)}
 function widgetIcon(type:DashboardWidgetType){return type==="lineplot"?LineChart:type==="barplot"?BarChart3:type==="scatterplot"?ScatterChart:type==="confusion_matrix"?Target:Activity}
+function clampGrid(value:number):1|2{return value>=2?2:1}

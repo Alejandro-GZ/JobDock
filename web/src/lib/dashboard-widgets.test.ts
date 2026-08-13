@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compatibleSourceKinds, createDashboardWidget, defaultDashboardWidgets, removeDashboardWidget, widgetCatalog } from "./dashboard-widgets";
+import { compatibleSourceKinds, createDashboardWidget, defaultDashboardWidgets, layoutDashboardWidgets, moveDashboardWidget, removeDashboardWidget, resizeDashboardWidget, widgetCatalog } from "./dashboard-widgets";
 
 const sources={metrics:["loss","accuracy"],resources:["cpu"],matrices:["validation"],progress:true};
 
@@ -23,5 +23,18 @@ describe("dashboard widget model",()=>{
     expect(original).toEqual(snapshot);
     expect(removed).toHaveLength(original.length-1);
     expect(compatibleSourceKinds("lineplot")).toEqual(["metric","resource"]);
+  });
+
+  it("reorders and resizes without overlapping occupied grid cells",()=>{
+    const widgets=layoutDashboardWidgets([
+      {id:"one",type:"lineplot",size:{columns:1,rows:2},position:{x:0,y:0},sources:[]},
+      {id:"two",type:"barplot",size:{columns:1,rows:1},position:{x:0,y:0},sources:[]},
+      {id:"three",type:"progress",size:{columns:2,rows:1},position:{x:0,y:0},sources:[]},
+    ]);
+    expect(widgets.map(item=>item.position)).toEqual([{x:0,y:0},{x:1,y:0},{x:0,y:2}]);
+    const moved=moveDashboardWidget(widgets,"three","earlier");
+    expect(moved.map(item=>item.id)).toEqual(["one","three","two"]);
+    const resized=resizeDashboardWidget(moved,"two",{columns:2,rows:2});
+    expect(resized.find(item=>item.id==="two")?.size).toEqual({columns:2,rows:2});
   });
 });
