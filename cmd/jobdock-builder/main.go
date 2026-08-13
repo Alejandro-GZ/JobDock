@@ -11,8 +11,10 @@ import (
 	"github.com/jobdock/jobdock/internal/config"
 )
 
+var version = "dev"
+
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("component", "builder")
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("component", "builder", "version", version)
 	cfg, err := config.LoadBuilder()
 	if err != nil {
 		logger.Error("invalid_configuration", "error", err)

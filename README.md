@@ -11,6 +11,11 @@ The repository contains:
 - `jobdock-agent`: a trusted per-host Docker executor.
 - `jobdock-sdk`: an optional Python telemetry SDK for running jobs.
 
+Official releases publish version-matched `jobdock-server`, `jobdock-agent`,
+and `jobdock-builder` images to `ghcr.io/alejandro-gz`. Stable releases also
+move the matching minor tag and `latest`; prereleases only publish their exact
+SemVer tag. See [the release guide](docs/releasing.md).
+
 The versioned HTTP surface and client-generation contract are documented in
 [`api/openapi.yaml`](api/openapi.yaml); contributor guidance for keeping it in
 sync with the Go router is in [`docs/api.md`](docs/api.md).

@@ -1,0 +1,104 @@
+name: Publish release images
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+concurrency:
+  group: release-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      stable: ${{ steps.release.outputs.stable }}
+    steps:
+      - id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must be a SemVer tag such as v0.1.0 or v0.2.0-rc.1" >&2
+            exit 1
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          stable=true
+          if [[ "$version" == *-* ]]; then
+            stable=false
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "stable=$stable" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish ${{ matrix.image }}
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: jobdock-server
+            dockerfile: Dockerfile.server
+          - image: jobdock-agent
+            dockerfile: Dockerfile.agent
+          - image: jobdock-builder
+            dockerfile: Dockerfile.builder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/alejandro-gz/${{ matrix.image }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ needs.validate.outputs.stable == 'true' }}
+            type=raw,value=latest,enable=${{ needs.validate.outputs.stable == 'true' }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          build-args: VERSION=${{ needs.validate.outputs.version }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+      - name: Record immutable digest
+        run: echo '${{ matrix.image }}=${{ steps.build.outputs.digest }}' >> "$GITHUB_STEP_SUMMARY"
+
+  verify:
+    name: Verify published release set
+    needs: [validate, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull exact versions anonymously and verify OCI labels
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for component in server agent builder; do
+            image="ghcr.io/alejandro-gz/jobdock-${component}:${VERSION}"
+            docker pull "$image"
+            actual="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$image")"
+            test "$actual" = "$VERSION"
+          done

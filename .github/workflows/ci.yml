@@ -18,7 +18,7 @@ jobs:
         run: go test ./internal/httpapi -run TestOpenAPICoversRegisteredAPI -count=1
       - run: go test -race ./...
       - run: go vet ./...
-      - run: go build ./cmd/jobdock-server ./cmd/jobdock-agent
+      - run: go build ./cmd/jobdock-server ./cmd/jobdock-agent ./cmd/jobdock-builder
       - run: sh deploy/install-agent_test.sh
   web:
     runs-on: ubuntu-latest
