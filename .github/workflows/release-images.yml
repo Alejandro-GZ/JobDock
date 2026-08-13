@@ -203,19 +203,38 @@ jobs:
           pattern: release-digest-*
           path: release-digests
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: jobdock-sdk-${{ needs.validate.outputs.sdk_version }}
+          path: sdk-dist
       - id: manifest
         name: Assemble release digest manifest
         env:
           VERSION: ${{ needs.validate.outputs.version }}
+          SDK_VERSION: ${{ needs.validate.outputs.sdk_version }}
         shell: bash
         run: |
           set -euo pipefail
           test "$(find release-digests -maxdepth 1 -name 'jobdock-*.json' | wc -l)" -eq 3
+          (cd sdk-dist && sha256sum --check SHA256SUMS.sdk)
+          mapfile -t wheels < <(find sdk-dist/packages -maxdepth 1 -type f -name '*.whl')
+          mapfile -t sdists < <(find sdk-dist/packages -maxdepth 1 -type f -name '*.tar.gz')
+          test "${#wheels[@]}" -eq 1
+          test "${#sdists[@]}" -eq 1
+          wheel_file="$(basename "${wheels[0]}")"
+          sdist_file="$(basename "${sdists[0]}")"
+          wheel_sha256="$(sha256sum "${wheels[0]}" | cut -d ' ' -f 1)"
+          sdist_sha256="$(sha256sum "${sdists[0]}" | cut -d ' ' -f 1)"
           jq -s \
             --arg version "$VERSION" \
             --arg tag "$GITHUB_REF_NAME" \
             --arg commit "$GITHUB_SHA" \
-            '{schema_version: 1, version: $version, tag: $tag, commit: $commit, images: (sort_by(.image))}' \
+            --arg sdk_version "$SDK_VERSION" \
+            --arg wheel_file "$wheel_file" \
+            --arg wheel_sha256 "$wheel_sha256" \
+            --arg sdist_file "$sdist_file" \
+            --arg sdist_sha256 "$sdist_sha256" \
+            '{schema_version: 2, version: $version, tag: $tag, commit: $commit, images: (sort_by(.image)), sdk: {name: "jobdock-sdk", version: $sdk_version, wheel: {filename: $wheel_file, sha256: $wheel_sha256}, sdist: {filename: $sdist_file, sha256: $sdist_sha256}}}' \
             release-digests/jobdock-*.json > release-manifest.json
           {
             echo "manifest=$(jq -c . release-manifest.json)"
@@ -266,7 +285,7 @@ jobs:
         working-directory: sdk-dist
         run: sha256sum --check SHA256SUMS.sdk
       - name: Prepare self-contained release assets
-        run: sh deploy/prepare-release-assets.sh release-manifest.json release-assets
+        run: sh deploy/prepare-release-assets.sh release-manifest.json release-assets sdk-dist/packages
       - name: Validate release asset checksums
         working-directory: release-assets
         run: sha256sum --check SHA256SUMS
@@ -297,9 +316,8 @@ jobs:
             release-assets/docker-compose.yml \
             release-assets/install-agent.sh \
             release-assets/SHA256SUMS \
-            sdk-dist/packages/*.whl \
-            sdk-dist/packages/*.tar.gz \
-            sdk-dist/SHA256SUMS.sdk
+            release-assets/*.whl \
+            release-assets/*.tar.gz
 
   publish-sdk-pypi:
     name: Publish Python SDK to PyPI

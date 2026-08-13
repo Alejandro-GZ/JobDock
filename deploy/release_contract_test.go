@@ -26,13 +26,18 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 		"steps.build.outputs.digest",
 		"actions/upload-artifact@v4",
 		"release-manifest.json",
-		"schema_version: 1",
+		"schema_version: 2",
 		"--arg commit \"$GITHUB_SHA\"",
+		"name: \"jobdock-sdk\"",
+		"wheel: {filename: $wheel_file, sha256: $wheel_sha256}",
+		"sdist: {filename: $sdist_file, sha256: $sdist_sha256}",
 		"server_digest:",
 		"agent_digest:",
 		"builder_digest:",
 		"release:",
-		"needs: [validate, verify, release-e2e]",
+		"needs: [validate, verify, release-e2e, sdk-package, verify-sdk-pypi]",
+		"publish-sdk-pypi:",
+		"verify-sdk-pypi:",
 		"gh release create",
 		"deploy/prepare-release-assets.sh",
 		"release-assets/docker-compose.yml",
@@ -68,7 +73,7 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 		}
 	}
 	assets := readReleaseFile(t, "deploy", "prepare-release-assets.sh")
-	for _, required := range []string{"release-manifest.json", "docker-compose.yml", "install-agent.sh", "SHA256SUMS", "## Highlights", "## Changes", "sha256sum"} {
+	for _, required := range []string{"release-manifest.json", "docker-compose.yml", "install-agent.sh", "SHA256SUMS", "## Highlights", "## Changes", "sha256sum", "pip install jobdock-sdk==", "SDK wheel checksum mismatch", "SDK sdist checksum mismatch"} {
 		if !strings.Contains(assets, required) {
 			t.Fatalf("release asset packager is missing %q", required)
 		}

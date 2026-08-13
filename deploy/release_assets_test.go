@@ -1,7 +1,9 @@
 package deploy
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +25,19 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 	root := t.TempDir()
 	manifestPath := filepath.Join(root, "manifest.json")
 	outputPath := filepath.Join(root, "assets")
+	sdkPath := filepath.Join(root, "sdk")
+	if err := os.Mkdir(sdkPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	wheelName := "jobdock_sdk-1.2.3rc1-py3-none-any.whl"
+	sdistName := "jobdock_sdk-1.2.3rc1.tar.gz"
+	wheelContents := []byte("verified wheel")
+	sdistContents := []byte("verified source distribution")
+	for name, data := range map[string][]byte{wheelName: wheelContents, sdistName: sdistContents} {
+		if err := os.WriteFile(filepath.Join(sdkPath, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	commit := strings.Repeat("a", 40)
 	components := []string{"server", "agent", "builder"}
 	images := make([]map[string]string, 0, len(components))
@@ -31,7 +46,14 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 		image := "ghcr.io/alejandro-gz/jobdock-" + component
 		images = append(images, map[string]string{"image": image, "digest": digest, "reference": image + "@" + digest})
 	}
-	manifest := map[string]any{"schema_version": 1, "version": "1.2.3-rc.1", "tag": "v1.2.3-rc.1", "commit": commit, "images": images}
+	manifest := map[string]any{
+		"schema_version": 2, "version": "1.2.3-rc.1", "tag": "v1.2.3-rc.1", "commit": commit, "images": images,
+		"sdk": map[string]any{
+			"name": "jobdock-sdk", "version": "1.2.3rc1",
+			"wheel": map[string]string{"filename": wheelName, "sha256": testSHA256(wheelContents)},
+			"sdist": map[string]string{"filename": sdistName, "sha256": testSHA256(sdistContents)},
+		},
+	}
 	contents, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatal(err)
@@ -40,12 +62,12 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	command := exec.Command("sh", filepath.Join("..", "deploy", "prepare-release-assets.sh"), manifestPath, outputPath)
+	command := exec.Command("sh", filepath.Join("..", "deploy", "prepare-release-assets.sh"), manifestPath, outputPath, sdkPath)
 	if output, runErr := command.CombinedOutput(); runErr != nil {
 		t.Fatalf("prepare release assets: %v\n%s", runErr, output)
 	}
 
-	for _, name := range []string{"release-manifest.json", "docker-compose.yml", "install-agent.sh", "SHA256SUMS", "release-notes.md"} {
+	for _, name := range []string{"release-manifest.json", "docker-compose.yml", "install-agent.sh", "SHA256SUMS", "release-notes.md", wheelName, sdistName} {
 		if _, err = os.Stat(filepath.Join(outputPath, name)); err != nil {
 			t.Fatalf("expected release asset %s: %v", name, err)
 		}
@@ -63,14 +85,28 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 	}
 	assertInstallerPullsDefaultReference(t, filepath.Join(outputPath, "install-agent.sh"), images[1]["reference"])
 	notes := readTestFile(t, filepath.Join(outputPath, "release-notes.md"))
-	if !strings.Contains(notes, "## Highlights") || !strings.Contains(notes, "## Changes") || !strings.Contains(notes, commit) {
-		t.Fatal("release notes do not contain highlights, changes, and source commit context")
+	if !strings.Contains(notes, "## Highlights") || !strings.Contains(notes, "## Changes") || !strings.Contains(notes, commit) || !strings.Contains(notes, "pip install jobdock-sdk==1.2.3rc1") {
+		t.Fatal("release notes do not contain highlights, SDK installation, changes, and source commit context")
 	}
 	check := exec.Command("sha256sum", "--check", "SHA256SUMS")
 	check.Dir = outputPath
 	if output, checkErr := check.CombinedOutput(); checkErr != nil {
 		t.Fatalf("verify release checksums: %v\n%s", checkErr, output)
 	}
+
+	if err = os.WriteFile(filepath.Join(sdkPath, wheelName), []byte("tampered wheel"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tamperedOutputPath := filepath.Join(root, "tampered-assets")
+	tampered := exec.Command("sh", filepath.Join("..", "deploy", "prepare-release-assets.sh"), manifestPath, tamperedOutputPath, sdkPath)
+	output, tamperedErr := tampered.CombinedOutput()
+	if tamperedErr == nil || !strings.Contains(string(output), "SDK wheel checksum mismatch") {
+		t.Fatalf("tampered SDK wheel was not rejected: %v\n%s", tamperedErr, output)
+	}
+}
+
+func testSHA256(contents []byte) string {
+	return fmt.Sprintf("%x", sha256.Sum256(contents))
 }
 
 func assertInstallerPullsDefaultReference(t *testing.T, installerPath, reference string) {

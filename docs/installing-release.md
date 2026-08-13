@@ -25,18 +25,20 @@ RELEASE_URL="https://github.com/alejandro-gz/JobDock/releases/download/v${VERSIO
 mkdir "jobdock-${VERSION}"
 cd "jobdock-${VERSION}"
 
-for asset in release-manifest.json docker-compose.yml install-agent.sh SHA256SUMS; do
+curl --fail --location --remote-name "${RELEASE_URL}/SHA256SUMS"
+awk '{print $2}' SHA256SUMS | while read -r asset; do
   curl --fail --location --remote-name "${RELEASE_URL}/${asset}"
 done
-
 sha256sum --check SHA256SUMS
 chmod 0755 install-agent.sh
 ```
 
-`release-manifest.json` records the tag, source commit, and immutable digest of
-the server, builder, and agent. The downloaded Compose file contains those
-server and builder digest references directly and contains no `build:`
-instructions.
+`release-manifest.json` records the tag, source commit, immutable digest of the
+server, builder, and agent, and the exact Python SDK version and distribution
+hashes. The downloaded Compose file contains the server and builder digest
+references directly and contains no `build:` instructions. Install the matching
+SDK independently with the command shown in the release notes, for example
+`pip install jobdock-sdk==0.3.0`.
 
 ## Start the control plane and builder
 
@@ -106,4 +108,4 @@ Repository development uses `.env.example` and
 That workflow requires the source tree and development toolchains and must not
 be substituted for the release procedure above. Conversely, the downloadable
 release Compose file has no local build context and can be run from any clean
-directory containing its four verified assets.
+directory containing its verified release assets.
