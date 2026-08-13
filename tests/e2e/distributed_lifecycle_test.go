@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -458,15 +459,29 @@ func (h *harness) testInputs(t *testing.T) {
 	}, "agent input workspace cleanup")
 	h.request(http.MethodDelete, "/api/v1/jobs/"+created.ID, nil, nil, http.StatusAccepted, true)
 	h.eventually(10*time.Second, func() bool {
-		_, err := os.Stat(filepath.Join(h.root, "server", "jobs", created.ID, "inputs"))
+		_, err := os.Stat(filepath.Join(h.root, "server", "jobs", created.ID))
 		return os.IsNotExist(err)
-	}, "central input cleanup")
+	}, "central job input cleanup")
 	before, _ := os.ReadDir(filepath.Join(h.root, "server", "jobs"))
 	h.submitWithInput("e2e-input-limit", "oversized.bin", bytes.Repeat([]byte("x"), 2048), http.StatusRequestEntityTooLarge)
 	after, _ := os.ReadDir(filepath.Join(h.root, "server", "jobs"))
-	if len(after) != len(before) {
-		t.Fatalf("failed input staging was not cleaned: before=%d after=%d", len(before), len(after))
+	if !sameDirectoryEntries(before, after) {
+		t.Fatalf("failed input staging changed job storage: before=%v after=%v", directoryNames(before), directoryNames(after))
 	}
+}
+
+func sameDirectoryEntries(left, right []os.DirEntry) bool {
+	leftNames, rightNames := directoryNames(left), directoryNames(right)
+	return slices.Equal(leftNames, rightNames)
+}
+
+func directoryNames(entries []os.DirEntry) []string {
+	names := make([]string, len(entries))
+	for index, entry := range entries {
+		names[index] = entry.Name()
+	}
+	slices.Sort(names)
+	return names
 }
 
 func (h *harness) testRerun(t *testing.T) {

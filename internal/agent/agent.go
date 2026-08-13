@@ -63,10 +63,6 @@ type pollResponse struct {
 	CheckpointSyncs []domain.CheckpointSync `json:"checkpoint_syncs"`
 }
 
-func (response pollResponse) hasWork() bool {
-	return response.Assignment != nil || len(response.StopJobIDs) > 0 || len(response.CheckpointSyncs) > 0
-}
-
 type credentialState struct {
 	NodeID     string    `json:"node_id"`
 	Credential string    `json:"credential"`
@@ -123,18 +119,16 @@ func (a *Agent) pollAssignments(ctx context.Context) error {
 		if response.Assignment != nil {
 			a.startAssignment(ctx, *response.Assignment)
 		}
-		if !response.hasWork() {
-			remaining := minimumEmptyPollInterval - time.Since(started)
-			if remaining > 0 {
-				timer := time.NewTimer(remaining)
-				select {
-				case <-ctx.Done():
-					if !timer.Stop() {
-						<-timer.C
-					}
-					return nil
-				case <-timer.C:
+		remaining := minimumEmptyPollInterval - time.Since(started)
+		if remaining > 0 {
+			timer := time.NewTimer(remaining)
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
 				}
+				return nil
+			case <-timer.C:
 			}
 		}
 	}
