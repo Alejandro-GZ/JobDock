@@ -2,6 +2,7 @@
 set -eu
 
 DEFAULT_VERSION="latest"
+DEFAULT_IMAGE_REFERENCE=""
 IMAGE_REPOSITORY="ghcr.io/alejandro-gz/jobdock-agent"
 CONTAINER_NAME="jobdock-agent"
 STATE_DIR="/var/lib/jobdock-agent"
@@ -15,7 +16,7 @@ gpu_mode="auto"
 allow_insecure="false"
 
 usage() {
-  cat <<'EOF'
+  cat <<EOF
 Install the JobDock agent on a Linux amd64 Docker host.
 
 Usage:
@@ -25,7 +26,7 @@ Options:
   --gpu                 Request all NVIDIA GPUs and require NVML discovery.
   --name NAME           Node name reported to JobDock (defaults to hostname).
   --labels KEY=VALUE    Comma-separated node labels.
-  --version VERSION     Immutable agent image version (defaults to latest).
+  --version VERSION     Immutable agent image version (defaults to $DEFAULT_VERSION).
   --allow-insecure-http Permit an http:// server URL for local development.
   --help                Show this help.
 EOF
@@ -67,7 +68,11 @@ if docker container inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
   fail "container $CONTAINER_NAME already exists; remove it explicitly before reinstalling"
 fi
 
-image="$IMAGE_REPOSITORY:$version"
+if [ -n "$DEFAULT_IMAGE_REFERENCE" ] && [ "$version" = "$DEFAULT_VERSION" ]; then
+  image="$DEFAULT_IMAGE_REFERENCE"
+else
+  image="$IMAGE_REPOSITORY:$version"
+fi
 printf 'Pulling %s...\n' "$image"
 docker pull "$image"
 

@@ -26,12 +26,20 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 		"steps.build.outputs.digest",
 		"actions/upload-artifact@v4",
 		"release-manifest.json",
+		"schema_version: 1",
+		"--arg commit \"$GITHUB_SHA\"",
 		"server_digest:",
 		"agent_digest:",
 		"builder_digest:",
 		"release:",
 		"needs: [validate, verify]",
 		"gh release create",
+		"deploy/prepare-release-assets.sh",
+		"release-assets/docker-compose.yml",
+		"release-assets/install-agent.sh",
+		"release-assets/SHA256SUMS",
+		"--generate-notes",
+		"--latest=false",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("release workflow is missing %q", required)
@@ -46,6 +54,18 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join("..", ".github", "workflows", "release-agent.yml")); !os.IsNotExist(err) {
 		t.Fatal("legacy agent-only release workflow must not coexist with the release set")
+	}
+	template := readReleaseFile(t, "deploy", "docker-compose.release.yml.tmpl")
+	for _, required := range []string{"@@JOBDOCK_SERVER_REFERENCE@@", "@@JOBDOCK_BUILDER_REFERENCE@@"} {
+		if !strings.Contains(template, required) {
+			t.Fatalf("release Compose template is missing %q", required)
+		}
+	}
+	assets := readReleaseFile(t, "deploy", "prepare-release-assets.sh")
+	for _, required := range []string{"release-manifest.json", "docker-compose.yml", "install-agent.sh", "SHA256SUMS", "## Highlights", "## Changes", "sha256sum"} {
+		if !strings.Contains(assets, required) {
+			t.Fatalf("release asset packager is missing %q", required)
+		}
 	}
 }
 

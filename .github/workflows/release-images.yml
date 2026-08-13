@@ -146,13 +146,18 @@ jobs:
         run: |
           set -euo pipefail
           test "$(find release-digests -maxdepth 1 -name 'jobdock-*.json' | wc -l)" -eq 3
-          jq -s --arg version "$VERSION" \
-            '{version: $version, images: (sort_by(.image))}' \
+          jq -s \
+            --arg version "$VERSION" \
+            --arg tag "$GITHUB_REF_NAME" \
+            --arg commit "$GITHUB_SHA" \
+            '{schema_version: 1, version: $version, tag: $tag, commit: $commit, images: (sort_by(.image))}' \
             release-digests/jobdock-*.json > release-manifest.json
-          echo "manifest=$(jq -c . release-manifest.json)" >> "$GITHUB_OUTPUT"
-          echo "server_digest=$(jq -r 'select(.image | endswith("/jobdock-server")) | .digest' release-digests/jobdock-server.json)" >> "$GITHUB_OUTPUT"
-          echo "agent_digest=$(jq -r 'select(.image | endswith("/jobdock-agent")) | .digest' release-digests/jobdock-agent.json)" >> "$GITHUB_OUTPUT"
-          echo "builder_digest=$(jq -r 'select(.image | endswith("/jobdock-builder")) | .digest' release-digests/jobdock-builder.json)" >> "$GITHUB_OUTPUT"
+          {
+            echo "manifest=$(jq -c . release-manifest.json)"
+            echo "server_digest=$(jq -r 'select(.image | endswith("/jobdock-server")) | .digest' release-digests/jobdock-server.json)"
+            echo "agent_digest=$(jq -r 'select(.image | endswith("/jobdock-agent")) | .digest' release-digests/jobdock-agent.json)"
+            echo "builder_digest=$(jq -r 'select(.image | endswith("/jobdock-builder")) | .digest' release-digests/jobdock-builder.json)"
+          } >> "$GITHUB_OUTPUT"
       - name: Pull published digests and verify exact-version tags
         env:
           VERSION: ${{ needs.validate.outputs.version }}
@@ -184,9 +189,15 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: release-manifest-${{ needs.validate.outputs.version }}
+      - name: Prepare self-contained release assets
+        run: sh deploy/prepare-release-assets.sh release-manifest.json release-assets
+      - name: Validate release asset checksums
+        working-directory: release-assets
+        run: sha256sum --check SHA256SUMS
       - name: Create release from the verified package set
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -196,13 +207,21 @@ jobs:
         run: |
           set -euo pipefail
           prerelease=()
+          latest=(--latest)
           if [[ "$STABLE" != "true" ]]; then
             prerelease=(--prerelease)
+            latest=(--latest=false)
           fi
+          notes="$(cat release-assets/release-notes.md)"
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --title "JobDock ${VERSION}" \
             --generate-notes \
+            --notes "$notes" \
             "${prerelease[@]}" \
-            release-manifest.json
+            "${latest[@]}" \
+            release-assets/release-manifest.json \
+            release-assets/docker-compose.yml \
+            release-assets/install-agent.sh \
+            release-assets/SHA256SUMS
