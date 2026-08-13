@@ -27,6 +27,8 @@ import (
 
 var version = "dev"
 
+const minimumEmptyPollInterval = 250 * time.Millisecond
+
 type Agent struct {
 	config              config.Agent
 	log                 *slog.Logger
@@ -61,6 +63,10 @@ type pollResponse struct {
 	CheckpointSyncs []domain.CheckpointSync `json:"checkpoint_syncs"`
 }
 
+func (response pollResponse) hasWork() bool {
+	return response.Assignment != nil || len(response.StopJobIDs) > 0 || len(response.CheckpointSyncs) > 0
+}
+
 type credentialState struct {
 	NodeID     string    `json:"node_id"`
 	Credential string    `json:"credential"`
@@ -92,7 +98,12 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err := a.reconcile(ctx); err != nil {
 		a.log.Warn("reconciliation_failed", "error", err)
 	}
+	return a.pollAssignments(ctx)
+}
+
+func (a *Agent) pollAssignments(ctx context.Context) error {
 	for ctx.Err() == nil {
+		started := time.Now()
 		var response pollResponse
 		if err := a.apiJSON(ctx, "GET", "/api/v1/agent/assignments/next", nil, &response); err != nil {
 			a.log.Warn("assignment_poll_failed", "error", err)
@@ -111,6 +122,20 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 		if response.Assignment != nil {
 			a.startAssignment(ctx, *response.Assignment)
+		}
+		if !response.hasWork() {
+			remaining := minimumEmptyPollInterval - time.Since(started)
+			if remaining > 0 {
+				timer := time.NewTimer(remaining)
+				select {
+				case <-ctx.Done():
+					if !timer.Stop() {
+						<-timer.C
+					}
+					return nil
+				case <-timer.C:
+				}
+			}
 		}
 	}
 	return nil
