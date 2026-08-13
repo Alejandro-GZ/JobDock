@@ -8,6 +8,7 @@ export type DashboardWidgetPosition = { x: number; y: number };
 export type DashboardWidget = {
   id: string;
   type: DashboardWidgetType;
+  title?: string;
   size: DashboardWidgetSize;
   position: DashboardWidgetPosition;
   sources: DashboardWidgetSource[];
@@ -47,7 +48,7 @@ export function restoreDashboardWidgets(value:unknown):DashboardWidget[]|null{
     if(typeof item.id!=="string"||!item.id||!types.has(item.type as DashboardWidgetType)||!item.size||!item.position||!Array.isArray(item.sources))return null;
     if(item.sources.some(source=>!source||!kinds.has(source.kind)||typeof source.name!=="string"||!source.name))return null;
     const factor=item.grid_columns===12?1:item.grid_columns===4?3:6;
-    widgets.push({id:item.id,type:item.type as DashboardWidgetType,size:{columns:clampColumns(item.size.columns*factor),rows:clampRows(item.size.rows*factor)},position:{x:Math.max(0,Math.min(11,(item.position.x||0)*factor)),y:Math.max(0,(item.position.y||0)*factor)},sources:item.sources.map(source=>({...source})),x_axis:item.x_axis==="step"?"step":"time",grid_columns:12,time_range:validRange(item.time_range)?item.time_range:"all",gauge_max_mode:item.gauge_max_mode==="fixed"?"fixed":"historical",gauge_max_value:typeof item.gauge_max_value==="number"&&Number.isFinite(item.gauge_max_value)&&item.gauge_max_value>0?item.gauge_max_value:undefined});
+    widgets.push({id:item.id,type:item.type as DashboardWidgetType,title:typeof item.title==="string"?item.title.trim().slice(0,120):undefined,size:{columns:clampColumns(item.size.columns*factor),rows:clampRows(item.size.rows*factor)},position:{x:Math.max(0,Math.min(11,(item.position.x||0)*factor)),y:Math.max(0,(item.position.y||0)*factor)},sources:item.sources.map(source=>({...source})),x_axis:item.x_axis==="step"?"step":"time",grid_columns:12,time_range:validRange(item.time_range)?item.time_range:"all",gauge_max_mode:item.gauge_max_mode==="fixed"?"fixed":"historical",gauge_max_value:typeof item.gauge_max_value==="number"&&Number.isFinite(item.gauge_max_value)&&item.gauge_max_value>0?item.gauge_max_value:undefined});
   }
   if(new Set(widgets.map(widget=>widget.id)).size!==widgets.length)return null;
   return layoutDashboardWidgets(widgets);

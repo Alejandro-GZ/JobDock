@@ -18,6 +18,7 @@ type dashboardConfig struct {
 type dashboardWidget struct {
 	ID            string                  `json:"id"`
 	Type          string                  `json:"type"`
+	Title         string                  `json:"title,omitempty"`
 	Size          dashboardWidgetSize     `json:"size"`
 	Position      dashboardWidgetPosition `json:"position"`
 	Sources       []dashboardWidgetSource `json:"sources"`
@@ -116,6 +117,9 @@ func validateDashboardConfig(config dashboardConfig) error {
 		ids[widget.ID] = true
 		if !validTypes[widget.Type] {
 			return dashboardError("Widget type is not supported")
+		}
+		if len(widget.Title) > 120 {
+			return dashboardError("Widget title may contain at most 120 characters")
 		}
 		if widget.Size.Columns < 1 || widget.Size.Columns > 12 || widget.Size.Rows < 1 || widget.Size.Rows > 12 {
 			return dashboardError("Widget size must fit the twelve-column grid")

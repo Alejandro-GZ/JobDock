@@ -59,7 +59,7 @@ func TestDashboardConfigurationPersistsAndFallsBackSafely(t *testing.T) {
 	if initial.SchemaVersion != 1 || string(initial.Widgets) != "null" {
 		t.Fatalf("initial dashboard: %#v", initial)
 	}
-	payload := `{"schema_version":1,"widgets":[{"id":"loss","type":"lineplot","size":{"columns":6,"rows":3},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}],"x_axis":"step","time_range":"6h","grid_columns":12}]}`
+	payload := `{"schema_version":1,"widgets":[{"id":"loss","type":"lineplot","title":"Training loss","size":{"columns":6,"rows":3},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}],"x_axis":"step","time_range":"6h","grid_columns":12}]}`
 	request, _ := http.NewRequest(http.MethodPut, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard", bytes.NewBufferString(payload))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-CSRF-Token", session.CSRF)

@@ -19,6 +19,7 @@ describe("ObservationPlot",()=>{
     expect(screen.getByText("duration")).toBeTruthy();
     expect(screen.getByText(/independent Y scales/i)).toBeTruthy();
     expect(screen.getByRole("img",{name:/Training lineplot with 4 points/i})).toBeTruthy();
+    expect(screen.getByRole("button",{name:"Zoom in Training"})).toBeTruthy();
   });
 
   it("matches explicit scatter X and Y sources by step and fills its tile",async()=>{
@@ -30,6 +31,7 @@ describe("ObservationPlot",()=>{
     await waitFor(()=>expect(plot.getAttribute("width")).toBe("360"));
     expect(plot.getAttribute("height")).toBe("180");
     expect(plot.hasAttribute("preserveAspectRatio")).toBe(false);
+    expect(screen.getByRole("button",{name:"Zoom in duration by loss"})).toBeTruthy();
     await user.click(screen.getByRole("button",{name:"duration by loss legend"}));
     expect(screen.getByText("loss")).toBeTruthy();
     expect(screen.getByText("duration")).toBeTruthy();

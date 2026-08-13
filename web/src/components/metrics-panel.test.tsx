@@ -28,9 +28,9 @@ describe("MetricsPanel live updates",()=>{
     const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
     render(<QueryClientProvider client={client}><TooltipProvider><MetricsPanel job={job}/></TooltipProvider></QueryClientProvider>);
     await waitFor(()=>expect(FakeEventSource.instance.url).toContain("after=4"));
-    expect(screen.getByRole("button",{name:/loss statistics: last 2,/})).toBeTruthy();const metricRequests=fetchMock.mock.calls.filter(call=>String(call[0]).includes("/metrics?")).length;
+    expect(screen.getAllByRole("img",{name:/lineplot with 1 points/})).toHaveLength(2);const metricRequests=fetchMock.mock.calls.filter(call=>String(call[0]).includes("/metrics?")).length;
     act(()=>FakeEventSource.instance.emit({cursor:5,attempt_id:"attempt",kind:"metrics",captured_at:"2026-08-12T10:01:05Z",metrics:[{cursor:5,attempt_id:"attempt",name:"loss",value:1,captured_at:"2026-08-12T10:01:05Z"}]}));
-    await waitFor(()=>expect(screen.getByRole("button",{name:/loss statistics: last 1,/})).toBeTruthy());expect(fetchMock.mock.calls.filter(call=>String(call[0]).includes("/metrics?"))).toHaveLength(metricRequests);
+    await waitFor(()=>expect(screen.getByRole("img",{name:/lineplot with 2 points/})).toBeTruthy());expect(fetchMock.mock.calls.filter(call=>String(call[0]).includes("/metrics?"))).toHaveLength(metricRequests);
   });
 
   it("loads only metric histories referenced by a saved dashboard",async()=>{
