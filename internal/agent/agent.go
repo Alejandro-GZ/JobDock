@@ -46,15 +46,16 @@ type Agent struct {
 
 type runtimeAssignment struct {
 	domain.Assignment
-	ContainerID   string     `json:"container_id"`
-	Sequence      int64      `json:"sequence"`
-	StdoutOffset  int64      `json:"stdout_offset"`
-	StderrOffset  int64      `json:"stderr_offset"`
-	Completed     bool       `json:"completed"`
-	StopRequested bool       `json:"stop_requested"`
-	mu            sync.Mutex `json:"-"`
-	eventMu       sync.Mutex `json:"-"`
-	checkpointMu  sync.Mutex `json:"-"`
+	ContainerID   string             `json:"container_id"`
+	Sequence      int64              `json:"sequence"`
+	StdoutOffset  int64              `json:"stdout_offset"`
+	StderrOffset  int64              `json:"stderr_offset"`
+	Completed     bool               `json:"completed"`
+	StopRequested bool               `json:"stop_requested"`
+	mu            sync.Mutex         `json:"-"`
+	eventMu       sync.Mutex         `json:"-"`
+	checkpointMu  sync.Mutex         `json:"-"`
+	cancel        context.CancelFunc `json:"-"`
 }
 
 type pollResponse struct {
@@ -268,7 +269,9 @@ func (a *Agent) startAssignment(ctx context.Context, assignment domain.Assignmen
 		a.removeRunning(assignment.JobID)
 		return
 	}
-	go a.execute(ctx, record)
+	executionCtx, cancel := context.WithCancel(ctx)
+	record.cancel = cancel
+	go a.execute(executionCtx, record)
 }
 
 func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
@@ -334,10 +337,17 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 	}
 	if record.ContainerID == "" {
 		if err := a.materializeInputs(ctx, record.JobID, record.Spec.Inputs, inputDir); err != nil {
+			if a.stopRequested(record) {
+				a.completePreStartCancellation(record)
+				return
+			}
 			a.fail(record, "input_materialization_failed", err)
 			return
 		}
 		if !a.sendEvent(record, "image_pull_started", domain.JobPullingImage, nil, "", "", nil) {
+			if a.stopRequested(record) {
+				a.completePreStartCancellation(record)
+			}
 			return
 		}
 		runtimeImage := record.Spec.Image
@@ -352,20 +362,47 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 			}
 		}
 		if err != nil {
+			if a.stopRequested(record) {
+				a.completePreStartCancellation(record)
+				return
+			}
 			a.fail(record, "image_pull_failed", err)
 			return
 		}
+		if a.stopRequested(record) {
+			a.completePreStartCancellation(record)
+			return
+		}
 		if !a.sendEvent(record, "image_pull_finished", domain.JobStarting, nil, "", digest, nil) {
+			if a.stopRequested(record) {
+				a.completePreStartCancellation(record)
+			}
+			return
+		}
+		if a.stopRequested(record) {
+			a.completePreStartCancellation(record)
 			return
 		}
 		containerID, err := a.docker.Create(ctx, dockerengine.CreateOptions{Name: "jobdock-" + strings.ReplaceAll(record.JobID, "-", "")[:12], JobID: record.JobID, AttemptID: record.AttemptID, Image: runtimeImage, Command: record.Spec.Command, WorkingDirectory: record.Spec.WorkingDirectory, Environment: environment, Binds: binds, CPUMillis: record.Spec.Resources.CPUMillis, MemoryBytes: record.Spec.Resources.MemoryBytes, GPUUUIDs: record.GPUUUIDs})
 		if err != nil {
+			if a.stopRequested(record) {
+				a.completePreStartCancellation(record)
+				return
+			}
 			a.fail(record, "container_create_failed", err)
 			return
 		}
+		record.mu.Lock()
 		record.ContainerID = containerID
+		stopRequested := record.StopRequested
+		record.mu.Unlock()
 		if err = a.save(record); err != nil {
 			a.fail(record, "assignment_persist_failed", err)
+			return
+		}
+		if stopRequested {
+			_ = a.docker.Remove(context.Background(), containerID)
+			a.completePreStartCancellation(record)
 			return
 		}
 		if err = a.apiJSON(ctx, "POST", "/api/v1/agent/assignments/"+record.ID+"/accept", map[string]string{"container_id": containerID}, nil); err != nil {
@@ -716,16 +753,72 @@ func (a *Agent) stop(ctx context.Context, jobID string) {
 	a.mu.Lock()
 	record := a.running[jobID]
 	a.mu.Unlock()
-	if record == nil || record.ContainerID == "" {
+	if record == nil {
+		record = a.loadAssignment(jobID)
+	}
+	if record == nil {
 		return
 	}
 	record.mu.Lock()
+	if record.Completed {
+		record.mu.Unlock()
+		return
+	}
 	record.StopRequested = true
+	containerID := record.ContainerID
+	cancel := record.cancel
 	record.mu.Unlock()
 	_ = a.save(record)
-	if err := a.docker.Stop(ctx, record.ContainerID, 30); err != nil {
+	if containerID == "" {
+		if cancel != nil {
+			cancel()
+			return
+		}
+		a.completePreStartCancellation(record)
+		return
+	}
+	if err := a.docker.Stop(ctx, containerID, 30); err != nil {
 		a.log.Warn("container_stop_failed", "error", err, "job_id", jobID)
 	}
+}
+
+func (a *Agent) loadAssignment(jobID string) *runtimeAssignment {
+	if jobID == "" || filepath.Base(jobID) != jobID {
+		return nil
+	}
+	data, err := os.ReadFile(filepath.Join(a.config.StateDir, "assignments", jobID+".json"))
+	if err != nil {
+		return nil
+	}
+	record := &runtimeAssignment{}
+	if json.Unmarshal(data, record) != nil || record.JobID != jobID {
+		return nil
+	}
+	return record
+}
+
+func (a *Agent) stopRequested(record *runtimeAssignment) bool {
+	record.mu.Lock()
+	defer record.mu.Unlock()
+	return record.StopRequested
+}
+
+func (a *Agent) completePreStartCancellation(record *runtimeAssignment) {
+	record.mu.Lock()
+	if record.Completed {
+		record.mu.Unlock()
+		return
+	}
+	record.StopRequested = true
+	record.mu.Unlock()
+	if !a.sendEvent(record, "cancelled", domain.JobCancelled, nil, "job was stopped before the container started", "", map[string]any{"outputs": []domain.OutputFile{}}) {
+		return
+	}
+	record.mu.Lock()
+	record.Completed = true
+	record.mu.Unlock()
+	_ = a.save(record)
+	a.removeRunning(record.JobID)
 }
 
 func (a *Agent) reconcile(ctx context.Context) error {
@@ -764,7 +857,9 @@ func (a *Agent) reconcile(ctx context.Context) error {
 		a.mu.Lock()
 		a.running[record.JobID] = record
 		a.mu.Unlock()
-		go a.execute(ctx, record)
+		executionCtx, cancel := context.WithCancel(ctx)
+		record.cancel = cancel
+		go a.execute(executionCtx, record)
 	}
 	return nil
 }
