@@ -63,9 +63,61 @@ jobs:
     needs: validate
     uses: ./.github/workflows/ci.yml
 
+  sdk-package:
+    name: Build and validate Python SDK artifacts
+    needs: [validate, quality]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.13'}
+      - name: Install packaging tools
+        run: python -m pip install --disable-pip-version-check build==1.3.0 twine==6.2.0
+      - name: Build wheel and source distribution once
+        env:
+          JOBDOCK_RELEASE_TAG: ${{ github.ref_name }}
+          JOBDOCK_PRODUCT_VERSION: ${{ needs.validate.outputs.version }}
+          JOBDOCK_SDK_VERSION: ${{ needs.validate.outputs.sdk_version }}
+        run: python -m build --wheel --sdist sdk/python --outdir sdk-dist
+      - name: Validate package metadata and artifact identity
+        env:
+          SDK_VERSION: ${{ needs.validate.outputs.sdk_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t wheels < <(find sdk-dist -maxdepth 1 -type f -name '*.whl')
+          mapfile -t sdists < <(find sdk-dist -maxdepth 1 -type f -name '*.tar.gz')
+          test "${#wheels[@]}" -eq 1
+          test "${#sdists[@]}" -eq 1
+          [[ "$(basename "${wheels[0]}")" == "jobdock_sdk-${SDK_VERSION}-"*.whl ]]
+          test "$(basename "${sdists[0]}")" = "jobdock_sdk-${SDK_VERSION}.tar.gz"
+          python -m twine check "${wheels[0]}" "${sdists[0]}"
+      - name: Install wheel in a clean environment and smoke test it
+        env:
+          SDK_VERSION: ${{ needs.validate.outputs.sdk_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/jobdock-sdk-smoke"
+          "$RUNNER_TEMP/jobdock-sdk-smoke/bin/python" -m pip install --disable-pip-version-check --no-deps sdk-dist/*.whl
+          actual_version="$("$RUNNER_TEMP/jobdock-sdk-smoke/bin/python" -c 'import jobdock; from importlib.metadata import metadata; assert metadata("jobdock-sdk")["Name"] == "jobdock-sdk"; print(jobdock.__version__)')"
+          test "$actual_version" = "$SDK_VERSION"
+      - name: Generate and verify SHA-256 checksums
+        working-directory: sdk-dist
+        run: |
+          sha256sum *.whl *.tar.gz > SHA256SUMS.sdk
+          sha256sum --check SHA256SUMS.sdk
+      - name: Preserve validated SDK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: jobdock-sdk-${{ needs.validate.outputs.sdk_version }}
+          path: sdk-dist/
+          if-no-files-found: error
+          retention-days: 90
+
   publish:
     name: Publish ${{ matrix.image }}
-    needs: [validate, quality]
+    needs: [validate, sdk-package]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -197,7 +249,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [validate, verify, release-e2e]
+    needs: [validate, verify, release-e2e, sdk-package]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -206,6 +258,13 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: release-manifest-${{ needs.validate.outputs.version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: jobdock-sdk-${{ needs.validate.outputs.sdk_version }}
+          path: sdk-dist
+      - name: Verify preserved SDK artifacts
+        working-directory: sdk-dist
+        run: sha256sum --check SHA256SUMS.sdk
       - name: Prepare self-contained release assets
         run: sh deploy/prepare-release-assets.sh release-manifest.json release-assets
       - name: Validate release asset checksums
@@ -237,7 +296,10 @@ jobs:
             release-assets/release-manifest.json \
             release-assets/docker-compose.yml \
             release-assets/install-agent.sh \
-            release-assets/SHA256SUMS
+            release-assets/SHA256SUMS \
+            sdk-dist/*.whl \
+            sdk-dist/*.tar.gz \
+            sdk-dist/SHA256SUMS.sdk
 
   release-e2e:
     name: Validate published release end to end

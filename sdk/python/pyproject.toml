@@ -16,6 +16,10 @@ classifiers = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jobdock"]
+core-metadata-version = "2.4"
+
+[tool.hatch.build.targets.sdist]
+core-metadata-version = "2.4"
 
 [tool.hatch.metadata.hooks.custom]
 
