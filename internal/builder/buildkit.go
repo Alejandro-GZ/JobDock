@@ -50,10 +50,28 @@ func (b *BuildKit) Build(ctx context.Context, work domain.BuildWork, projectDir,
 		}
 		args = append(args, "--frontend=gateway.v0", "--opt", "source="+b.config.RailpackFrontend, "--local", "context="+projectDir, "--local", "dockerfile="+planDir)
 	case domain.BuildModeDockerfile:
-		if info, statErr := os.Lstat(filepath.Join(projectDir, "Dockerfile")); statErr != nil || !info.Mode().IsRegular() {
-			return "", errors.New("Dockerfile mode requires a regular Dockerfile at the project root")
+		contextPath, dockerfilePath := work.Build.ContextPath, work.Build.DockerfilePath
+		if contextPath == "" {
+			contextPath = "."
 		}
-		args = append(args, "--frontend=dockerfile.v0", "--local", "context="+projectDir, "--local", "dockerfile="+projectDir, "--opt", "filename=Dockerfile")
+		if dockerfilePath == "" {
+			dockerfilePath = "Dockerfile"
+		}
+		contextDir, resolveErr := sourcePath(projectDir, contextPath)
+		if resolveErr != nil {
+			return "", fmt.Errorf("invalid build context: %w", resolveErr)
+		}
+		dockerfile, resolveErr := sourcePath(projectDir, dockerfilePath)
+		if resolveErr != nil {
+			return "", fmt.Errorf("invalid Dockerfile path: %w", resolveErr)
+		}
+		if info, statErr := os.Lstat(contextDir); statErr != nil || !info.IsDir() {
+			return "", errors.New("configured build context is not a directory")
+		}
+		if info, statErr := os.Lstat(dockerfile); statErr != nil || !info.Mode().IsRegular() {
+			return "", errors.New("configured Dockerfile is not a regular file")
+		}
+		args = append(args, "--frontend=dockerfile.v0", "--local", "context="+contextDir, "--local", "dockerfile="+filepath.Dir(dockerfile), "--opt", "filename="+filepath.Base(dockerfile))
 	default:
 		return "", fmt.Errorf("unsupported build mode %q", work.Build.Mode)
 	}
@@ -85,6 +103,22 @@ func (b *BuildKit) Build(ctx context.Context, work domain.BuildWork, projectDir,
 		return "", err
 	}
 	return digest, nil
+}
+
+func sourcePath(root, relative string) (string, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	candidate, err := filepath.Abs(filepath.Join(root, filepath.FromSlash(relative)))
+	if err != nil {
+		return "", err
+	}
+	within, err := filepath.Rel(root, candidate)
+	if err != nil || within == ".." || strings.HasPrefix(within, ".."+string(filepath.Separator)) {
+		return "", errors.New("path escapes the source archive")
+	}
+	return candidate, nil
 }
 
 func managedRuntimeImage(buildID string) string {

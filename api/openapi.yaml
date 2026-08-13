@@ -70,7 +70,7 @@ paths:
                 metadata:
                   type: string
                   contentMediaType: application/json
-                  description: JSON containing name and mode (RAILPACK or DOCKERFILE).
+                  description: JSON containing name, mode (RAILPACK or DOCKERFILE), and optional Dockerfile context_path/dockerfile_path.
                 source: {type: string, format: binary, description: Immutable .zip, .tar.gz, or .tgz source archive bytes.}
       responses:
         '201': {description: Created source build, content: {application/json: {schema: {$ref: '#/components/schemas/Build'}}}}
@@ -752,6 +752,8 @@ components:
         mode: {type: string, enum: [RAILPACK, DOCKERFILE]}
         status: {$ref: '#/components/schemas/BuildStatus'}
         source: {$ref: '#/components/schemas/BuildSource'}
+        context_path: {type: string, description: Slash-separated build context relative to the source root.}
+        dockerfile_path: {type: string, description: Slash-separated Dockerfile path relative to the source root.}
         oci_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
         artifact_reference: {type: string, pattern: '^jobdock://build/[^/@]+@sha256:[0-9a-f]{64}$'}
         artifact_available: {type: boolean}
@@ -828,7 +830,7 @@ components:
       properties:
         name: {type: string, minLength: 3, maxLength: 120}
         image: {type: string, maxLength: 512}
-        command: {type: array, minItems: 1, maxItems: 128, items: {type: string}}
+        command: {type: array, maxItems: 128, description: Optional OCI command override; an empty array uses the image default, items: {type: string}}
         working_directory: {type: string}
         environment: {type: object, additionalProperties: {type: string}}
         secret_refs: {type: array, items: {$ref: '#/components/schemas/SecretRef'}}

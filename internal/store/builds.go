@@ -11,7 +11,7 @@ import (
 	"github.com/jobdock/jobdock/internal/domain"
 )
 
-const buildSelect = `SELECT id,owner_id,name,mode,status,source_filename,source_size_bytes,source_sha256,oci_digest,failure_reason,created_at,started_at,finished_at,version,EXISTS(SELECT 1 FROM managed_build_artifacts WHERE build_id=builds.id) FROM builds`
+const buildSelect = `SELECT id,owner_id,name,mode,status,source_filename,source_size_bytes,source_sha256,context_path,dockerfile_path,oci_digest,failure_reason,created_at,started_at,finished_at,version,EXISTS(SELECT 1 FROM managed_build_artifacts WHERE build_id=builds.id) FROM builds`
 
 func (s *Store) CreateBuild(ctx context.Context, build domain.Build) error {
 	if err := domain.ValidateBuild(build); err != nil {
@@ -22,7 +22,7 @@ func (s *Store) CreateBuild(ctx context.Context, build domain.Build) error {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT INTO builds(id,owner_id,name,mode,status,source_filename,source_size_bytes,source_sha256,created_at,version) VALUES(?,?,?,?,?,?,?,?,?,1)`, build.ID, build.OwnerID, build.Name, build.Mode, build.Status, build.Source.Filename, build.Source.Size, build.Source.SHA256, formatTime(build.CreatedAt))
+	_, err = tx.ExecContext(ctx, `INSERT INTO builds(id,owner_id,name,mode,status,source_filename,source_size_bytes,source_sha256,context_path,dockerfile_path,created_at,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)`, build.ID, build.OwnerID, build.Name, build.Mode, build.Status, build.Source.Filename, build.Source.Size, build.Source.SHA256, build.ContextPath, build.DockerfilePath, formatTime(build.CreatedAt))
 	if err != nil {
 		return mapConstraint(err)
 	}
@@ -235,7 +235,7 @@ func scanBuild(row scanner) (domain.Build, error) {
 	var build domain.Build
 	var created string
 	var started, finished sql.NullString
-	err := row.Scan(&build.ID, &build.OwnerID, &build.Name, &build.Mode, &build.Status, &build.Source.Filename, &build.Source.Size, &build.Source.SHA256, &build.OCIDigest, &build.FailureReason, &created, &started, &finished, &build.Version, &build.ArtifactAvailable)
+	err := row.Scan(&build.ID, &build.OwnerID, &build.Name, &build.Mode, &build.Status, &build.Source.Filename, &build.Source.Size, &build.Source.SHA256, &build.ContextPath, &build.DockerfilePath, &build.OCIDigest, &build.FailureReason, &created, &started, &finished, &build.Version, &build.ArtifactAvailable)
 	if errors.Is(err, sql.ErrNoRows) {
 		return build, ErrNotFound
 	}

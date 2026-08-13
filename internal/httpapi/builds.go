@@ -43,8 +43,10 @@ func (a *API) createBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var metadata struct {
-		Name string           `json:"name"`
-		Mode domain.BuildMode `json:"mode"`
+		Name           string           `json:"name"`
+		Mode           domain.BuildMode `json:"mode"`
+		ContextPath    string           `json:"context_path"`
+		DockerfilePath string           `json:"dockerfile_path"`
 	}
 	metadataSeen, sourceSeen := false, false
 	var source domain.BuildSource
@@ -105,7 +107,15 @@ func (a *API) createBuild(w http.ResponseWriter, r *http.Request) {
 		fail(http.StatusUnprocessableEntity, "invalid_build", "Build creation requires metadata and source fields")
 		return
 	}
-	build := domain.Build{ID: buildID, OwnerID: user.ID, Name: strings.TrimSpace(metadata.Name), Mode: metadata.Mode, Status: domain.BuildCreated, Source: source, CreatedAt: time.Now().UTC(), Version: 1}
+	build := domain.Build{ID: buildID, OwnerID: user.ID, Name: strings.TrimSpace(metadata.Name), Mode: metadata.Mode, Status: domain.BuildCreated, Source: source, ContextPath: strings.TrimSpace(metadata.ContextPath), DockerfilePath: strings.TrimSpace(metadata.DockerfilePath), CreatedAt: time.Now().UTC(), Version: 1}
+	if build.Mode == domain.BuildModeDockerfile {
+		if build.ContextPath == "" {
+			build.ContextPath = "."
+		}
+		if build.DockerfilePath == "" {
+			build.DockerfilePath = "Dockerfile"
+		}
+	}
 	if err = domain.ValidateBuild(build); err != nil {
 		fail(http.StatusUnprocessableEntity, "invalid_build", err.Error())
 		return

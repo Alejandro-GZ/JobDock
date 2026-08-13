@@ -75,6 +75,16 @@ the same database transaction, which also prevents races with garbage
 collection. Reruns retain the same reference; creating a new build generation
 is the explicit rebuild boundary.
 
+The New job wizard exposes that pipeline as three execution-source choices.
+`Project (Auto)` is the recommended path and pauses after Railpack analysis so
+the detected provider, runtime, package manager, and entrypoint can be reviewed.
+`Dockerfile` records a normalized source-relative build context and Dockerfile
+path. `OCI image` keeps the direct-image and optional registry-credential flow.
+Runtime command and working-directory fields are explicit overrides; leaving
+them empty preserves the image defaults. Both managed paths finish the build,
+resolve its immutable `jobdock://` reference, and submit the same `JobSpec`
+used by the direct OCI path.
+
 Job inputs are committed to central storage before `QUEUED` is persisted. Their
 relative paths, sizes, and SHA-256 digests become part of the immutable job
 specification. The assigned agent downloads and verifies that exact manifest,

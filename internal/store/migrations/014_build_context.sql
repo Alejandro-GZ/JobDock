@@ -1,0 +1,2 @@
+ALTER TABLE builds ADD COLUMN context_path TEXT NOT NULL DEFAULT '';
+ALTER TABLE builds ADD COLUMN dockerfile_path TEXT NOT NULL DEFAULT '';

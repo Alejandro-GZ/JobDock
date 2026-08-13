@@ -11,6 +11,11 @@ describe("source builds",()=>{
     expect(stored.name).toBe(file.name);
     expect(stored.size).toBe(file.size);
   });
+  it("persists explicit Dockerfile context without registry concepts",()=>{
+    const file=new File(["source"],"project.zip");
+    const body=buildFormData("custom image",file,"DOCKERFILE",{contextPath:"services/api",dockerfilePath:"docker/api.Dockerfile"});
+    expect(JSON.parse(String(body.get("metadata")))).toEqual({name:"custom image",mode:"DOCKERFILE",context_path:"services/api",dockerfile_path:"docker/api.Dockerfile"});
+  });
   it("rejects missing, empty, and unsupported archives",()=>{
     expect(validateBuildSource("ok",null)).toContain("name");
     expect(validateBuildSource("valid name",new File([],"source.zip"))).toContain("empty");

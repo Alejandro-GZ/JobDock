@@ -26,6 +26,23 @@ func ValidateBuild(build Build) error {
 	if build.Source.Size <= 0 || !lowercaseSHA256.MatchString(build.Source.SHA256) {
 		return errors.New("source requires a positive size and lowercase SHA-256 digest")
 	}
+	if build.Mode == BuildModeDockerfile {
+		contextPath, dockerfilePath := build.ContextPath, build.DockerfilePath
+		if contextPath == "" {
+			contextPath = "."
+		}
+		if dockerfilePath == "" {
+			dockerfilePath = "Dockerfile"
+		}
+		if err := validateBuildRelativePath(contextPath, true); err != nil {
+			return fmt.Errorf("invalid build context: %w", err)
+		}
+		if err := validateBuildRelativePath(dockerfilePath, false); err != nil {
+			return fmt.Errorf("invalid Dockerfile path: %w", err)
+		}
+	} else if build.ContextPath != "" || build.DockerfilePath != "" {
+		return errors.New("Railpack builds cannot define Dockerfile context settings")
+	}
 	if build.Status == BuildSucceeded && !ociDigest.MatchString(build.OCIDigest) {
 		return errors.New("successful builds require an immutable sha256 OCI digest")
 	}
@@ -37,6 +54,17 @@ func ValidateBuild(build Build) error {
 	}
 	if build.Status == BuildFailed && strings.TrimSpace(build.FailureReason) == "" {
 		return errors.New("failed builds require a failure reason")
+	}
+	return nil
+}
+
+func validateBuildRelativePath(value string, allowDot bool) error {
+	if value == "" || len(value) > 512 || strings.ContainsAny(value, "\\:\x00") || strings.HasPrefix(value, "/") {
+		return errors.New("path must be a slash-separated relative path of at most 512 characters")
+	}
+	cleaned := path.Clean(value)
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || (!allowDot && cleaned == ".") || cleaned != value {
+		return errors.New("path must be normalized and remain inside the source archive")
 	}
 	return nil
 }
@@ -98,8 +126,8 @@ func ValidateJobSpec(spec JobSpec) error {
 	if strings.TrimSpace(spec.Image) == "" || len(spec.Image) > 512 {
 		return errors.New("image is required and must not exceed 512 characters")
 	}
-	if len(spec.Command) == 0 || len(spec.Command) > 128 {
-		return errors.New("command must contain between 1 and 128 arguments")
+	if len(spec.Command) > 128 {
+		return errors.New("command must not contain more than 128 arguments")
 	}
 	for _, arg := range spec.Command {
 		if len(arg) > 8192 {

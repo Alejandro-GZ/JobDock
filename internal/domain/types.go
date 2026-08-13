@@ -76,6 +76,8 @@ type Build struct {
 	Mode              BuildMode   `json:"mode"`
 	Status            BuildStatus `json:"status"`
 	Source            BuildSource `json:"source"`
+	ContextPath       string      `json:"context_path,omitempty"`
+	DockerfilePath    string      `json:"dockerfile_path,omitempty"`
 	OCIDigest         string      `json:"oci_digest,omitempty"`
 	ArtifactReference string      `json:"artifact_reference,omitempty"`
 	ArtifactAvailable bool        `json:"artifact_available"`

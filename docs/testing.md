@@ -15,7 +15,10 @@ docker compose -f deploy/docker-compose.yml logs -f jobdock-builder buildkitd
 Confirm a supported Railpack project and verify that its build moves from
 `ANALYZING` to `BUILDING` and then `SUCCEEDED`, build logs grow while the solve
 is running, and the final result is a `sha256:` digest. Exercise Dockerfile mode
-through `POST /api/v1/builds` with `mode=DOCKERFILE`, then confirm the build.
+through `POST /api/v1/builds` with `mode=DOCKERFILE`, a source-relative
+`context_path`, and `dockerfile_path`, then confirm the build. In New job,
+verify all three source choices and complete `Build & Run` for both managed
+modes; the resulting job image must be an immutable managed artifact reference.
 Cancel a long-running build and verify that the builder terminates it on the
 next heartbeat. Restart `jobdock-server` during a confirmed build and verify
 the same assignment resumes without a second build row.

@@ -9,9 +9,17 @@ export function validateBuildSource(name:string,file?:File|null){
   return "";
 }
 
-export function buildFormData(name:string,file:File){
+export type BuildMode="RAILPACK"|"DOCKERFILE";
+export type DockerfileConfig={contextPath:string;dockerfilePath:string};
+
+export function buildFormData(name:string,file:File,mode:BuildMode="RAILPACK",config?:DockerfileConfig){
   const body=new FormData();
-  body.append("metadata",JSON.stringify({name:name.trim(),mode:"RAILPACK"}));
+  const metadata:Record<string,string>={name:name.trim(),mode};
+  if(mode==="DOCKERFILE"){
+    metadata.context_path=config?.contextPath.trim()||".";
+    metadata.dockerfile_path=config?.dockerfilePath.trim()||"Dockerfile";
+  }
+  body.append("metadata",JSON.stringify(metadata));
   body.append("source",file,file.name);
   return body;
 }

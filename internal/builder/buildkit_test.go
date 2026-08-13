@@ -40,3 +40,14 @@ func TestBuildKitValidatesModeInputsBeforeExecution(t *testing.T) {
 		t.Fatal("Railpack build without persisted plan was accepted")
 	}
 }
+
+func TestSourcePathRejectsTraversal(t *testing.T) {
+	root := t.TempDir()
+	if _, err := sourcePath(root, "../Dockerfile"); err == nil {
+		t.Fatal("source traversal was accepted")
+	}
+	path, err := sourcePath(root, "services/api")
+	if err != nil || path != filepath.Join(root, "services", "api") {
+		t.Fatalf("resolved path=%q error=%v", path, err)
+	}
+}

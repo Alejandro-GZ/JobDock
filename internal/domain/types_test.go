@@ -66,6 +66,14 @@ func TestBuildLifecycleAndValidation(t *testing.T) {
 	if err := ValidateBuild(build); err == nil {
 		t.Fatal("failed build without visible failure reason was accepted")
 	}
+	build = Build{Name: "custom build", Mode: BuildModeDockerfile, Status: BuildCreated, Source: BuildSource{Filename: "source.zip", Size: 10, SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}, ContextPath: "services/api", DockerfilePath: "docker/api.Dockerfile"}
+	if err := ValidateBuild(build); err != nil {
+		t.Fatal(err)
+	}
+	build.DockerfilePath = "../Dockerfile"
+	if err := ValidateBuild(build); err == nil {
+		t.Fatal("Dockerfile traversal was accepted")
+	}
 }
 
 func TestManagedArtifactReferenceIsImmutableAndStrict(t *testing.T) {
