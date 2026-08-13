@@ -134,9 +134,9 @@ def main() -> None:
 
         command(
             "docker", "run", "-d", "--name", names["buildkit"], "--network", network,
-            "--network-alias", "buildkitd", "--security-opt", "seccomp=unconfined",
-            "--security-opt", "apparmor=unconfined", "-v", f"{volumes[2]}:/home/user/.local/share/buildkit",
-            "moby/buildkit:v0.30.0-rootless", "--addr", "tcp://0.0.0.0:1234", "--oci-worker-no-process-sandbox",
+            "--network-alias", "buildkitd", "--privileged",
+            "-v", f"{volumes[2]}:/var/lib/buildkit",
+            "moby/buildkit:v0.30.0", "--addr", "tcp://0.0.0.0:1234",
         )
         wait_for(
             "BuildKit worker",

@@ -165,8 +165,11 @@ func (h *harness) startServer() {
 		"JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD=" + bootstrapPassword,
 		"JOBDOCK_DATA_DIR=" + filepath.Join(h.root, "server"),
 		"JOBDOCK_DATABASE_PATH=" + filepath.Join(h.root, "server", "jobdock.db"),
-		"JOBDOCK_HEARTBEAT_OFFLINE_AFTER=2s",
-		"JOBDOCK_JOB_LOST_AFTER=3s",
+		// Keep stale-node thresholds above the agent's ten-second heartbeat.
+		// Shorter values can mark a healthy node and its pulling job LOST
+		// between two normal heartbeats, making recovery scenarios race.
+		"JOBDOCK_HEARTBEAT_OFFLINE_AFTER=12s",
+		"JOBDOCK_JOB_LOST_AFTER=15s",
 		"JOBDOCK_MAX_LOG_BYTES=1048576",
 		"JOBDOCK_MAX_OUTPUT_BYTES=512",
 		"JOBDOCK_MAX_INPUT_BYTES=1024",
@@ -722,7 +725,7 @@ func (h *harness) testLostReconciliation(t *testing.T) {
 	created := h.submit("e2e-lost", "alpine:3.20", []string{"sh", "-c", "while [ ! -f /jobdock/output/release ]; do sleep 1; done; echo lost-reconciled"})
 	running := h.waitJob(created.ID, 30*time.Second, "RUNNING")
 	h.kill(&h.agent)
-	lost := h.waitJob(created.ID, 18*time.Second, "LOST")
+	lost := h.waitJob(created.ID, 25*time.Second, "LOST")
 	if lost.AttemptID != running.AttemptID {
 		t.Fatalf("LOST changed attempt: %s -> %s", running.AttemptID, lost.AttemptID)
 	}
