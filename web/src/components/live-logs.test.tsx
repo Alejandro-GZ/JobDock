@@ -24,8 +24,8 @@ describe("LiveLogs",()=>{
   it("overlays a compact accessible toolbar without opening another stream",()=>{
     vi.stubGlobal("EventSource",FakeEventSource);render(<LiveLogs jobId="job" attemptId="attempt" streams={["stdout","stderr"]} embedded actions={<button type="button">Configure</button>}/>);
     const toolbar=document.querySelector<HTMLElement>("[data-log-toolbar]"),consoleElement=document.querySelector<HTMLElement>("[data-log-console]");
-    expect(toolbar?.className).toContain("absolute");expect(toolbar?.className).toContain("h-6");expect(consoleElement?.className).toContain("relative");
+    expect(toolbar?.className).toContain("absolute");expect(toolbar?.className).toContain("top-0");expect(toolbar?.className).toContain("inset-x-0");expect(consoleElement?.className).toContain("relative");
     expect(screen.getByRole("button",{name:"Configure"})).toBeTruthy();expect(screen.getByText("Connecting").getAttribute("tabindex")).toBe("0");expect(FakeEventSource.instances).toHaveLength(1);
-    expect(screen.getByLabelText("Log output").className).toContain("pt-9");
+    expect(screen.getByLabelText("Log output").className).toContain("pt-8");
   });
 });

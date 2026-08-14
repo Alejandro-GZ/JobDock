@@ -43,6 +43,8 @@ describe("ObservationPlot",()=>{
     const plot=screen.getByRole("img",{name:/Training barplot with 2 points/i}),initial=plot.getAttribute("data-domain"),toolbar=document.querySelector<HTMLElement>("[data-plot-toolbar]");
     expect(toolbar?.className).toContain("bottom-1");
     expect(toolbar?.className).toContain("left-1/2");
+    expect(toolbar?.className).toContain("opacity-0");
+    expect(toolbar?.className).toContain("group-hover:opacity-100");
     await user.click(screen.getByRole("button",{name:"Zoom in Training"}));
     expect(plot.getAttribute("data-domain")).not.toBe(initial);
     await user.click(screen.getByRole("button",{name:"Reset zoom Training"}));

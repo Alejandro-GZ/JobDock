@@ -5,7 +5,7 @@ import type {PlotSeries} from "@/components/observation-plot";
 
 export function PlotToolbar({label,series,colors,mixedUnits,onZoomIn,onZoomOut,onReset}:{label:string;series:PlotSeries[];colors:Map<string,string>;mixedUnits:boolean;onZoomIn:()=>void;onZoomOut:()=>void;onReset:()=>void}){
   const [legendOpen,setLegendOpen]=useState(false);
-  return <div data-plot-toolbar className="absolute bottom-1 left-1/2 z-20 flex -translate-x-1/2 items-center rounded-md border bg-card/90 p-0.5 shadow-sm backdrop-blur-sm">
+  return <div data-plot-toolbar className="pointer-events-none absolute bottom-1 left-1/2 z-20 flex -translate-x-1/2 items-center rounded-md border bg-card/90 p-0.5 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
     <Button type="button" variant="ghost" size="icon" className="size-6" aria-label={`Zoom in ${label}`} onClick={onZoomIn}><ZoomIn className="size-3"/></Button>
     <Button type="button" variant="ghost" size="icon" className="size-6" aria-label={`Zoom out ${label}`} onClick={onZoomOut}><ZoomOut className="size-3"/></Button>
     <Button type="button" variant="ghost" size="icon" className="size-6" aria-label={`Reset zoom ${label}`} onClick={onReset}><RotateCcw className="size-3"/></Button>
