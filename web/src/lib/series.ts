@@ -31,8 +31,8 @@ export function numericSummary(points: SeriesPoint[]) {
   return { min, max, last: points[points.length - 1].value };
 }
 
-export function zoomDomain(domain: [number, number], factor: number, anchor = .5): [number, number] {
-  const [start, end] = domain, width = Math.max(1, end - start), next = Math.max(1000, width * factor);
+export function zoomDomain(domain: [number, number], factor: number, anchor = .5, minimumWidth = 1000): [number, number] {
+  const [start, end] = domain, width = Math.max(Number.EPSILON, end - start), next = Math.max(minimumWidth, width * factor);
   const center = start + width * Math.min(1, Math.max(0, anchor));
   return [center - next * anchor, center + next * (1 - anchor)];
 }

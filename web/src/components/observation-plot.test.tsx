@@ -36,4 +36,17 @@ describe("ObservationPlot",()=>{
     expect(screen.getByText("loss")).toBeTruthy();
     expect(screen.getByText("duration")).toBeTruthy();
   });
+
+  it("keeps the shared toolbar inside the chart and restores the exact initial domain",async()=>{
+    const user=userEvent.setup();
+    render(<ObservationPlot type="barplot" title="Training" series={[loss]} xAxis="step"/>);
+    const plot=screen.getByRole("img",{name:/Training barplot with 2 points/i}),initial=plot.getAttribute("data-domain"),toolbar=document.querySelector<HTMLElement>("[data-plot-toolbar]");
+    expect(toolbar?.className).toContain("bottom-1");
+    expect(toolbar?.className).toContain("left-1/2");
+    await user.click(screen.getByRole("button",{name:"Zoom in Training"}));
+    expect(plot.getAttribute("data-domain")).not.toBe(initial);
+    await user.click(screen.getByRole("button",{name:"Reset zoom Training"}));
+    expect(plot.getAttribute("data-domain")).toBe(initial);
+    expect(screen.getByRole("button",{name:"Training legend"}).getAttribute("aria-expanded")).toBe("false");
+  });
 });

@@ -14,6 +14,7 @@ describe("series helpers", () => {
   it("summarizes and zooms a numeric domain", () => {
     expect(numericSummary([{timestamp:1,value:3},{timestamp:2,value:1},{timestamp:3,value:5}])).toEqual({min:1,max:5,last:5});
     expect(zoomDomain([0,10_000], .5)).toEqual([2_500,7_500]);
+    expect(zoomDomain([1,2],.5,.5,.001)).toEqual([1.25,1.75]);
   });
   it("appends only new attempt-scoped live deltas", () => {
     const metrics={attempt_id:"attempt",cursor:4,from:"2026-08-12T10:00:00Z",to:"2026-08-12T10:01:00Z",resolution_seconds:0,truncated:false,series:[{name:"loss",points:[],last:2,min:2,max:2,sample_count:1}]};
