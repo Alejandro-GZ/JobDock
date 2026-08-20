@@ -98,6 +98,9 @@ Storage access is behind package boundaries so PostgreSQL and object storage can
 Metrics reported by `job.metric()` are not generic lifecycle events. They are
 stored in an attempt-aware time-series table with server-side aggregation and
 bounded queries. Normalized resource telemetry uses the same attempt identity;
+metric semantics are stored once in the stable series descriptor and are not
+duplicated across samples. Tags omitted from later samples inherit that
+descriptor, while an incompatible redefinition rejects the complete batch.
 both streams share a persisted monotonic cursor. Historical queries read at a
 cursor-consistent snapshot, while a resumable SSE tail carries only newly
 committed batches to the browser. This keeps live refresh work proportional to

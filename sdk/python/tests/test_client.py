@@ -28,14 +28,14 @@ def test_enriched_metrics_are_typed_ordered_and_backwards_compatible(tmp_path: P
     job.metric("legacy", 1.0, 3)
     observed = datetime(2026, 8, 13, 10, 30, tzinfo=timezone(timedelta(hours=2)))
     job.metrics([
-        Metric("loss", .4, step=4, timestamp=observed, unit="ratio", metadata={"split": "train"}),
+        Metric("loss", .4, step=4, timestamp=observed, unit="ratio", metadata={"split": "train"}, tags=["phase:Train", "metric:loss", "phase:train"]),
         Metric("accuracy", .9, step=4, unit="ratio"),
     ])
     assert [item["name"] for item in queued[1][1]["items"]] == ["loss", "accuracy"]
     assert queued[0][1]["items"][0]["step"] == 3
     assert queued[1][1]["items"][0] == {
         "name": "loss", "value": .4, "step": 4, "timestamp": "2026-08-13T08:30:00Z",
-        "unit": "ratio", "metadata": {"split": "train"},
+        "unit": "ratio", "metadata": {"split": "train"}, "tags": ["metric:loss", "phase:train"],
     }
     job.close()
 
@@ -50,19 +50,28 @@ def test_metric_validation_rejects_unsafe_observations(tmp_path: Path):
         job.metric("loss", 1, metadata={"a": {"b": {"c": {"d": "too deep"}}}})
     with pytest.raises(ValueError, match="16 KiB|1024"):
         job.metric("loss", 1, metadata={"value": "x" * 17000})
+    with pytest.raises(ValueError, match="namespace:value"):
+        job.metric("loss", 1, tags=["train"])
+    with pytest.raises(ValueError, match="32"):
+        job.metric("loss", 1, tags=[f"custom:value-{index}" for index in range(33)])
     job.close()
 
 
 def test_noop_accepts_enriched_contracts_without_consuming_iterables():
     noop = NoopJob()
     consumed = False
+    tags_consumed = False
     def observations():
         nonlocal consumed
         consumed = True
         yield Metric("loss", 1)
-    noop.metric("loss", 1, timestamp=datetime.now(timezone.utc), unit="ratio", metadata={"split": "train"})
+    def tags():
+        nonlocal tags_consumed
+        tags_consumed = True
+        yield "metric:loss"
+    noop.metric("loss", 1, timestamp=datetime.now(timezone.utc), unit="ratio", metadata={"split": "train"}, tags=tags())
     noop.metrics(observations())
-    assert consumed is False
+    assert consumed is False and tags_consumed is False
     assert CheckpointObservation(label="best").label == "best"
     assert ProgressObservation(.5, milestone="train").milestone == "train"
     assert Milestone("train", weight=1).weight == 1

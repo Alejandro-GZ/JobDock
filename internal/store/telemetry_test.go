@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -93,7 +94,7 @@ func TestMetricSeriesAreAttemptAwareBoundedAndAggregated(t *testing.T) {
 	base := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
 	step1, step2 := int64(1), int64(2)
 	samples := []domain.MetricSample{
-		{JobID: job.ID, AttemptID: attemptID, Name: "loss", Step: &step1, Value: 4, CapturedAt: base, Unit: "ratio", Metadata: map[string]any{"split": "train"}},
+		{JobID: job.ID, AttemptID: attemptID, Name: "loss", Step: &step1, Value: 4, CapturedAt: base, Unit: "ratio", Metadata: map[string]any{"split": "train"}, Tags: []string{"phase:train", "metric:loss"}},
 		{JobID: job.ID, AttemptID: attemptID, Name: "loss", Step: &step2, Value: 2, CapturedAt: base.Add(10 * time.Second)},
 		{JobID: job.ID, AttemptID: attemptID, Name: "accuracy", Step: &step2, Value: .75, CapturedAt: base.Add(10 * time.Second)},
 	}
@@ -107,11 +108,24 @@ func TestMetricSeriesAreAttemptAwareBoundedAndAggregated(t *testing.T) {
 	if series[0].Points[0].Value != 3 || series[0].Points[0].SampleCount != 2 || series[0].Last != 2 || series[0].Min != 2 || series[0].Max != 4 || series[0].SampleCount != 2 {
 		t.Fatalf("metric aggregation or statistics are wrong: %#v", series[0])
 	}
-	if series[0].Unit != "ratio" || series[0].Metadata["split"] != "train" {
+	if series[0].Unit != "ratio" || series[0].Metadata["split"] != "train" || !reflect.DeepEqual(series[0].Tags, []string{"metric:loss", "phase:train"}) {
 		t.Fatalf("metric descriptor was not preserved: %#v", series[0])
 	}
 	if err = repository.AppendMetricSamples(ctx, []domain.MetricSample{{JobID: job.ID, AttemptID: attemptID, Name: "loss", Value: 99, CapturedAt: base.Add(15 * time.Second), Unit: "seconds"}}); !errors.Is(err, store.ErrMetricDescriptorConflict) {
 		t.Fatalf("descriptor conflict: %v", err)
+	}
+	if err = repository.AppendMetricSamples(ctx, []domain.MetricSample{{JobID: job.ID, AttemptID: attemptID, Name: "loss", Value: 99, CapturedAt: base.Add(15 * time.Second), Tags: []string{"phase:validation", "metric:loss"}}}); !errors.Is(err, store.ErrMetricDescriptorConflict) {
+		t.Fatalf("semantic tag conflict: %v", err)
+	}
+	if err = repository.AppendMetricSamples(ctx, []domain.MetricSample{
+		{JobID: job.ID, AttemptID: attemptID, Name: "must-rollback", Value: 1, CapturedAt: base.Add(16 * time.Second), Tags: []string{"custom:temporary"}},
+		{JobID: job.ID, AttemptID: attemptID, Name: "loss", Value: 1, CapturedAt: base.Add(16 * time.Second), Tags: []string{"phase:test"}},
+	}); !errors.Is(err, store.ErrMetricDescriptorConflict) {
+		t.Fatalf("atomic semantic tag conflict: %v", err)
+	}
+	var rolledBack int
+	if err = repository.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM job_metric_samples WHERE attempt_id=? AND name='must-rollback'`, attemptID).Scan(&rolledBack); err != nil || rolledBack != 0 {
+		t.Fatalf("conflicting batch was partially committed: count=%d err=%v", rolledBack, err)
 	}
 	_, truncated, err = repository.MetricSeries(ctx, job.ID, attemptID, nil, base.Add(-time.Second), base.Add(time.Minute), 0, 1)
 	if err != nil || !truncated {

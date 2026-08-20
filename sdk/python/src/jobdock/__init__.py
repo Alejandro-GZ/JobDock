@@ -9,6 +9,6 @@ except PackageNotFoundError:
     __version__ = "0.0.0.dev0"
 
 from .client import Job, NoopJob, current_job
-from .observability import CheckpointObservation, JSONValue, MatrixObservation, Metric, Milestone, ProgressObservation
+from .observability import CheckpointObservation, JSONValue, MatrixObservation, Metric, Milestone, ProgressObservation, SemanticTags
 
-__all__ = ["CheckpointObservation", "JSONValue", "Job", "MatrixObservation", "Metric", "Milestone", "NoopJob", "ProgressObservation", "__version__", "current_job"]
+__all__ = ["CheckpointObservation", "JSONValue", "Job", "MatrixObservation", "Metric", "Milestone", "NoopJob", "ProgressObservation", "SemanticTags", "__version__", "current_job"]

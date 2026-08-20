@@ -332,6 +332,7 @@ type MetricSample struct {
 	CapturedAt time.Time      `json:"captured_at"`
 	Unit       string         `json:"unit,omitempty"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
+	Tags       []string       `json:"tags,omitempty"`
 }
 
 type MetricPoint struct {
@@ -346,6 +347,7 @@ type MetricSeries struct {
 	Name        string         `json:"name"`
 	Unit        string         `json:"unit,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
+	Tags        []string       `json:"tags,omitempty"`
 	Points      []MetricPoint  `json:"points"`
 	Last        float64        `json:"last"`
 	Min         float64        `json:"min"`

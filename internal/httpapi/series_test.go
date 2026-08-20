@@ -62,7 +62,7 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 	defer server.Close()
 
 	metricPayload, _ := json.Marshal(map[string]any{"items": []any{
-		map[string]any{"name": "loss", "value": .5, "step": 1, "timestamp": base.Add(20 * time.Second), "unit": "ratio", "metadata": map[string]any{"split": "train"}},
+		map[string]any{"name": "loss", "value": .5, "step": 1, "timestamp": base.Add(20 * time.Second), "unit": "ratio", "metadata": map[string]any{"split": "train"}, "tags": []string{"phase:Train", "metric:loss", "phase:train"}},
 		map[string]any{"name": "accuracy", "value": .8, "step": 1, "timestamp": base.Add(20 * time.Second)},
 	}})
 	metricRequest, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/job-context/metrics", bytes.NewReader(metricPayload))
@@ -84,6 +84,14 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 	}
 
 	ownerClient := loginSeriesUser(t, server.URL, owner.Username)
+	var catalog struct {
+		AttemptID string                   `json:"attempt_id"`
+		Items     []store.MetricDescriptor `json:"items"`
+	}
+	getSeriesJSON(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/metrics/catalog?attempt_id="+attemptID, &catalog)
+	if catalog.AttemptID != attemptID || len(catalog.Items) != 2 || strings.Join(catalog.Items[1].Tags, ",") != "metric:loss,phase:train" {
+		t.Fatalf("semantic metric catalog: %#v", catalog)
+	}
 	from, to := url.QueryEscape(base.Add(-time.Second).Format(time.RFC3339)), url.QueryEscape(base.Add(2*time.Minute).Format(time.RFC3339))
 	metricURL := server.URL + "/api/v1/jobs/" + job.ID + "/metrics?attempt_id=" + attemptID + "&from=" + from + "&to=" + to + "&resolution=raw"
 	var metrics metricSeriesResponse
@@ -92,7 +100,7 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 		t.Fatalf("metric response: %#v", metrics)
 	}
 	for _, series := range metrics.Series {
-		if series.Name == "loss" && (series.Unit != "ratio" || series.Metadata["split"] != "train") {
+		if series.Name == "loss" && (series.Unit != "ratio" || series.Metadata["split"] != "train" || strings.Join(series.Tags, ",") != "metric:loss,phase:train") {
 			t.Fatalf("enriched metric descriptor: %#v", series)
 		}
 		if series.Name == "loss" && (len(series.Points) != 1 || !series.Points[0].CapturedAt.Equal(base.Add(20*time.Second))) {
@@ -112,7 +120,7 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 		t.Fatal(err)
 	}
 	metricUpdate := readSeriesSSE(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/series/stream?attempt_id="+attemptID+"&after="+strconv.FormatInt(metrics.Cursor, 10), "")
-	if metricUpdate.Cursor <= metrics.Cursor || metricUpdate.Kind != "metrics" || len(metricUpdate.Metrics) != 1 || metricUpdate.Metrics[0].Name != "loss" || metricUpdate.Metrics[0].Unit != "ratio" {
+	if metricUpdate.Cursor <= metrics.Cursor || metricUpdate.Kind != "metrics" || len(metricUpdate.Metrics) != 1 || metricUpdate.Metrics[0].Name != "loss" || metricUpdate.Metrics[0].Unit != "ratio" || strings.Join(metricUpdate.Metrics[0].Tags, ",") != "metric:loss,phase:train" {
 		t.Fatalf("metric live update: %#v", metricUpdate)
 	}
 	conflict, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/job-context/metrics", strings.NewReader(`{"items":[{"name":"loss","value":0.1,"unit":"seconds"}]}`))
@@ -135,6 +143,7 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 	}{
 		{`{"items":[{"name":"future","value":1,"timestamp":"` + time.Now().UTC().Add(10*time.Minute).Format(time.RFC3339) + `"}]}`, http.StatusUnprocessableEntity, "invalid_metric_timestamp"},
 		{`{"items":[{"name":"unsafe","value":1,"metadata":{"a":{"b":{"c":{"d":"too deep"}}}}}]}`, http.StatusUnprocessableEntity, "invalid_metric_metadata"},
+		{`{"items":[{"name":"unsafe","value":1,"tags":["train"]}]}`, http.StatusUnprocessableEntity, "invalid_metric_tags"},
 		{`{"items":[{"name":"forged","value":1,"attempt_id":"other"}]}`, http.StatusBadRequest, "invalid_json"},
 	}
 	for _, item := range invalidCases {
@@ -169,7 +178,7 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 		if response.StatusCode != http.StatusOK || !strings.HasPrefix(response.Header.Get("Content-Type"), "text/csv") || !bytes.Contains(data, []byte(attemptID)) {
 			t.Fatalf("CSV response status=%d headers=%v body=%s", response.StatusCode, response.Header, data)
 		}
-		if strings.Contains(endpoint, "/metrics?") && (!bytes.Contains(data, []byte("ratio")) || !bytes.Contains(data, []byte(`{""split"":""train""}`))) {
+		if strings.Contains(endpoint, "/metrics?") && (!bytes.Contains(data, []byte("ratio")) || !bytes.Contains(data, []byte("metric:loss")) || !bytes.Contains(data, []byte(`{""split"":""train""}`))) {
 			t.Fatalf("metric CSV is missing descriptor columns: %s", data)
 		}
 	}

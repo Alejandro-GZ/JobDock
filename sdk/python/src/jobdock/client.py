@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import queue
+import re
 import threading
 import time
 import urllib.error
@@ -38,7 +39,7 @@ class NoopJob:
     def milestone(self, name: str, *, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None: pass
     def matrix(self, observation: MatrixObservation) -> None: pass
     def confusion_matrix(self, name: str, values: Iterable[Iterable[float]], labels: Iterable[str], *, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None: pass
-    def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None: pass
+    def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None: pass
     def metrics(self, items: Iterable[Metric]) -> None: pass
     def param(self, name: str, value: str | int | float | bool) -> None: pass
     def event(self, event_type: str, payload: dict[str, Any] | None = None) -> None: pass
@@ -107,9 +108,9 @@ class Job:
     def confusion_matrix(self, name: str, values: Iterable[Iterable[float]], labels: Iterable[str], *, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None:
         self.matrix(MatrixObservation(name, [list(row) for row in values], list(labels), step, timestamp, metadata))
 
-    def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None:
+    def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None:
         """Report one scalar metric while preserving the original call shape."""
-        self.metrics([Metric(name, value, step, timestamp, unit, metadata)])
+        self.metrics([Metric(name, value, step, timestamp, unit, metadata, None if tags is None else tuple(tags))])
 
     def metrics(self, items: Iterable[Metric]) -> None:
         """Report typed scalar metrics as one ordered, non-blocking batch."""
@@ -293,7 +294,29 @@ def _metric_payload(metric: Metric) -> dict[str, Any]:
         item["unit"] = unit
     if metadata is not None:
         item["metadata"] = metadata
+    tags = _validated_semantic_tags(metric.tags)
+    if tags is not None:
+        item["tags"] = tags
     return item
+
+
+_semantic_tag_pattern = re.compile(r"^[a-z][a-z0-9_.-]{0,31}:[a-z0-9][a-z0-9_.-]{0,63}$")
+
+
+def _validated_semantic_tags(tags: Iterable[str] | None) -> list[str] | None:
+    if tags is None:
+        return None
+    normalized: set[str] = set()
+    for tag in tags:
+        if not isinstance(tag, str):
+            raise ValueError("metric tags must be strings")
+        value = tag.strip().lower()
+        if not _semantic_tag_pattern.fullmatch(value):
+            raise ValueError("metric tags must use the namespace:value format")
+        normalized.add(value)
+    if len(normalized) > 32:
+        raise ValueError("a metric may contain at most 32 semantic tags")
+    return sorted(normalized)
 
 
 def _validated_metadata(metadata: Mapping[str, JSONValue] | None) -> dict[str, JSONValue] | None:

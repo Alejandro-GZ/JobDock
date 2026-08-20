@@ -1133,6 +1133,7 @@ components:
       properties:
         name: {type: string}
         unit: {type: string, maxLength: 64}
+        tags: {$ref: '#/components/schemas/SemanticMetricTags'}
         metadata: {$ref: '#/components/schemas/ObservationMetadata'}
         points: {type: array, items: {$ref: '#/components/schemas/MetricPoint'}}
         last: {type: number, format: double}
@@ -1157,6 +1158,7 @@ components:
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
         unit: {type: string, maxLength: 64}
+        tags: {$ref: '#/components/schemas/SemanticMetricTags'}
         metadata: {$ref: '#/components/schemas/ObservationMetadata'}
     MetricDescriptorList:
       type: object
@@ -1233,6 +1235,7 @@ components:
         value: {type: number, format: double}
         captured_at: {type: string, format: date-time}
         unit: {type: string, maxLength: 64}
+        tags: {$ref: '#/components/schemas/SemanticMetricTags'}
         metadata: {$ref: '#/components/schemas/ObservationMetadata'}
     SeriesUpdate:
       type: object
@@ -1387,7 +1390,18 @@ components:
               step: {type: integer}
               timestamp: {type: string, format: date-time, description: Observation time; defaults to server receipt time for legacy clients.}
               unit: {type: string, minLength: 1, maxLength: 64}
+              tags: {$ref: '#/components/schemas/SemanticMetricTags'}
               metadata: {$ref: '#/components/schemas/ObservationMetadata'}
+    SemanticMetricTags:
+      type: array
+      maxItems: 32
+      uniqueItems: true
+      description: Canonical lowercase semantic dimensions stored once on the attempt-scoped metric series descriptor. Standard and custom tags use namespace:value syntax.
+      items:
+        type: string
+        minLength: 3
+        maxLength: 97
+        pattern: '^[a-z][a-z0-9_.-]{0,31}:[a-z0-9][a-z0-9_.-]{0,63}$'
     ObservationMetadata:
       type: object
       maxProperties: 64

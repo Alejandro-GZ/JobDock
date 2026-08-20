@@ -48,10 +48,11 @@ export function appendMetricUpdate(current: MetricSeriesResponse | undefined, up
     if (series) {
 	  if (sample.unit !== undefined) series.unit = sample.unit;
 	  if (sample.metadata !== undefined) series.metadata = sample.metadata;
+	  if (sample.tags !== undefined) series.tags = sample.tags;
       series.points.push(point);
       if (series.points.length > livePointLimit) series.points.splice(0, series.points.length-livePointLimit);
       series.last=sample.value;series.min=Math.min(series.min,sample.value);series.max=Math.max(series.max,sample.value);series.sample_count+=1;
-    } else byName.set(sample.name,{name:sample.name,unit:sample.unit,metadata:sample.metadata,points:[point],last:sample.value,min:sample.value,max:sample.value,sample_count:1});
+    } else byName.set(sample.name,{name:sample.name,unit:sample.unit,tags:sample.tags,metadata:sample.metadata,points:[point],last:sample.value,min:sample.value,max:sample.value,sample_count:1});
   }
   return {...current,cursor:update.cursor,to:new Date(Math.max(Date.parse(current.to),Date.parse(update.captured_at))).toISOString(),series:[...byName.values()]};
 }

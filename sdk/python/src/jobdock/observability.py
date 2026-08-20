@@ -9,6 +9,7 @@ from typing import Mapping, Sequence, TypeAlias
 JSONScalar: TypeAlias = str | int | float | bool | None
 JSONValue: TypeAlias = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
 Metadata: TypeAlias = Mapping[str, JSONValue]
+SemanticTags: TypeAlias = Sequence[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +20,7 @@ class Metric:
     timestamp: datetime | None = None
     unit: str | None = None
     metadata: Metadata | None = None
+    tags: SemanticTags | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -62,6 +64,7 @@ func (a *API) sdkMetricSamples(w http.ResponseWriter, r *http.Request) {
 			Timestamp *time.Time     `json:"timestamp,omitempty"`
 			Unit      string         `json:"unit,omitempty"`
 			Metadata  map[string]any `json:"metadata,omitempty"`
+			Tags      []string       `json:"tags,omitempty"`
 		} `json:"items"`
 	}
 	if !decodeJSON(w, r, &body) {
@@ -87,6 +90,11 @@ func (a *API) sdkMetricSamples(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, http.StatusUnprocessableEntity, "invalid_metric_metadata", err.Error())
 			return
 		}
+		tags, err := normalizeMetricTags(item.Tags)
+		if err != nil {
+			writeProblem(w, http.StatusUnprocessableEntity, "invalid_metric_tags", err.Error())
+			return
+		}
 		capturedAt := time.Now().UTC()
 		if item.Timestamp != nil {
 			capturedAt = item.Timestamp.UTC()
@@ -95,7 +103,7 @@ func (a *API) sdkMetricSamples(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, http.StatusUnprocessableEntity, "invalid_metric_timestamp", "Metric timestamps cannot be more than five minutes in the future")
 			return
 		}
-		samples = append(samples, domain.MetricSample{JobID: job.ID, AttemptID: job.AttemptID, Name: item.Name, Step: item.Step, Value: item.Value, CapturedAt: capturedAt, Unit: item.Unit, Metadata: item.Metadata})
+		samples = append(samples, domain.MetricSample{JobID: job.ID, AttemptID: job.AttemptID, Name: item.Name, Step: item.Step, Value: item.Value, CapturedAt: capturedAt, Unit: item.Unit, Metadata: item.Metadata, Tags: tags})
 	}
 	if err := a.store.AppendMetricSamples(r.Context(), samples); err != nil {
 		if errors.Is(err, store.ErrMetricDescriptorConflict) {
@@ -106,6 +114,31 @@ func (a *API) sdkMetricSamples(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+var semanticMetricTagPattern = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,31}:[a-z0-9][a-z0-9_.-]{0,63}$`)
+
+func normalizeMetricTags(tags []string) ([]string, error) {
+	if tags == nil {
+		return nil, nil
+	}
+	unique := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		tag = strings.ToLower(strings.TrimSpace(tag))
+		if !semanticMetricTagPattern.MatchString(tag) {
+			return nil, fmt.Errorf("metric tags must use the namespace:value format")
+		}
+		unique[tag] = struct{}{}
+	}
+	if len(unique) > 32 {
+		return nil, fmt.Errorf("a metric may contain at most 32 semantic tags")
+	}
+	result := make([]string, 0, len(unique))
+	for tag := range unique {
+		result = append(result, tag)
+	}
+	sort.Strings(result)
+	return result, nil
 }
 
 func (a *API) jobMetrics(w http.ResponseWriter, r *http.Request) {
@@ -404,8 +437,12 @@ func writeMetricCSV(w http.ResponseWriter, jobID string, response metricSeriesRe
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="job-%s-metrics.csv"`, jobID))
 	writer := csv.NewWriter(w)
-	_ = writer.Write([]string{"attempt_id", "name", "unit", "metadata", "captured_at", "step", "value", "sample_count"})
+	_ = writer.Write([]string{"attempt_id", "name", "unit", "tags", "metadata", "captured_at", "step", "value", "sample_count"})
 	for _, series := range response.Series {
+		tags, _ := json.Marshal(series.Tags)
+		if series.Tags == nil {
+			tags = nil
+		}
 		metadata, _ := json.Marshal(series.Metadata)
 		if series.Metadata == nil {
 			metadata = nil
@@ -415,7 +452,7 @@ func writeMetricCSV(w http.ResponseWriter, jobID string, response metricSeriesRe
 			if point.Step != nil {
 				step = strconv.FormatInt(*point.Step, 10)
 			}
-			_ = writer.Write([]string{response.AttemptID, series.Name, series.Unit, string(metadata), point.CapturedAt.Format(time.RFC3339Nano), step, strconv.FormatFloat(point.Value, 'g', -1, 64), strconv.FormatInt(point.SampleCount, 10)})
+			_ = writer.Write([]string{response.AttemptID, series.Name, series.Unit, string(tags), string(metadata), point.CapturedAt.Format(time.RFC3339Nano), step, strconv.FormatFloat(point.Value, 'g', -1, 64), strconv.FormatInt(point.SampleCount, 10)})
 		}
 	}
 	writer.Flush()

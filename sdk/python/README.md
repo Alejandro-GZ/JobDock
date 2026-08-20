@@ -10,7 +10,7 @@ job.progress(0.5)
 job.metric("loss", 0.42, step=10)
 
 # Units and metadata describe the series and stay stable for the attempt.
-job.metric("throughput", 128.4, step=10, unit="samples/s", metadata={"split": "train"})
+job.metric("throughput", 128.4, step=10, unit="samples/s", metadata={"dataset": "cifar10"}, tags=["metric:throughput", "phase:train"])
 
 # Write checkpoints atomically beneath JOBDOCK_OUTPUT_DIR, then request a
 # durable, resumable synchronization. The result is True only after the server
@@ -30,12 +30,43 @@ from jobdock import Metric, current_job
 
 job = current_job()
 job.metrics([
-    Metric("train/loss", 0.42, step=10, timestamp=datetime.now(timezone.utc), unit="ratio", metadata={"dataset": "cifar10"}),
-    Metric("train/accuracy", 0.91, step=10, unit="ratio", metadata={"dataset": "cifar10"}),
+    Metric("train/loss", 0.42, step=10, timestamp=datetime.now(timezone.utc), unit="ratio", metadata={"dataset": "cifar10"}, tags=["metric:loss", "phase:train"]),
+    Metric("train/accuracy", 0.91, step=10, unit="ratio", metadata={"dataset": "cifar10"}, tags=["metric:accuracy", "phase:train"]),
 ])
 ```
 
-`unit` and `metadata` are series descriptors for one metric name and attempt. Omitted descriptor fields inherit the existing values; conflicting values are rejected as a whole batch. Use distinct names such as `train/loss` and `validation/loss` for semantically different series.
+`unit`, `metadata`, and `tags` are series descriptors for one metric name and
+attempt. Omitted descriptor fields inherit the existing values; conflicting
+values are rejected as a whole batch. Use distinct names such as `train/loss`
+and `validation/loss` for semantically different series.
+
+## Semantic metric tags
+
+Tags describe meaning rather than presentation. They are normalized to
+lowercase, deduplicated, sorted, and stored once on the attempt-scoped series
+descriptor instead of on every sample. Tags use `namespace:value`; up to 32
+dimensions can be combined on a metric. JobDock defines these initial standard
+values:
+
+- metric roles: `metric:loss`, `metric:accuracy`, `metric:precision`,
+  `metric:recall`, `metric:f1`, `metric:learning_rate`, `metric:mae`,
+  `metric:mse`, and `metric:rmse`;
+- phases: `phase:train`, `phase:validation`, and `phase:test`;
+- observation kinds: `kind:milestone`.
+
+Custom namespaces and values following the same grammar are preserved without
+being interpreted by JobDock, for example `acme.dataset:cifar10`. `phase` is a
+semantic dimension and never replaces the numeric `step` field.
+
+```python
+job.metric(
+    "objective_train",
+    0.42,
+    step=10,
+    unit="ratio",
+    tags=["metric:loss", "phase:train", "acme.dataset:cifar10"],
+)
+```
 
 Milestones can describe weighted stages. JobDock calculates global progress while retaining the current segment and upcoming stages independently for each attempt:
 
