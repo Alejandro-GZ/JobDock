@@ -1,90 +1,109 @@
 package httpapi
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
 
-func TestOfficialDashboardTemplateCatalogIsValidAndFrameworkNeutral(t *testing.T) {
-	templates := officialDashboardTemplates()
-	standardTags := map[string]bool{"metric:loss": true, "metric:accuracy": true, "metric:precision": true, "metric:recall": true, "metric:f1": true, "metric:learning_rate": true, "metric:mae": true, "metric:mse": true, "metric:rmse": true, "phase:train": true, "phase:validation": true}
-	if len(templates) != 3 {
+func TestOfficialObservabilityCatalogIsCompleteAndCanonical(t *testing.T) {
+	roles, phases := map[string]bool{}, map[string]bool{}
+	for _, category := range officialObservabilityCatalog.MetricCategories {
+		if category.ID == "" || category.Name == "" || category.Description == "" || len(category.Roles) == 0 {
+			t.Fatalf("invalid metric category: %#v", category)
+		}
+		for _, role := range category.Roles {
+			tag := "metric:" + role.ID
+			if roles[tag] || !semanticMetricTagPattern.MatchString(tag) || role.Name == "" || role.Description == "" {
+				t.Fatalf("invalid or duplicate role: %#v", role)
+			}
+			roles[tag] = true
+		}
+	}
+	for _, phase := range officialObservabilityCatalog.Phases {
+		tag := "phase:" + phase.ID
+		if phases[tag] || !semanticMetricTagPattern.MatchString(tag) || phase.Name == "" || phase.Description == "" {
+			t.Fatalf("invalid or duplicate phase: %#v", phase)
+		}
+		phases[tag] = true
+	}
+	if len(roles) != 183 || len(phases) != 30 {
+		t.Fatalf("catalog size roles=%d phases=%d", len(roles), len(phases))
+	}
+}
+
+func TestOfficialDashboardTemplateCatalogIsDiverseValidAndFrameworkNeutral(t *testing.T) {
+	templates, ids, categories, signatures, layouts := officialDashboardTemplates(), map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
+	if len(templates) < 45 || len(templates) > 55 {
 		t.Fatalf("official template count: %d", len(templates))
 	}
-	wantIDs := []string{"training-general", "classification", "regression"}
-	for index, template := range templates {
-		if template.ID != wantIDs[index] || template.Name == "" || template.Description == "" || template.SchemaVersion != dashboardTemplateSchemaVersion || template.Version < 1 {
-			t.Fatalf("official template metadata: %#v", template)
+	standard := map[string]bool{}
+	for _, category := range officialObservabilityCatalog.MetricCategories {
+		for _, role := range category.Roles {
+			standard["metric:"+role.ID] = true
 		}
+	}
+	for _, phase := range officialObservabilityCatalog.Phases {
+		standard["phase:"+phase.ID] = true
+	}
+	for _, template := range templates {
+		if ids[template.ID] || template.Name == "" || template.Description == "" || !dashboardTemplateCategories[template.Category] {
+			t.Fatalf("invalid template metadata: %#v", template)
+		}
+		ids[template.ID], categories[template.Category] = true, true
 		if err := validateDashboardTemplate(template); err != nil {
 			t.Fatalf("official template %s is invalid: %v", template.ID, err)
 		}
 		definition := strings.ToLower(template.ID + " " + template.Name + " " + template.Description)
 		for _, widget := range template.Widgets {
 			for _, slot := range widget.Slots {
-				definition += " " + strings.Join(slot.RequiredTags, " ") + " " + strings.Join(slot.OptionalTags, " ")
-				for _, tag := range append(append([]string(nil), slot.RequiredTags...), slot.OptionalTags...) {
-					if !standardTags[tag] {
-						t.Fatalf("official template %s uses non-standard tag %q", template.ID, tag)
+				for _, tag := range append(append([]string{}, slot.RequiredTags...), slot.OptionalTags...) {
+					if !standard[tag] {
+						t.Fatalf("template %s uses non-standard tag %q", template.ID, tag)
 					}
 				}
 				if slot.OnMissing == "" || slot.OnAmbiguous == "" {
-					t.Fatalf("official slot does not declare fallback behavior: %#v", slot)
+					t.Fatalf("slot lacks fallback: %#v", slot)
 				}
 			}
 		}
 		for _, framework := range []string{"pytorch", "tensorflow", "scikit", "keras"} {
 			if strings.Contains(definition, framework) {
-				t.Fatalf("template %s depends on framework name %q", template.ID, framework)
+				t.Fatalf("template %s depends on %s", template.ID, framework)
 			}
 		}
+		encoded, _ := json.Marshal(template.Widgets)
+		signature := fmt.Sprintf("%s:%s", template.Category, encoded)
+		if signatures[signature] {
+			t.Fatalf("duplicate template definition: %s", template.ID)
+		}
+		signatures[signature] = true
+		layout := ""
+		for _, widget := range template.Widgets {
+			layout += fmt.Sprintf("%s:%dx%d@%d,%d;", widget.Type, widget.Size.Columns, widget.Size.Rows, widget.Position.X, widget.Position.Y)
+		}
+		layouts[layout] = true
+	}
+	if len(categories) != len(dashboardTemplateCategories) {
+		t.Fatalf("covered categories=%d want=%d", len(categories), len(dashboardTemplateCategories))
+	}
+	if len(layouts) < 12 {
+		t.Fatalf("layout signatures=%d want at least 12", len(layouts))
 	}
 }
 
-func TestTrainingTemplateResolvesAvailableSourcesAndCompactsOptionalWidgets(t *testing.T) {
-	template := trainingDashboardTemplate()
-	full := resolveDashboardTemplate(template, []observableSource{
-		{Kind: "metric", Name: "objective_train", Tags: []string{"metric:loss", "phase:train"}},
-		{Kind: "metric", Name: "objective_valid", Tags: []string{"metric:loss", "phase:validation"}},
-		{Kind: "metric", Name: "optimizer_rate", Tags: []string{"metric:learning_rate"}},
-		{Kind: "progress", Name: "progress"},
-	})
-	if len(full.Widgets) != 3 || len(full.Widgets[0].Sources) != 2 || full.Widgets[1].Sources[0].Name != "optimizer_rate" || full.Widgets[2].Sources[0].Kind != "progress" {
-		t.Fatalf("full training template: %#v", full)
+func TestRepresentativeOfficialTemplatesResolveAndReportMissingSources(t *testing.T) {
+	training := resolveDashboardTemplate(trainingDashboardTemplate(), []observableSource{{Kind: "metric", Name: "loss", Tags: []string{"metric:loss", "phase:train"}}, {Kind: "metric", Name: "rate", Tags: []string{"metric:learning_rate", "phase:train"}}, {Kind: "progress", Name: "progress"}})
+	if training.Compatibility == "incompatible" || len(training.Widgets) < 2 || training.Widgets[0].Sources[0].Name != "loss" {
+		t.Fatalf("training resolution: %#v", training)
 	}
-	partial := resolveDashboardTemplate(template, []observableSource{
-		{Kind: "metric", Name: "renamed_objective", Tags: []string{"metric:loss", "phase:train"}},
-		{Kind: "progress", Name: "progress"},
-	})
-	if len(partial.Widgets) != 2 || partial.Widgets[0].ID != "loss" || partial.Widgets[1].ID != "progress" || partial.Widgets[1].Position.X != 0 || partial.Widgets[1].Position.Y != 4 {
-		t.Fatalf("optional widgets left a broken layout gap: %#v", partial.Widgets)
+	classification := resolveDashboardTemplate(classificationDashboardTemplate(), []observableSource{{Kind: "metric", Name: "score", Tags: []string{"metric:accuracy", "phase:validation"}}, {Kind: "matrix", Name: "confusion"}})
+	if classification.Compatibility == "incompatible" || classification.Widgets[0].Sources[0].Name != "score" {
+		t.Fatalf("classification resolution: %#v", classification)
 	}
-}
-
-func TestClassificationAndRegressionTemplatesUseStandardSemanticSources(t *testing.T) {
-	classification := resolveDashboardTemplate(classificationDashboardTemplate(), []observableSource{
-		{Kind: "metric", Name: "train_objective", Tags: []string{"metric:loss", "phase:train"}},
-		{Kind: "metric", Name: "valid_objective", Tags: []string{"metric:loss", "phase:validation"}},
-		{Kind: "metric", Name: "score_a", Tags: []string{"metric:accuracy", "phase:train"}},
-		{Kind: "metric", Name: "score_b", Tags: []string{"metric:accuracy", "phase:validation"}},
-		{Kind: "metric", Name: "positive_predictive_value", Tags: []string{"metric:precision", "phase:validation"}},
-		{Kind: "metric", Name: "sensitivity", Tags: []string{"metric:recall", "phase:validation"}},
-		{Kind: "metric", Name: "harmonic_score", Tags: []string{"metric:f1", "phase:validation"}},
-		{Kind: "matrix", Name: "holdout_counts"},
-	})
-	if len(classification.Widgets) != 3 || classification.Widgets[1].Sources[0].Name != "score_b" || classification.Widgets[2].Sources[0].Name != "holdout_counts" {
-		t.Fatalf("classification template: %#v", classification)
-	}
-	incomplete := resolveDashboardTemplate(classificationDashboardTemplate(), []observableSource{{Kind: "metric", Name: "train_objective", Tags: []string{"metric:loss", "phase:train"}}})
-	if incomplete.WidgetResults[1].Status != "unresolved" || incomplete.SlotResults[2].SlotID != "accuracy" || incomplete.SlotResults[2].Status != "missing" {
-		t.Fatalf("required classification source was not reported: %#v", incomplete)
-	}
-	regression := resolveDashboardTemplate(regressionDashboardTemplate(), []observableSource{
-		{Kind: "metric", Name: "fit_objective", Tags: []string{"metric:loss", "phase:train"}},
-		{Kind: "metric", Name: "absolute_error", Tags: []string{"metric:mae", "phase:validation"}},
-		{Kind: "metric", Name: "squared_error", Tags: []string{"metric:mse", "phase:validation"}},
-	})
-	if len(regression.Widgets) != 2 || len(regression.Widgets[1].Sources) != 2 || regression.Widgets[1].Sources[0].Name != "absolute_error" {
-		t.Fatalf("regression template: %#v", regression)
+	missing := resolveDashboardTemplate(officialTemplateByID("hpo-multi-objective"), []observableSource{{Kind: "metric", Name: "volume", Tags: []string{"metric:hypervolume", "phase:hpo_search"}}})
+	if missing.Compatibility != "incompatible" || missing.SlotResults[1].Status != "missing" {
+		t.Fatalf("missing HPO source: %#v", missing)
 	}
 }

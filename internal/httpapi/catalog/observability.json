@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "metric_categories": [
+    {
+      "id": "optimization-training",
+      "name": "Optimization and training",
+      "description": "Objectives, optimizer state, training speed, and update diagnostics.",
+      "roles": [
+        {"id":"loss","optimization_direction":"minimize"},{"id":"objective"},{"id":"learning_rate"},{"id":"weight_decay"},{"id":"gradient_norm","optimization_direction":"minimize"},{"id":"gradient_scale"},{"id":"parameter_norm"},{"id":"update_norm"},{"id":"momentum"},{"id":"beta1"},{"id":"beta2"},{"id":"temperature"},{"id":"epoch"},{"id":"step_time","recommended_unit":"s","optimization_direction":"minimize"},{"id":"batch_time","recommended_unit":"s","optimization_direction":"minimize"},{"id":"data_time","recommended_unit":"s","optimization_direction":"minimize"},{"id":"throughput","optimization_direction":"maximize"},{"id":"samples_per_second","recommended_unit":"samples/s","optimization_direction":"maximize"},{"id":"tokens_per_second","recommended_unit":"tokens/s","optimization_direction":"maximize"}
+      ]
+    },
+    {
+      "id": "classification",
+      "name": "Classification",
+      "description": "Classification quality, discrimination, calibration, and error rates.",
+      "roles": [
+        {"id":"accuracy","optimization_direction":"maximize"},{"id":"balanced_accuracy","optimization_direction":"maximize"},{"id":"top_k_accuracy","optimization_direction":"maximize"},{"id":"precision","optimization_direction":"maximize"},{"id":"recall","optimization_direction":"maximize"},{"id":"sensitivity","optimization_direction":"maximize"},{"id":"specificity","optimization_direction":"maximize"},{"id":"f1","optimization_direction":"maximize"},{"id":"f_beta","optimization_direction":"maximize"},{"id":"mcc","optimization_direction":"maximize"},{"id":"cohen_kappa","optimization_direction":"maximize"},{"id":"jaccard","optimization_direction":"maximize"},{"id":"hamming_loss","optimization_direction":"minimize"},{"id":"log_loss","optimization_direction":"minimize"},{"id":"brier_score","optimization_direction":"minimize"},{"id":"roc_auc","optimization_direction":"maximize"},{"id":"pr_auc","optimization_direction":"maximize"},{"id":"average_precision","optimization_direction":"maximize"},{"id":"false_positive_rate","optimization_direction":"minimize"},{"id":"false_negative_rate","optimization_direction":"minimize"},{"id":"true_positive_rate","optimization_direction":"maximize"},{"id":"true_negative_rate","optimization_direction":"maximize"},{"id":"ece","optimization_direction":"minimize"},{"id":"mce","optimization_direction":"minimize"},{"id":"nll","optimization_direction":"minimize"}
+      ]
+    },
+    {
+      "id": "regression-forecasting",
+      "name": "Regression and forecasting",
+      "description": "Point, percentage, interval, probabilistic, and directional forecast quality.",
+      "roles": [
+        {"id":"mae","optimization_direction":"minimize"},{"id":"mse","optimization_direction":"minimize"},{"id":"rmse","optimization_direction":"minimize"},{"id":"r2","optimization_direction":"maximize"},{"id":"mape","optimization_direction":"minimize"},{"id":"smape","optimization_direction":"minimize"},{"id":"wape","optimization_direction":"minimize"},{"id":"mase","optimization_direction":"minimize"},{"id":"msle","optimization_direction":"minimize"},{"id":"rmsle","optimization_direction":"minimize"},{"id":"median_absolute_error","optimization_direction":"minimize"},{"id":"max_error","optimization_direction":"minimize"},{"id":"explained_variance","optimization_direction":"maximize"},{"id":"mean_bias_error"},{"id":"pinball_loss","optimization_direction":"minimize"},{"id":"quantile_loss","optimization_direction":"minimize"},{"id":"crps","optimization_direction":"minimize"},{"id":"coverage","optimization_direction":"maximize"},{"id":"interval_width","optimization_direction":"minimize"},{"id":"directional_accuracy","optimization_direction":"maximize"}
+      ]
+    },
+    {
+      "id": "clustering-representation",
+      "name": "Clustering and representation",
+      "description": "Cluster separation, agreement, dimensionality reduction, and representation quality.",
+      "roles": [
+        {"id":"silhouette_score","optimization_direction":"maximize"},{"id":"davies_bouldin","optimization_direction":"minimize"},{"id":"calinski_harabasz","optimization_direction":"maximize"},{"id":"adjusted_rand_index","optimization_direction":"maximize"},{"id":"normalized_mutual_info","optimization_direction":"maximize"},{"id":"adjusted_mutual_info","optimization_direction":"maximize"},{"id":"homogeneity","optimization_direction":"maximize"},{"id":"completeness","optimization_direction":"maximize"},{"id":"v_measure","optimization_direction":"maximize"},{"id":"fowlkes_mallows","optimization_direction":"maximize"},{"id":"inertia","optimization_direction":"minimize"},{"id":"reconstruction_error","optimization_direction":"minimize"},{"id":"explained_variance_ratio","optimization_direction":"maximize"},{"id":"trustworthiness","optimization_direction":"maximize"},{"id":"alignment","optimization_direction":"minimize"},{"id":"uniformity","optimization_direction":"minimize"}
+      ]
+    },
+    {
+      "id": "computer-vision",
+      "name": "Computer vision",
+      "description": "Detection, segmentation, keypoint, reconstruction, and generative image quality.",
+      "roles": [
+        {"id":"iou","optimization_direction":"maximize"},{"id":"mean_iou","optimization_direction":"maximize"},{"id":"dice","optimization_direction":"maximize"},{"id":"mean_average_precision","optimization_direction":"maximize"},{"id":"map_50","optimization_direction":"maximize"},{"id":"map_75","optimization_direction":"maximize"},{"id":"average_recall","optimization_direction":"maximize"},{"id":"pixel_accuracy","optimization_direction":"maximize"},{"id":"panoptic_quality","optimization_direction":"maximize"},{"id":"segmentation_quality","optimization_direction":"maximize"},{"id":"recognition_quality","optimization_direction":"maximize"},{"id":"keypoint_ap","optimization_direction":"maximize"},{"id":"keypoint_ar","optimization_direction":"maximize"},{"id":"oks","optimization_direction":"maximize"},{"id":"psnr","recommended_unit":"dB","optimization_direction":"maximize"},{"id":"ssim","optimization_direction":"maximize"},{"id":"lpips","optimization_direction":"minimize"},{"id":"fid","optimization_direction":"minimize"},{"id":"kid","optimization_direction":"minimize"},{"id":"clip_score","optimization_direction":"maximize"}
+      ]
+    },
+    {
+      "id": "nlp-speech",
+      "name": "NLP and speech",
+      "description": "Language modeling, generation overlap, question answering, translation, and speech quality.",
+      "roles": [
+        {"id":"perplexity","optimization_direction":"minimize"},{"id":"bleu","optimization_direction":"maximize"},{"id":"sacrebleu","optimization_direction":"maximize"},{"id":"rouge_1","optimization_direction":"maximize"},{"id":"rouge_2","optimization_direction":"maximize"},{"id":"rouge_l","optimization_direction":"maximize"},{"id":"meteor","optimization_direction":"maximize"},{"id":"chrf","optimization_direction":"maximize"},{"id":"ter","optimization_direction":"minimize"},{"id":"wer","optimization_direction":"minimize"},{"id":"cer","optimization_direction":"minimize"},{"id":"exact_match","optimization_direction":"maximize"},{"id":"token_accuracy","optimization_direction":"maximize"},{"id":"sequence_accuracy","optimization_direction":"maximize"},{"id":"bert_score","optimization_direction":"maximize"},{"id":"comet","optimization_direction":"maximize"},{"id":"speech_quality_mos","optimization_direction":"maximize"}
+      ]
+    },
+    {
+      "id": "generative-retrieval",
+      "name": "Generative AI, retrieval, and ranking",
+      "description": "Generation quality, safety, grounding, retrieval, ranking, and preference signals.",
+      "roles": [
+        {"id":"inception_score","optimization_direction":"maximize"},{"id":"diversity_score","optimization_direction":"maximize"},{"id":"novelty_score","optimization_direction":"maximize"},{"id":"toxicity","optimization_direction":"minimize"},{"id":"bias_score","optimization_direction":"minimize"},{"id":"hallucination_rate","optimization_direction":"minimize"},{"id":"factuality","optimization_direction":"maximize"},{"id":"faithfulness","optimization_direction":"maximize"},{"id":"answer_relevance","optimization_direction":"maximize"},{"id":"context_precision","optimization_direction":"maximize"},{"id":"context_recall","optimization_direction":"maximize"},{"id":"groundedness","optimization_direction":"maximize"},{"id":"win_rate","optimization_direction":"maximize"},{"id":"reward","optimization_direction":"maximize"},{"id":"kl_divergence","optimization_direction":"minimize"},{"id":"entropy"},{"id":"cross_entropy","optimization_direction":"minimize"},{"id":"cosine_similarity","optimization_direction":"maximize"},{"id":"recall_at_k","optimization_direction":"maximize"},{"id":"precision_at_k","optimization_direction":"maximize"},{"id":"mrr","optimization_direction":"maximize"},{"id":"ndcg","optimization_direction":"maximize"},{"id":"hit_rate","optimization_direction":"maximize"},{"id":"map_at_k","optimization_direction":"maximize"}
+      ]
+    },
+    {
+      "id": "reinforcement-learning",
+      "name": "Reinforcement learning",
+      "description": "Episode outcomes, policy optimization, value learning, and exploration diagnostics.",
+      "roles": [
+        {"id":"episode_reward","optimization_direction":"maximize"},{"id":"episode_length"},{"id":"success_rate","optimization_direction":"maximize"},{"id":"policy_loss","optimization_direction":"minimize"},{"id":"value_loss","optimization_direction":"minimize"},{"id":"q_loss","optimization_direction":"minimize"},{"id":"actor_loss","optimization_direction":"minimize"},{"id":"critic_loss","optimization_direction":"minimize"},{"id":"entropy_bonus"},{"id":"approx_kl","optimization_direction":"minimize"},{"id":"clip_fraction"},{"id":"explained_value_variance","optimization_direction":"maximize"},{"id":"advantage_mean"},{"id":"return_mean","optimization_direction":"maximize"}
+      ]
+    },
+    {
+      "id": "serving",
+      "name": "Serving and inference",
+      "description": "Online latency, throughput, reliability, token generation, and workload utilization.",
+      "roles": [
+        {"id":"latency","recommended_unit":"s","optimization_direction":"minimize"},{"id":"p50_latency","recommended_unit":"s","optimization_direction":"minimize"},{"id":"p90_latency","recommended_unit":"s","optimization_direction":"minimize"},{"id":"p95_latency","recommended_unit":"s","optimization_direction":"minimize"},{"id":"p99_latency","recommended_unit":"s","optimization_direction":"minimize"},{"id":"request_rate","recommended_unit":"requests/s","optimization_direction":"maximize"},{"id":"error_rate","optimization_direction":"minimize"},{"id":"token_throughput","recommended_unit":"tokens/s","optimization_direction":"maximize"},{"id":"time_to_first_token","recommended_unit":"s","optimization_direction":"minimize"},{"id":"time_per_output_token","recommended_unit":"s/token","optimization_direction":"minimize"},{"id":"gpu_utilization","recommended_unit":"%"},{"id":"memory_utilization","recommended_unit":"%"}
+      ]
+    },
+    {
+      "id": "hpo-model-selection",
+      "name": "HPO and model selection",
+      "description": "Trial comparison, folds, uncertainty, feature importance, and Pareto optimization.",
+      "roles": [
+        {"id":"trial_score"},{"id":"best_score"},{"id":"rank","optimization_direction":"minimize"},{"id":"parameter_importance"},{"id":"fold_score"},{"id":"mean_score"},{"id":"std_score","optimization_direction":"minimize"},{"id":"confidence_interval_width","optimization_direction":"minimize"},{"id":"pareto_rank","optimization_direction":"minimize"},{"id":"hypervolume","optimization_direction":"maximize"}
+      ]
+    },
+    {
+      "id": "anomaly-detection",
+      "name": "Anomaly detection",
+      "description": "Detection quality, false alarms, confidence, and response delay.",
+      "roles": [
+        {"id":"anomaly_score"},{"id":"anomaly_precision","optimization_direction":"maximize"},{"id":"anomaly_recall","optimization_direction":"maximize"},{"id":"anomaly_f1","optimization_direction":"maximize"},{"id":"false_alarm_rate","optimization_direction":"minimize"},{"id":"detection_delay","recommended_unit":"s","optimization_direction":"minimize"}
+      ]
+    }
+  ],
+  "phases": [
+    {"id":"data_collection"},{"id":"data_validation"},{"id":"preprocessing"},{"id":"augmentation"},{"id":"warmup"},{"id":"pretraining"},{"id":"train"},{"id":"fine_tuning"},{"id":"validation"},{"id":"test"},{"id":"calibration"},{"id":"evaluation"},{"id":"inference"},{"id":"profiling"},{"id":"benchmark"},{"id":"distillation"},{"id":"pruning"},{"id":"quantization"},{"id":"export"},{"id":"hpo_search"},{"id":"hpo_trial"},{"id":"model_selection"},{"id":"cross_validation"},{"id":"ensemble"},{"id":"ablation"},{"id":"holdout"},{"id":"deployment"},{"id":"monitoring"},{"id":"canary"},{"id":"postprocessing"}
+  ]
+}

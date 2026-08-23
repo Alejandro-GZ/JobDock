@@ -45,14 +45,22 @@ and `validation/loss` for semantically different series.
 Tags describe meaning rather than presentation. They are normalized to
 lowercase, deduplicated, sorted, and stored once on the attempt-scoped series
 descriptor instead of on every sample. Tags use `namespace:value`; up to 32
-dimensions can be combined on a metric. JobDock defines these initial standard
-values:
+dimensions can be combined on a metric. JobDock publishes 183 standard metric
+roles spanning foundational ML, generative AI, HPO, serving, and related
+domains, plus 30 lifecycle phases. The complete versioned catalog is available
+from `GET /api/v1/observability/catalog`.
 
-- metric roles: `metric:loss`, `metric:accuracy`, `metric:precision`,
-  `metric:recall`, `metric:f1`, `metric:learning_rate`, `metric:mae`,
-  `metric:mse`, and `metric:rmse`;
-- phases: `phase:train`, `phase:validation`, and `phase:test`;
-- observation kinds: `kind:milestone`.
+Typed constants make standard tags discoverable while custom tags remain valid:
+
+```python
+from jobdock import MetricRole, Phase
+
+job.metric("holdout_objective", 0.42, tags=[
+    MetricRole.LOSS,
+    Phase.VALIDATION,
+    "acme.dataset:cifar10",
+])
+```
 
 Custom namespaces and values following the same grammar are preserved without
 being interpreted by JobDock, for example `acme.dataset:cifar10`. `phase` is a

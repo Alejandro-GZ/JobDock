@@ -10,5 +10,6 @@ except PackageNotFoundError:
 
 from .client import Job, NoopJob, current_job
 from .observability import CheckpointObservation, JSONValue, MatrixObservation, Metric, Milestone, ProgressObservation, SemanticTags
+from .semantics import MetricRole, Phase, SEMANTIC_CATALOG_VERSION
 
-__all__ = ["CheckpointObservation", "JSONValue", "Job", "MatrixObservation", "Metric", "Milestone", "NoopJob", "ProgressObservation", "SemanticTags", "__version__", "current_job"]
+__all__ = ["CheckpointObservation", "JSONValue", "Job", "MatrixObservation", "Metric", "MetricRole", "Milestone", "NoopJob", "Phase", "ProgressObservation", "SEMANTIC_CATALOG_VERSION", "SemanticTags", "__version__", "current_job"]

@@ -228,8 +228,21 @@ func TestDashboardTemplateResolutionUsesAttemptDescriptorCatalog(t *testing.T) {
 		Items []dashboardTemplate `json:"items"`
 	}
 	getSeriesJSON(t, client, server.URL+"/api/v1/dashboard/templates", &templateCatalog)
-	if len(templateCatalog.Items) != 3 || templateCatalog.Items[0].ID != "training-general" {
+	if len(templateCatalog.Items) < 45 || templateCatalog.Items[0].ID != "training-general" || templateCatalog.Items[0].Category != "general" {
 		t.Fatalf("official dashboard template catalog: %#v", templateCatalog)
+	}
+	var semanticCatalog observabilityCatalog
+	getSeriesJSON(t, client, server.URL+"/api/v1/observability/catalog", &semanticCatalog)
+	if semanticCatalog.Version != 1 || len(semanticCatalog.Phases) != 30 {
+		t.Fatalf("observability catalog: %#v", semanticCatalog)
+	}
+	var matches struct {
+		AttemptID string                   `json:"attempt_id"`
+		Items     []dashboardTemplateMatch `json:"items"`
+	}
+	getSeriesJSON(t, client, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard/templates/matches?attempt_id="+attemptID, &matches)
+	if matches.AttemptID != attemptID || len(matches.Items) != len(templateCatalog.Items) || matches.Items[0].TemplateID != "training-general" || !matches.Items[0].Applicable {
+		t.Fatalf("template matches: %#v", matches)
 	}
 	template := semanticTemplate(
 		templateSlot("train", []string{"metric:loss", "phase:train"}, 1, 1),

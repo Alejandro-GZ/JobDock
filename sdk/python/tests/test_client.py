@@ -1,9 +1,10 @@
 from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 
 import pytest
 
-from jobdock import CheckpointObservation, Job, MatrixObservation, Metric, Milestone, NoopJob, ProgressObservation, current_job
+from jobdock import CheckpointObservation, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, Phase, ProgressObservation, SEMANTIC_CATALOG_VERSION, current_job
 
 
 def test_current_job_is_noop_without_environment(monkeypatch):
@@ -38,6 +39,27 @@ def test_enriched_metrics_are_typed_ordered_and_backwards_compatible(tmp_path: P
         "unit": "ratio", "metadata": {"split": "train"}, "tags": ["metric:loss", "phase:train"],
     }
     job.close()
+
+
+def test_standard_semantics_are_typed_and_mix_with_custom_tags(tmp_path: Path, monkeypatch):
+    assert SEMANTIC_CATALOG_VERSION == 1
+    assert len(MetricRole) == 183
+    assert len(Phase) == 30
+    job = Job("id", "http://jobdock.test", "token", tmp_path)
+    queued = []
+    monkeypatch.setattr(job, "_enqueue", lambda endpoint, payload: queued.append((endpoint, payload)))
+    job.metric("loss", .2, tags=[MetricRole.LOSS, Phase.VALIDATION, "acme.dataset:cifar10"])
+    assert queued[0][1]["items"][0]["tags"] == ["acme.dataset:cifar10", "metric:loss", "phase:validation"]
+    job.close()
+
+
+def test_typed_semantics_match_the_canonical_catalog():
+    catalog_path = Path(__file__).resolve().parents[3] / "internal" / "httpapi" / "catalog" / "observability.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    expected_roles = {f"metric:{role['id']}" for category in catalog["metric_categories"] for role in category["roles"]}
+    expected_phases = {f"phase:{phase['id']}" for phase in catalog["phases"]}
+    assert {role.value for role in MetricRole} == expected_roles
+    assert {phase.value for phase in Phase} == expected_phases
 
 
 def test_metric_validation_rejects_unsafe_observations(tmp_path: Path):

@@ -70,10 +70,14 @@ with `invalid_dashboard_template_override`.
 See [Dashboard templates](dashboard-templates.md) for the schema and matching
 rules.
 
-`GET /api/v1/dashboard/templates` returns the product-maintained catalog. The
-MVP catalog contains the framework-neutral `training-general`, `classification`,
-and `regression` templates. Catalog retrieval does not inspect a job or load
-telemetry.
+`GET /api/v1/dashboard/templates` returns the categorized, product-maintained,
+framework-neutral catalog. Catalog retrieval does not inspect a job or load
+telemetry. `GET /api/v1/observability/catalog` returns the versioned standard
+metric-role and phase taxonomy.
+
+`GET /api/v1/jobs/{jobId}/dashboard/templates/matches` evaluates the complete
+official catalog against one attempt with a single bounded descriptor read and
+reports which templates can be applied immediately.
 
 Template IDs are stable. `version` identifies a revision of one template while
 `schema_version` identifies the declarative language. Resolution reports

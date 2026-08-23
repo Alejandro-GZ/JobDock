@@ -17,7 +17,7 @@ Object.defineProperties(HTMLElement.prototype, {
   scrollIntoView: { configurable: true, value: () => undefined },
 });
 
-const template:DashboardTemplate={id:"training",name:"Training",description:"Semantic training signals.",schema_version:1,version:3,widgets:[{id:"loss",type:"lineplot",size:{columns:12,rows:4},position:{x:0,y:0},slots:[{id:"loss",required_tags:["metric:loss"],source_types:["metric"],cardinality:{min:1,max:1}}]}]};
+const template:DashboardTemplate={id:"training",name:"Training",description:"Semantic training signals.",category:"general",schema_version:1,version:3,widgets:[{id:"loss",type:"lineplot",size:{columns:12,rows:4},position:{x:0,y:0},slots:[{id:"loss",required_tags:["metric:loss"],source_types:["metric"],cardinality:{min:1,max:1}}]}]};
 const previous:DashboardWidget[]=[{id:"previous",type:"logs",size:{columns:12,rows:6},position:{x:0,y:0},sources:[{kind:"log",name:"stdout"}]}];
 const applied:DashboardWidget[]=[{id:"loss",type:"lineplot",size:{columns:12,rows:4},position:{x:0,y:0},sources:[{kind:"metric",name:"objective_b"}]}];
 
@@ -25,13 +25,14 @@ describe("DashboardTemplatePicker",()=>{
   afterEach(()=>{cleanup();vi.restoreAllMocks()});
   it("previews diagnostics, resolves ambiguity, confirms replacement, and restores the previous dashboard",async()=>{
     vi.spyOn(api,"dashboardTemplates").mockResolvedValue([template]);
+    vi.spyOn(api,"dashboardTemplateMatches").mockResolvedValue([{template_id:"training",compatibility:"incompatible",applicable:false,missing_required:0,ambiguous_sources:1}]);
     vi.spyOn(api,"resolveDashboardTemplate").mockImplementation(async(_job,_template,_attempt,overrides:DashboardTemplateOverride[]=[])=>resolution(overrides.length>0));
     const onApply=vi.fn(async()=>undefined),client=new QueryClient({defaultOptions:{queries:{retry:false}}}),user=userEvent.setup();
     render(<QueryClientProvider client={client}><Harness onApply={onApply}/></QueryClientProvider>);
     await user.click(screen.getByRole("button",{name:"Open templates"}));
     expect(await screen.findByText("Semantic training signals.")).toBeTruthy();
     expect(screen.getByText("Template v3 · schema v1")).toBeTruthy();
-    expect(screen.getByText("Layout preview")).toBeTruthy();
+    expect(await screen.findByText("Layout preview")).toBeTruthy();
     expect(screen.getByText("incompatible")).toBeTruthy();
     expect(screen.getByText("2 matching sources require a choice")).toBeTruthy();
     await user.click(screen.getByRole("combobox",{name:"Resolve loss"}));
@@ -47,12 +48,24 @@ describe("DashboardTemplatePicker",()=>{
   });
   it("shows a controlled fallback and blocks an incompatible template",async()=>{
     vi.spyOn(api,"dashboardTemplates").mockResolvedValue([template]);
+    vi.spyOn(api,"dashboardTemplateMatches").mockResolvedValue([{template_id:"training",compatibility:"incompatible",applicable:false,missing_required:1,ambiguous_sources:0}]);
     vi.spyOn(api,"resolveDashboardTemplate").mockResolvedValue({template_id:"training",schema_version:99,template_version:3,attempt_id:"attempt",compatibility:"incompatible",fallback_reason:"unsupported_schema_version",widgets:[],widget_results:[],slot_results:[]});
     const client=new QueryClient({defaultOptions:{queries:{retry:false}}}),user=userEvent.setup();
     render(<QueryClientProvider client={client}><Harness onApply={vi.fn(async()=>undefined)}/></QueryClientProvider>);
     await user.click(screen.getByRole("button",{name:"Open templates"}));
     expect(await screen.findByText(/cannot be applied safely: unsupported schema version/)).toBeTruthy();
     expect((screen.getByRole("button",{name:"Apply template"}) as HTMLButtonElement).disabled).toBe(true);
+  });
+  it("groups, searches, and filters a large catalog without the old selector copy",async()=>{
+    const vision:DashboardTemplate={...template,id:"vision",name:"Object detection",description:"Detection metrics.",category:"computer-vision"};
+    vi.spyOn(api,"dashboardTemplates").mockResolvedValue([template,vision]);
+    vi.spyOn(api,"dashboardTemplateMatches").mockResolvedValue([{template_id:"training",compatibility:"partially_compatible",applicable:true,missing_required:0,ambiguous_sources:0},{template_id:"vision",compatibility:"incompatible",applicable:false,missing_required:1,ambiguous_sources:0}]);
+    vi.spyOn(api,"resolveDashboardTemplate").mockResolvedValue(resolution(true));
+    const client=new QueryClient({defaultOptions:{queries:{retry:false}}}),user=userEvent.setup();render(<QueryClientProvider client={client}><Harness onApply={vi.fn(async()=>undefined)}/></QueryClientProvider>);
+    await user.click(screen.getByRole("button",{name:"Open templates"}));
+    expect(await screen.findByText("General")).toBeTruthy();expect(screen.getByText("Computer vision")).toBeTruthy();expect(screen.queryByRole("combobox",{name:"Dashboard template"})).toBeNull();expect(screen.queryByText("Preview semantic matches before replacing the current editable layout.")).toBeNull();
+    await user.click(screen.getByRole("button",{name:"Applicable"}));expect(screen.queryByText("Object detection")).toBeNull();
+    await user.click(screen.getByRole("button",{name:"Applicable"}));await user.type(screen.getByRole("textbox",{name:"Search templates"}),"detection");expect((await screen.findAllByText("Object detection")).length).toBeGreaterThan(0);expect(screen.queryByText("Training",{selector:"button span"})).toBeNull();
   });
 });
 

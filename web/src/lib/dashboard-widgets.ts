@@ -31,7 +31,9 @@ export type DashboardTemplateSlot = {
   on_ambiguous?: "error" | "omit_slot" | "omit_widget";
 };
 export type DashboardTemplateWidget = Omit<DashboardWidget, "sources"> & { slots: DashboardTemplateSlot[] };
-export type DashboardTemplate = { id: string; name?: string; description?: string; schema_version: number; version: number; widgets: DashboardTemplateWidget[] };
+export type DashboardTemplateCategory = "general"|"classification"|"regression"|"clustering-representation"|"computer-vision"|"nlp-speech"|"generative-ai"|"ranking-recommendation"|"time-series-anomaly"|"reinforcement-learning"|"hpo-model-selection";
+export type DashboardTemplate = { id: string; name?: string; description?: string; category?: DashboardTemplateCategory; schema_version: number; version: number; widgets: DashboardTemplateWidget[] };
+export type DashboardTemplateMatch = {template_id:string;compatibility:DashboardCompatibility;applicable:boolean;missing_required:number;ambiguous_sources:number};
 export type DashboardTemplateSlotResolution = {
   widget_id: string;
   slot_id: string;

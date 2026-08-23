@@ -121,25 +121,23 @@ be resolved.
 
 ## Official catalog
 
-`GET /api/v1/dashboard/templates` returns three product-maintained templates.
-They rely only on observable types and the standard semantic tags below; metric
-names and ML framework names are deliberately irrelevant.
+`GET /api/v1/dashboard/templates` returns approximately fifty templates grouped
+into general training, classification, regression, clustering and
+representation, computer vision, NLP and speech, generative AI, ranking and
+recommendation, time series and anomaly detection, reinforcement learning, and
+HPO and model selection. They rely on observable types and standard semantics;
+metric names and ML framework names are deliberately irrelevant.
 
-| Template | Required sources | Optional sources |
-| --- | --- | --- |
-| Training — General | `metric:loss` + `phase:train` | validation loss, `metric:learning_rate`, progress; confirmed checkpoints automatically remain available as chart markers |
-| Classification | training loss and `metric:accuracy` | validation loss, `metric:precision`, `metric:recall`, `metric:f1`, confusion matrix, progress |
-| Regression | training loss | validation loss, `metric:mae`, `metric:mse`, `metric:rmse` |
-
-For classification and regression scores, `phase:validation` is an optional
-preference. A validation series wins over an otherwise equivalent source, while
-an unphased source still works. If equally specific candidates exceed a slot's
-cardinality, the result remains explicitly ambiguous.
+The picker obtains bounded applicability summaries from
+`GET /api/v1/jobs/{jobId}/dashboard/templates/matches`. A template is applicable
+when every required source resolves unambiguously. Missing optional widgets may
+still produce a partially compatible dashboard that can be applied immediately.
 
 Widgets backed only by absent optional sources are omitted. The resolved widgets
 are then packed back into the twelve-column grid in declaration order, so an
 optional learning-rate chart or confusion matrix cannot leave a broken hole.
 
-To receive the complete official-template experience, report metrics using the
-corresponding tags from the table. Metric names such as `objective_train` or
-`holdout_score` are valid: the resolver never infers meaning from those names.
+To receive the complete official-template experience, report metrics using tags
+from `GET /api/v1/observability/catalog`. Names such as `objective_train` or
+`holdout_score` remain valid because the resolver never infers meaning from the
+series name.

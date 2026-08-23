@@ -368,6 +368,20 @@ paths:
       description: Return the product-maintained, framework-neutral dashboard template catalog.
       responses:
         '200': {description: Built-in dashboard templates, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardTemplateList'}}}}
+  /observability/catalog:
+    get:
+      operationId: getObservabilityCatalog
+      description: Return the versioned standard metric-role and lifecycle-phase catalog. Custom semantic tags remain supported.
+      responses:
+        '200': {description: Official observability semantics, content: {application/json: {schema: {$ref: '#/components/schemas/ObservabilityCatalog'}}}}
+  /jobs/{jobId}/dashboard/templates/matches:
+    get:
+      operationId: matchJobDashboardTemplates
+      description: Match every official template against one attempt using a single bounded descriptor-catalog read.
+      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDQuery'}]
+      responses:
+        '200': {description: Template applicability summaries, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardTemplateMatchList'}}}}
+        '404': {$ref: '#/components/responses/Problem'}
   /jobs/{jobId}/dashboard/templates/resolve:
     post:
       operationId: resolveJobDashboardTemplate
@@ -1271,6 +1285,7 @@ components:
         id: {type: string, minLength: 1, maxLength: 128}
         name: {type: string, maxLength: 128}
         description: {type: string, maxLength: 512}
+        category: {$ref: '#/components/schemas/DashboardTemplateCategory'}
         schema_version: {type: integer, const: 1}
         version: {type: integer, minimum: 1, description: Monotonic definition version for this stable template id.}
         widgets: {type: array, minItems: 1, maxItems: 64, items: {$ref: '#/components/schemas/DashboardTemplateWidget'}}
@@ -1279,6 +1294,24 @@ components:
       required: [items]
       properties:
         items: {type: array, minItems: 3, maxItems: 64, items: {$ref: '#/components/schemas/DashboardTemplate'}}
+    DashboardTemplateCategory:
+      type: string
+      enum: [general, classification, regression, clustering-representation, computer-vision, nlp-speech, generative-ai, ranking-recommendation, time-series-anomaly, reinforcement-learning, hpo-model-selection]
+    DashboardTemplateMatch:
+      type: object
+      required: [template_id, compatibility, applicable, missing_required, ambiguous_sources]
+      properties:
+        template_id: {type: string}
+        compatibility: {type: string, enum: [compatible, partially_compatible, incompatible]}
+        applicable: {type: boolean}
+        missing_required: {type: integer, minimum: 0}
+        ambiguous_sources: {type: integer, minimum: 0}
+    DashboardTemplateMatchList:
+      type: object
+      required: [attempt_id, items]
+      properties:
+        attempt_id: {type: string, format: uuid}
+        items: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/DashboardTemplateMatch'}}
     DashboardTemplateResolveRequest:
       type: object
       additionalProperties: false
@@ -1555,6 +1588,37 @@ components:
         minLength: 3
         maxLength: 97
         pattern: '^[a-z][a-z0-9_.-]{0,31}:[a-z0-9][a-z0-9_.-]{0,63}$'
+    SemanticMetricRole:
+      type: object
+      required: [id, name, description]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        description: {type: string}
+        recommended_unit: {type: string}
+        optimization_direction: {type: string, enum: [minimize, maximize]}
+    SemanticMetricCategory:
+      type: object
+      required: [id, name, description, roles]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        description: {type: string}
+        roles: {type: array, minItems: 1, items: {$ref: '#/components/schemas/SemanticMetricRole'}}
+    SemanticPhase:
+      type: object
+      required: [id, name, description]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        description: {type: string}
+    ObservabilityCatalog:
+      type: object
+      required: [version, metric_categories, phases]
+      properties:
+        version: {type: integer, minimum: 1}
+        metric_categories: {type: array, minItems: 1, items: {$ref: '#/components/schemas/SemanticMetricCategory'}}
+        phases: {type: array, minItems: 1, items: {$ref: '#/components/schemas/SemanticPhase'}}
     ObservationMetadata:
       type: object
       maxProperties: 64

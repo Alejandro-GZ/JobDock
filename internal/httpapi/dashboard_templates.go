@@ -16,6 +16,7 @@ type dashboardTemplate struct {
 	ID            string                    `json:"id"`
 	Name          string                    `json:"name,omitempty"`
 	Description   string                    `json:"description,omitempty"`
+	Category      string                    `json:"category"`
 	SchemaVersion int                       `json:"schema_version"`
 	Version       int                       `json:"version"`
 	Widgets       []dashboardTemplateWidget `json:"widgets"`
@@ -89,6 +90,14 @@ type dashboardTemplateSlotResolution struct {
 	Selected   []dashboardWidgetSource `json:"selected"`
 }
 
+type dashboardTemplateMatch struct {
+	TemplateID       string `json:"template_id"`
+	Compatibility    string `json:"compatibility"`
+	Applicable       bool   `json:"applicable"`
+	MissingRequired  int    `json:"missing_required"`
+	AmbiguousSources int    `json:"ambiguous_sources"`
+}
+
 func (a *API) resolveDashboardTemplate(w http.ResponseWriter, r *http.Request) {
 	job, ok := a.authorizeJob(w, r)
 	if !ok {
@@ -156,14 +165,10 @@ func (a *API) resolveDashboardTemplate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, incompatibleDashboardTemplateResolution(body.Template, attemptID, reason))
 		return
 	}
-	descriptors, err := a.store.ObservableDescriptors(r.Context(), job.ID, attemptID)
+	sources, err := a.observableSources(r, job.ID, attemptID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
-	}
-	sources := make([]observableSource, 0, len(descriptors))
-	for _, descriptor := range descriptors {
-		sources = append(sources, observableSource{Kind: descriptor.Type, Name: descriptor.Name, Unit: descriptor.Unit, Tags: descriptor.Tags})
 	}
 	result, err := resolveDashboardTemplateWithOverrides(body.Template, sources, body.Overrides)
 	if err != nil {
@@ -174,9 +179,74 @@ func (a *API) resolveDashboardTemplate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (a *API) matchDashboardTemplates(w http.ResponseWriter, r *http.Request) {
+	job, ok := a.authorizeJob(w, r)
+	if !ok {
+		return
+	}
+	attemptID := strings.TrimSpace(r.URL.Query().Get("attempt_id"))
+	if attemptID == "" {
+		attemptID = job.AttemptID
+	}
+	if attemptID == "" {
+		writeProblem(w, http.StatusConflict, "attempt_unavailable", "Template matching requires a job attempt")
+		return
+	}
+	belongs, err := a.store.AttemptBelongsToJob(r.Context(), job.ID, attemptID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if !belongs {
+		writeProblem(w, http.StatusNotFound, "attempt_not_found", "The requested attempt does not belong to this job")
+		return
+	}
+	sources, err := a.observableSources(r, job.ID, attemptID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	items := make([]dashboardTemplateMatch, 0, len(officialDashboardTemplates()))
+	for _, template := range officialDashboardTemplates() {
+		resolution := resolveDashboardTemplate(template, sources)
+		match := dashboardTemplateMatch{TemplateID: template.ID, Compatibility: resolution.Compatibility, Applicable: resolution.Compatibility != "incompatible"}
+		for _, slot := range resolution.SlotResults {
+			if slot.Status == "ambiguous" {
+				match.AmbiguousSources++
+			}
+			if slot.Status == "missing" || slot.Status == "incompatible" {
+				for _, widget := range template.Widgets {
+					for _, definition := range widget.Slots {
+						if widget.ID == slot.WidgetID && definition.ID == slot.SlotID && definition.Cardinality.Min > 0 {
+							match.MissingRequired++
+						}
+					}
+				}
+			}
+		}
+		items = append(items, match)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"attempt_id": attemptID, "items": items})
+}
+
+func (a *API) observableSources(r *http.Request, jobID, attemptID string) ([]observableSource, error) {
+	descriptors, err := a.store.ObservableDescriptors(r.Context(), jobID, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	sources := make([]observableSource, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		sources = append(sources, observableSource{Kind: descriptor.Type, Name: descriptor.Name, Unit: descriptor.Unit, Tags: descriptor.Tags})
+	}
+	return sources, nil
+}
+
 func validateDashboardTemplate(template dashboardTemplate) error {
 	if len(strings.TrimSpace(template.ID)) < 1 || len(template.ID) > 128 {
 		return errors.New("Template id must contain 1-128 characters")
+	}
+	if template.Category != "" && !dashboardTemplateCategories[template.Category] {
+		return errors.New("A template must use a recognized category")
 	}
 	if len(template.Name) > 128 || len(template.Description) > 512 {
 		return errors.New("Template name or description is too long")
