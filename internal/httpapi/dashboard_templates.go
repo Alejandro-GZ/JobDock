@@ -23,17 +23,18 @@ type dashboardTemplate struct {
 }
 
 type dashboardTemplateWidget struct {
-	ID            string                  `json:"id"`
-	Type          string                  `json:"type"`
-	Title         string                  `json:"title,omitempty"`
-	Size          dashboardWidgetSize     `json:"size"`
-	Position      dashboardWidgetPosition `json:"position"`
-	Slots         []dashboardTemplateSlot `json:"slots"`
-	XAxis         string                  `json:"x_axis,omitempty"`
-	GridColumns   int                     `json:"grid_columns,omitempty"`
-	TimeRange     string                  `json:"time_range,omitempty"`
-	GaugeMaxMode  string                  `json:"gauge_max_mode,omitempty"`
-	GaugeMaxValue *float64                `json:"gauge_max_value,omitempty"`
+	ID            string                     `json:"id"`
+	Type          string                     `json:"type"`
+	Title         string                     `json:"title,omitempty"`
+	Size          dashboardWidgetSize        `json:"size"`
+	Position      dashboardWidgetPosition    `json:"position"`
+	Slots         []dashboardTemplateSlot    `json:"slots"`
+	XAxis         string                     `json:"x_axis,omitempty"`
+	GridColumns   int                        `json:"grid_columns,omitempty"`
+	TimeRange     string                     `json:"time_range,omitempty"`
+	GaugeMaxMode  string                     `json:"gauge_max_mode,omitempty"`
+	GaugeMaxValue *float64                   `json:"gauge_max_value,omitempty"`
+	Appearance    *dashboardWidgetAppearance `json:"appearance,omitempty"`
 }
 
 type dashboardTemplateSlot struct {
@@ -425,6 +426,9 @@ func dashboardTemplateIncompatibility(template dashboardTemplate) string {
 		if !supportedDashboardWidgetTypes()[widget.Type] {
 			return "unsupported_widget_type"
 		}
+		if widget.Appearance != nil && widget.Appearance.SchemaVersion != 1 {
+			return "unsupported_widget_appearance_version"
+		}
 	}
 	return ""
 }
@@ -501,7 +505,7 @@ func resolveDashboardTemplateSlot(widgetID string, slot dashboardTemplateSlot, c
 }
 
 func templateWidget(item dashboardTemplateWidget, sources []dashboardWidgetSource) dashboardWidget {
-	return dashboardWidget{ID: item.ID, Type: item.Type, Title: item.Title, Size: item.Size, Position: item.Position, Sources: sources, XAxis: item.XAxis, GridColumns: item.GridColumns, TimeRange: item.TimeRange, GaugeMaxMode: item.GaugeMaxMode, GaugeMaxValue: item.GaugeMaxValue}
+	return dashboardWidget{ID: item.ID, Type: item.Type, Title: item.Title, Size: item.Size, Position: item.Position, Sources: sources, XAxis: item.XAxis, GridColumns: item.GridColumns, TimeRange: item.TimeRange, GaugeMaxMode: item.GaugeMaxMode, GaugeMaxValue: item.GaugeMaxValue, Appearance: item.Appearance}
 }
 
 func compatibleDashboardSourceKinds(widgetType string) map[string]bool {

@@ -4,6 +4,14 @@ export type DashboardSourceRole = "x" | "y";
 export type DashboardWidgetSource = { kind: DashboardSourceKind; name: string; role?: DashboardSourceRole };
 export type DashboardWidgetSize = { columns: number; rows: number };
 export type DashboardWidgetPosition = { x: number; y: number };
+export type DashboardWidgetAppearance = {
+  schema_version: 1;
+  color_scheme?: "default" | "cool" | "warm" | "monochrome";
+  legend?: "auto" | "hidden" | "open";
+  line_style?: "solid" | "dashed";
+  show_points?: boolean;
+  matrix_mode?: "absolute" | "normalized";
+};
 
 export type DashboardWidget = {
   id: string;
@@ -17,6 +25,7 @@ export type DashboardWidget = {
   time_range?: "1h" | "6h" | "24h" | "7d" | "all";
   gauge_max_mode?: "historical" | "fixed";
   gauge_max_value?: number;
+  appearance?: DashboardWidgetAppearance;
 };
 
 export type DashboardTemplateCardinality = { min: number; max: number };
@@ -47,7 +56,7 @@ export type DashboardTemplateResolution = {
   template_version: number;
   attempt_id: string;
   compatibility: DashboardCompatibility;
-  fallback_reason?: "unsupported_schema_version" | "unsupported_widget_type";
+  fallback_reason?: "unsupported_schema_version" | "unsupported_widget_type" | "unsupported_widget_appearance_version";
   widgets: DashboardWidget[];
   widget_results: Array<{ widget_id: string; status: "resolved" | "partial" | "omitted" | "unresolved" }>;
   slot_results: DashboardTemplateSlotResolution[];
@@ -58,7 +67,7 @@ export type DashboardTemplateReference = { template_id: string; template_version
 export type DashboardTemplateMaterialization = DashboardTemplateReference & { applied_at: string };
 export type DashboardSummary = {id:string;name:string;sort_order:number;is_default:boolean;created_at:string;updated_at:string};
 export type DashboardList = {items:DashboardSummary[];active_dashboard_id:string;default_dashboard_id:string};
-export type DashboardPreference = DashboardSummary & { schema_version: number; widgets: DashboardWidget[] | null; compatibility: DashboardCompatibility; materialized_from?: DashboardTemplateMaterialization | null; fallback_reason?: "unsupported_schema_version" | "invalid_saved_configuration" | "unsupported_widgets_omitted" };
+export type DashboardPreference = DashboardSummary & { schema_version: number; widgets: DashboardWidget[] | null; compatibility: DashboardCompatibility; materialized_from?: DashboardTemplateMaterialization | null; fallback_reason?: "unsupported_schema_version" | "invalid_saved_configuration" | "unsupported_widgets_omitted" | "unsupported_widget_appearance_omitted" };
 
 export const dashboardTemplateSchemaVersion=1;
 
@@ -91,7 +100,7 @@ export function restoreDashboardWidgets(value:unknown):DashboardWidget[]|null{
     if(typeof item.id!=="string"||!item.id||!types.has(item.type as DashboardWidgetType)||!item.size||!item.position||!Array.isArray(item.sources))return null;
     if(item.sources.some(source=>!source||!kinds.has(source.kind)||typeof source.name!=="string"||!source.name))return null;
     const factor=item.grid_columns===12?1:item.grid_columns===4?3:6;
-    widgets.push({id:item.id,type:item.type as DashboardWidgetType,title:typeof item.title==="string"?item.title.trim().slice(0,120):undefined,size:{columns:clampColumns(item.size.columns*factor),rows:clampRows(item.size.rows*factor)},position:{x:Math.max(0,Math.min(11,(item.position.x||0)*factor)),y:Math.max(0,(item.position.y||0)*factor)},sources:item.sources.map(source=>({...source})),x_axis:item.x_axis==="step"?"step":"time",grid_columns:12,time_range:validRange(item.time_range)?item.time_range:"all",gauge_max_mode:item.gauge_max_mode==="fixed"?"fixed":"historical",gauge_max_value:typeof item.gauge_max_value==="number"&&Number.isFinite(item.gauge_max_value)&&item.gauge_max_value>0?item.gauge_max_value:undefined});
+    widgets.push({id:item.id,type:item.type as DashboardWidgetType,title:typeof item.title==="string"?item.title.trim().slice(0,120):undefined,size:{columns:clampColumns(item.size.columns*factor),rows:clampRows(item.size.rows*factor)},position:{x:Math.max(0,Math.min(11,(item.position.x||0)*factor)),y:Math.max(0,(item.position.y||0)*factor)},sources:item.sources.map(source=>({...source})),x_axis:item.x_axis==="step"?"step":"time",grid_columns:12,time_range:validRange(item.time_range)?item.time_range:"all",gauge_max_mode:item.gauge_max_mode==="fixed"?"fixed":"historical",gauge_max_value:typeof item.gauge_max_value==="number"&&Number.isFinite(item.gauge_max_value)&&item.gauge_max_value>0?item.gauge_max_value:undefined,appearance:restoreAppearance(item.type as DashboardWidgetType,item.appearance)});
   }
   if(new Set(widgets.map(widget=>widget.id)).size!==widgets.length)return null;
   return layoutDashboardWidgets(widgets);
@@ -182,5 +191,6 @@ function newWidgetID() { return typeof crypto.randomUUID === "function" ? crypto
 function clampColumns(value:number){return Math.max(1,Math.min(12,Math.round(value)||1))}
 function clampRows(value:number){return Math.max(1,Math.min(12,Math.round(value)||1))}
 function validRange(value:unknown):value is DashboardWidget["time_range"]{return ["1h","6h","24h","7d","all"].includes(String(value))}
+function restoreAppearance(type:DashboardWidgetType,value:unknown):DashboardWidgetAppearance|undefined{if(!value||typeof value!=="object")return undefined;const item=value as Partial<DashboardWidgetAppearance>;if(item.schema_version!==1)return undefined;const plot=type==="lineplot"||type==="barplot"||type==="scatterplot",appearance:DashboardWidgetAppearance={schema_version:1};if(plot&&["default","cool","warm","monochrome"].includes(String(item.color_scheme)))appearance.color_scheme=item.color_scheme;if(plot&&["auto","hidden","open"].includes(String(item.legend)))appearance.legend=item.legend;if(type==="lineplot"&&(item.line_style==="solid"||item.line_style==="dashed"))appearance.line_style=item.line_style;if(type==="lineplot"&&typeof item.show_points==="boolean")appearance.show_points=item.show_points;if(type==="confusion_matrix"&&(item.matrix_mode==="absolute"||item.matrix_mode==="normalized"))appearance.matrix_mode=item.matrix_mode;return appearance}
 function fits(occupied:Set<string>,x:number,y:number,columns:number,rows:number){for(let row=y;row<y+rows;row++)for(let column=x;column<x+columns;column++)if(occupied.has(`${column}:${row}`))return false;return true}
 function occupy(occupied:Set<string>,x:number,y:number,columns:number,rows:number){for(let row=y;row<y+rows;row++)for(let column=x;column<x+columns;column++)occupied.add(`${column}:${row}`)}

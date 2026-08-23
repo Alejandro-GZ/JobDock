@@ -52,4 +52,11 @@ describe("ObservationPlot",()=>{
     expect(plot.getAttribute("data-domain")).toBe(initial);
     expect(screen.getByRole("button",{name:"Training legend"}).getAttribute("aria-expanded")).toBe("false");
   });
+  it("renders materialized presentation settings without chart-library props",()=>{
+    const {container}=render(<ObservationPlot type="lineplot" title="Styled" series={[loss]} xAxis="step" appearance={{schema_version:1,color_scheme:"warm",legend:"hidden",line_style:"dashed",show_points:true}}/>);
+    expect(screen.queryByRole("button",{name:"Styled legend"})).toBeNull();
+    expect(container.querySelector('path[stroke-dasharray="6 4"]')).toBeTruthy();
+    expect(container.querySelectorAll('[role="img"] circle')).toHaveLength(2);
+    expect(container.querySelector('path[stroke-dasharray="6 4"]')?.getAttribute("stroke")).toBe("#ea580c");
+  });
 });

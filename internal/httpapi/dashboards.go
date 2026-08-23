@@ -29,18 +29,41 @@ type dashboardTemplateMaterialization struct {
 	AppliedAt       time.Time `json:"applied_at"`
 }
 type dashboardWidget struct {
-	ID            string                  `json:"id"`
-	Type          string                  `json:"type"`
-	Title         string                  `json:"title,omitempty"`
-	Size          dashboardWidgetSize     `json:"size"`
-	Position      dashboardWidgetPosition `json:"position"`
-	Sources       []dashboardWidgetSource `json:"sources"`
-	XAxis         string                  `json:"x_axis,omitempty"`
-	GridColumns   int                     `json:"grid_columns,omitempty"`
-	TimeRange     string                  `json:"time_range,omitempty"`
-	GaugeMaxMode  string                  `json:"gauge_max_mode,omitempty"`
-	GaugeMaxValue *float64                `json:"gauge_max_value,omitempty"`
+	ID            string                     `json:"id"`
+	Type          string                     `json:"type"`
+	Title         string                     `json:"title,omitempty"`
+	Size          dashboardWidgetSize        `json:"size"`
+	Position      dashboardWidgetPosition    `json:"position"`
+	Sources       []dashboardWidgetSource    `json:"sources"`
+	XAxis         string                     `json:"x_axis,omitempty"`
+	GridColumns   int                        `json:"grid_columns,omitempty"`
+	TimeRange     string                     `json:"time_range,omitempty"`
+	GaugeMaxMode  string                     `json:"gauge_max_mode,omitempty"`
+	GaugeMaxValue *float64                   `json:"gauge_max_value,omitempty"`
+	Appearance    *dashboardWidgetAppearance `json:"appearance,omitempty"`
 }
+type dashboardWidgetAppearance struct {
+	SchemaVersion int    `json:"schema_version"`
+	ColorScheme   string `json:"color_scheme,omitempty"`
+	Legend        string `json:"legend,omitempty"`
+	LineStyle     string `json:"line_style,omitempty"`
+	ShowPoints    *bool  `json:"show_points,omitempty"`
+	MatrixMode    string `json:"matrix_mode,omitempty"`
+}
+
+// UnmarshalJSON deliberately owns forward-compatible appearance decoding. The
+// enclosing dashboard request remains strict while unknown presentation fields
+// in a known appearance version are ignored instead of rejecting the widget.
+func (a *dashboardWidgetAppearance) UnmarshalJSON(data []byte) error {
+	type appearance dashboardWidgetAppearance
+	var decoded appearance
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*a = dashboardWidgetAppearance(decoded)
+	return nil
+}
+
 type dashboardWidgetSize struct {
 	Columns int `json:"columns"`
 	Rows    int `json:"rows"`
@@ -323,21 +346,32 @@ func restoreDashboardConfig(data []byte) (dashboardConfig, string, string) {
 		return dashboardConfig{Widgets: nil}, "incompatible", "invalid_saved_configuration"
 	}
 	config := dashboardConfig{Widgets: make([]dashboardWidget, 0, len(raw.Widgets))}
-	seen, omitted := map[string]bool{}, 0
+	seen, omitted, degraded := map[string]bool{}, 0, 0
 	for _, encoded := range raw.Widgets {
 		var widget dashboardWidget
-		if json.Unmarshal(encoded, &widget) != nil || seen[widget.ID] || validateDashboardConfig(dashboardConfig{Widgets: []dashboardWidget{widget}}) != nil {
+		if json.Unmarshal(encoded, &widget) != nil || seen[widget.ID] {
+			omitted++
+			continue
+		}
+		if widget.Appearance != nil && widget.Appearance.SchemaVersion != 1 {
+			widget.Appearance = nil
+			degraded++
+		}
+		if validateDashboardConfig(dashboardConfig{Widgets: []dashboardWidget{widget}}) != nil {
 			omitted++
 			continue
 		}
 		seen[widget.ID] = true
 		config.Widgets = append(config.Widgets, widget)
 	}
-	if omitted == 0 {
+	if omitted == 0 && degraded == 0 {
 		return config, "compatible", ""
 	}
 	if len(config.Widgets) == 0 && len(raw.Widgets) > 0 {
 		return dashboardConfig{Widgets: nil}, "incompatible", "invalid_saved_configuration"
+	}
+	if omitted == 0 {
+		return config, "partially_compatible", "unsupported_widget_appearance_omitted"
 	}
 	return config, "partially_compatible", "unsupported_widgets_omitted"
 }
@@ -398,6 +432,9 @@ func validateDashboardConfig(config dashboardConfig) error {
 		if widget.Type == "gauge" && widget.GaugeMaxMode == "fixed" && widget.GaugeMaxValue == nil {
 			return dashboardError("A gauge with a fixed maximum requires gauge_max_value")
 		}
+		if err := validateDashboardWidgetAppearance(widget); err != nil {
+			return err
+		}
 		if len(widget.Sources) > 64 {
 			return dashboardError("A widget may contain at most 64 sources")
 		}
@@ -409,6 +446,36 @@ func validateDashboardConfig(config dashboardConfig) error {
 				return dashboardError("Widget source role must be x or y")
 			}
 		}
+	}
+	return nil
+}
+
+func validateDashboardWidgetAppearance(widget dashboardWidget) error {
+	appearance := widget.Appearance
+	if appearance == nil {
+		return nil
+	}
+	if appearance.SchemaVersion != 1 {
+		return dashboardError("Widget appearance schema version is not supported")
+	}
+	if appearance.ColorScheme != "" && appearance.ColorScheme != "default" && appearance.ColorScheme != "cool" && appearance.ColorScheme != "warm" && appearance.ColorScheme != "monochrome" {
+		return dashboardError("Widget appearance color_scheme is invalid")
+	}
+	if appearance.Legend != "" && appearance.Legend != "auto" && appearance.Legend != "hidden" && appearance.Legend != "open" {
+		return dashboardError("Widget appearance legend is invalid")
+	}
+	plot := widget.Type == "lineplot" || widget.Type == "barplot" || widget.Type == "scatterplot"
+	if !plot && (appearance.ColorScheme != "" || appearance.Legend != "") {
+		return dashboardError("Widget appearance contains plot-only properties")
+	}
+	if appearance.LineStyle != "" && (widget.Type != "lineplot" || appearance.LineStyle != "solid" && appearance.LineStyle != "dashed") {
+		return dashboardError("Widget appearance line_style is invalid for this widget")
+	}
+	if appearance.ShowPoints != nil && widget.Type != "lineplot" {
+		return dashboardError("Widget appearance show_points is invalid for this widget")
+	}
+	if appearance.MatrixMode != "" && (widget.Type != "confusion_matrix" || appearance.MatrixMode != "absolute" && appearance.MatrixMode != "normalized") {
+		return dashboardError("Widget appearance matrix_mode is invalid for this widget")
 	}
 	return nil
 }

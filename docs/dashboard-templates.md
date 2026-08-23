@@ -23,6 +23,13 @@ one or more semantic source slots:
       "position": {"x": 0, "y": 0},
       "x_axis": "step",
       "time_range": "all",
+      "appearance": {
+        "schema_version": 1,
+        "color_scheme": "cool",
+        "legend": "open",
+        "line_style": "dashed",
+        "show_points": true
+      },
       "slots": [
         {
           "id": "training-loss",
@@ -42,6 +49,21 @@ one or more semantic source slots:
   ]
 }
 ```
+
+## Widget appearance
+
+`appearance` is an optional, versioned, library-independent presentation
+contract. Version 1 supports plot color schemes (`default`, `cool`, `warm`, or
+`monochrome`), legend behavior (`auto`, `open`, or `hidden`), solid or dashed
+line plots, optional line points, and an initial `absolute` or `normalized`
+confusion-matrix mode. Settings are accepted only by compatible widget types.
+
+Resolving a template copies this object into the ordinary dashboard widget.
+The editor can then change the supported settings without modifying or linking
+back to the template. Templates and dashboards without `appearance` continue to
+use product defaults. Unknown fields in a known template appearance version are
+ignored. A future appearance schema produces an explicit safe fallback; a
+saved dashboard keeps the widget and omits only the unsupported appearance.
 
 ## Resolution rules
 

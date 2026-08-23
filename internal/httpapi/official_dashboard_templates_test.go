@@ -95,11 +95,11 @@ func TestOfficialDashboardTemplateCatalogIsDiverseValidAndFrameworkNeutral(t *te
 
 func TestRepresentativeOfficialTemplatesResolveAndReportMissingSources(t *testing.T) {
 	training := resolveDashboardTemplate(trainingDashboardTemplate(), []observableSource{{Kind: "metric", Name: "loss", Tags: []string{"metric:loss", "phase:train"}}, {Kind: "metric", Name: "rate", Tags: []string{"metric:learning_rate", "phase:train"}}, {Kind: "progress", Name: "progress"}})
-	if training.Compatibility == "incompatible" || len(training.Widgets) < 2 || training.Widgets[0].Sources[0].Name != "loss" {
+	if training.Compatibility == "incompatible" || len(training.Widgets) < 2 || training.Widgets[0].Sources[0].Name != "loss" || training.Widgets[0].Appearance == nil || training.Widgets[0].Appearance.ColorScheme != "cool" {
 		t.Fatalf("training resolution: %#v", training)
 	}
 	classification := resolveDashboardTemplate(classificationDashboardTemplate(), []observableSource{{Kind: "metric", Name: "score", Tags: []string{"metric:accuracy", "phase:validation"}}, {Kind: "matrix", Name: "confusion"}})
-	if classification.Compatibility == "incompatible" || classification.Widgets[0].Sources[0].Name != "score" {
+	if classification.Compatibility == "incompatible" || classification.Widgets[0].Sources[0].Name != "score" || classification.Widgets[len(classification.Widgets)-1].Appearance == nil || classification.Widgets[len(classification.Widgets)-1].Appearance.MatrixMode != "normalized" {
 		t.Fatalf("classification resolution: %#v", classification)
 	}
 	missing := resolveDashboardTemplate(officialTemplateByID("hpo-multi-objective"), []observableSource{{Kind: "metric", Name: "volume", Tags: []string{"metric:hypervolume", "phase:hpo_search"}}})

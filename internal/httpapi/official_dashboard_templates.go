@@ -94,9 +94,9 @@ func classificationDashboardTemplate() dashboardTemplate {
 func regressionDashboardTemplate() dashboardTemplate { return officialTemplateByID("regression") }
 
 func buildOfficialTemplate(spec officialTemplateSpec, index int) dashboardTemplate {
-	version := 1
+	version := 2
 	if spec.ID == "training-general" || spec.ID == "classification" || spec.ID == "regression" {
-		version = 2
+		version = 3
 	}
 	primaryType := map[string]string{"line": "lineplot", "bar": "barplot", "scatter": "scatterplot"}[spec.Style]
 	primarySlots := []dashboardTemplateSlot{officialMetricSlot("primary", spec.Primary, spec.Phase, 1, "error")}
@@ -107,6 +107,7 @@ func buildOfficialTemplate(spec officialTemplateSpec, index int) dashboardTempla
 		primarySlots = append(primarySlots, second)
 	}
 	widgets := []dashboardTemplateWidget{officialWidget("primary", primaryType, 12, 4, 0, 0, primarySlots...)}
+	widgets[0].Appearance = officialPlotAppearance(spec.Style, spec.Category)
 	remaining := spec.Supporting
 	if primaryType == "scatterplot" {
 		remaining = remaining[1:]
@@ -120,14 +121,18 @@ func buildOfficialTemplate(spec officialTemplateSpec, index int) dashboardTempla
 		if index%3 == 1 {
 			width = 12
 		}
-		widgets = append(widgets, officialWidget("supporting", "lineplot", width, 4, 0, 4, slots...))
+		widget := officialWidget("supporting", "lineplot", width, 4, 0, 4, slots...)
+		widget.Appearance = officialPlotAppearance("line", spec.Category)
+		widgets = append(widgets, widget)
 	}
 	if spec.Gauge {
 		widgets = append(widgets, officialGauge("summary", spec.Primary, spec.Phase, 4, 4, 8, 4))
 	}
 	bottomX := 0
 	if spec.Matrix {
-		widgets = append(widgets, officialWidget("matrix", "confusion_matrix", 6, 4, 0, 8, officialOptionalSlot("matrix", "matrix", 1)))
+		widget := officialWidget("matrix", "confusion_matrix", 6, 4, 0, 8, officialOptionalSlot("matrix", "matrix", 1))
+		widget.Appearance = &dashboardWidgetAppearance{SchemaVersion: 1, MatrixMode: "normalized"}
+		widgets = append(widgets, widget)
 		bottomX = 6
 	}
 	if spec.Progress {
@@ -138,6 +143,20 @@ func buildOfficialTemplate(spec officialTemplateSpec, index int) dashboardTempla
 		widgets = append(widgets, officialWidget("logs", "logs", 12-bottomX, 4, bottomX, 8, officialOptionalSlot("logs", "log", 2)))
 	}
 	return dashboardTemplate{ID: spec.ID, Name: spec.Name, Description: spec.Description, Category: spec.Category, SchemaVersion: dashboardTemplateSchemaVersion, Version: version, Widgets: widgets}
+}
+
+func officialPlotAppearance(style, category string) *dashboardWidgetAppearance {
+	colors := "cool"
+	if style == "bar" || category == "generative-ai" || category == "reinforcement-learning" {
+		colors = "warm"
+	} else if category == "clustering-representation" || category == "hpo-model-selection" {
+		colors = "monochrome"
+	}
+	appearance := &dashboardWidgetAppearance{SchemaVersion: 1, ColorScheme: colors, Legend: "auto"}
+	if style == "line" {
+		appearance.LineStyle = "solid"
+	}
+	return appearance
 }
 
 func officialMetricSlot(id, role, phase string, minimum int, missing string) dashboardTemplateSlot {

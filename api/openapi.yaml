@@ -1306,6 +1306,18 @@ components:
         kind: {type: string, enum: [metric, resource, matrix, progress, log]}
         name: {type: string, minLength: 1, maxLength: 128}
         role: {type: string, enum: [x, y]}
+    DashboardWidgetAppearance:
+      type: object
+      additionalProperties: true
+      required: [schema_version]
+      description: Versioned, library-independent presentation settings. Omitted settings use product defaults.
+      properties:
+        schema_version: {type: integer, const: 1}
+        color_scheme: {type: string, enum: [default, cool, warm, monochrome], description: Supported by plot widgets.}
+        legend: {type: string, enum: [auto, hidden, open], description: Supported by plot widgets.}
+        line_style: {type: string, enum: [solid, dashed], description: Supported by line plots.}
+        show_points: {type: boolean, description: Supported by line plots.}
+        matrix_mode: {type: string, enum: [absolute, normalized], description: Supported by confusion matrices.}
     DashboardWidget:
       type: object
       additionalProperties: false
@@ -1330,6 +1342,7 @@ components:
         time_range: {type: string, enum: [1h, 6h, 24h, 7d, all]}
         gauge_max_mode: {type: string, enum: [historical, fixed]}
         gauge_max_value: {type: number, exclusiveMinimum: 0}
+        appearance: {$ref: '#/components/schemas/DashboardWidgetAppearance'}
     DashboardTemplateCardinality:
       type: object
       additionalProperties: false
@@ -1374,6 +1387,7 @@ components:
         time_range: {type: string, enum: [1h, 6h, 24h, 7d, all]}
         gauge_max_mode: {type: string, enum: [historical, fixed]}
         gauge_max_value: {type: number, exclusiveMinimum: 0}
+        appearance: {$ref: '#/components/schemas/DashboardWidgetAppearance'}
     DashboardTemplate:
       type: object
       additionalProperties: false
@@ -1445,7 +1459,7 @@ components:
         template_version: {type: integer, minimum: 0}
         attempt_id: {type: string}
         compatibility: {type: string, enum: [compatible, partially_compatible, incompatible]}
-        fallback_reason: {type: string, enum: [unsupported_schema_version, unsupported_widget_type]}
+        fallback_reason: {type: string, enum: [unsupported_schema_version, unsupported_widget_type, unsupported_widget_appearance_version]}
         widgets: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/DashboardWidget'}}
         widget_results:
           type: array
@@ -1535,7 +1549,7 @@ components:
         materialized_from: {oneOf: [{$ref: '#/components/schemas/DashboardTemplateMaterialization'}, {type: 'null'}]}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
-        fallback_reason: {type: string, enum: [unsupported_schema_version, invalid_saved_configuration, unsupported_widgets_omitted]}
+        fallback_reason: {type: string, enum: [unsupported_schema_version, invalid_saved_configuration, unsupported_widgets_omitted, unsupported_widget_appearance_omitted]}
     ResourceSeriesResponse:
       type: object
       required: [attempt_id, cursor, from, to, resolution_seconds, truncated, points]

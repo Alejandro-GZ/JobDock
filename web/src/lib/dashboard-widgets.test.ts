@@ -40,9 +40,10 @@ describe("dashboard widget model",()=>{
   });
 
   it("restores versioned widget data and safely rejects invalid saved layouts",()=>{
-    const restored=restoreDashboardWidgets([{id:"saved",type:"lineplot",title:"Custom loss",size:{columns:2,rows:1},position:{x:1,y:9},sources:[{kind:"metric",name:"missing"}],x_axis:"step"}]);
-    expect(restored?.[0]).toMatchObject({id:"saved",title:"Custom loss",position:{x:0,y:0},sources:[{kind:"metric",name:"missing"}],x_axis:"step"});
+    const restored=restoreDashboardWidgets([{id:"saved",type:"lineplot",title:"Custom loss",size:{columns:2,rows:1},position:{x:1,y:9},sources:[{kind:"metric",name:"missing"}],x_axis:"step",appearance:{schema_version:1,color_scheme:"cool",legend:"open",line_style:"dashed",show_points:true,future_property:true}}]);
+    expect(restored?.[0]).toMatchObject({id:"saved",title:"Custom loss",position:{x:0,y:0},sources:[{kind:"metric",name:"missing"}],x_axis:"step",appearance:{schema_version:1,color_scheme:"cool",legend:"open",line_style:"dashed",show_points:true}});
     expect(restored?.[0].size.columns).toBe(12);
+    expect(restoreDashboardWidgets([{id:"future-style",type:"lineplot",size:{columns:1,rows:1},position:{x:0,y:0},sources:[],appearance:{schema_version:2,color_scheme:"future"}}])?.[0].appearance).toBeUndefined();
     expect(restoreDashboardWidgets([{id:"bad",type:"future-widget",size:{columns:1,rows:1},position:{x:0,y:0},sources:[]}])).toBeNull();
   });
 });

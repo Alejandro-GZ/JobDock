@@ -61,7 +61,7 @@ func TestDashboardConfigurationPersistsAndFallsBackSafely(t *testing.T) {
 	if initial.SchemaVersion != 1 || string(initial.Widgets) != "null" {
 		t.Fatalf("initial dashboard: %#v", initial)
 	}
-	payload := `{"schema_version":1,"widgets":[{"id":"loss","type":"lineplot","title":"Training loss","size":{"columns":6,"rows":3},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}],"x_axis":"step","time_range":"6h","grid_columns":12}]}`
+	payload := `{"schema_version":1,"widgets":[{"id":"loss","type":"lineplot","title":"Training loss","size":{"columns":6,"rows":3},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}],"x_axis":"step","time_range":"6h","grid_columns":12,"appearance":{"schema_version":1,"color_scheme":"cool","legend":"open","line_style":"dashed","show_points":true,"future_property":"ignored"}}]}`
 	request, _ := http.NewRequest(http.MethodPut, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard", bytes.NewBufferString(payload))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-CSRF-Token", session.CSRF)
@@ -78,7 +78,7 @@ func TestDashboardConfigurationPersistsAndFallsBackSafely(t *testing.T) {
 		Widgets       []dashboardWidget `json:"widgets"`
 	}
 	getSeriesJSON(t, client, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard", &saved)
-	if saved.SchemaVersion != 1 || len(saved.Widgets) != 1 || saved.Widgets[0].Sources[0].Name != "loss" {
+	if saved.SchemaVersion != 1 || len(saved.Widgets) != 1 || saved.Widgets[0].Sources[0].Name != "loss" || saved.Widgets[0].Appearance == nil || saved.Widgets[0].Appearance.ColorScheme != "cool" || saved.Widgets[0].Appearance.LineStyle != "dashed" {
 		t.Fatalf("saved dashboard: %#v", saved)
 	}
 	materializedPayload := `{"schema_version":1,"widgets":[{"id":"loss","type":"lineplot","size":{"columns":6,"rows":3},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}]}],"materialized_from":{"template_id":"training-general","template_version":1,"schema_version":1}}`
@@ -138,6 +138,14 @@ func TestDashboardConfigurationPersistsAndFallsBackSafely(t *testing.T) {
 	getSeriesJSON(t, client, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard", &partial)
 	if len(partial.Widgets) != 1 || partial.Widgets[0].ID != "loss" || partial.Compatibility != "partially_compatible" || partial.Reason != "unsupported_widgets_omitted" {
 		t.Fatalf("partially restored dashboard: %#v", partial)
+	}
+	futureAppearance := `{"widgets":[{"id":"loss","type":"lineplot","size":{"columns":6,"rows":3},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}],"appearance":{"schema_version":2,"future_style":true}}]}`
+	if _, err = repository.DB().ExecContext(ctx, `UPDATE job_dashboards SET config_json=? WHERE user_id=? AND job_id=?`, futureAppearance, owner.ID, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	getSeriesJSON(t, client, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard", &partial)
+	if len(partial.Widgets) != 1 || partial.Widgets[0].Appearance != nil || partial.Compatibility != "partially_compatible" || partial.Reason != "unsupported_widget_appearance_omitted" {
+		t.Fatalf("future appearance fallback: %#v", partial)
 	}
 	if _, err = repository.DB().ExecContext(ctx, `UPDATE job_dashboards SET schema_version=99 WHERE user_id=? AND job_id=?`, owner.ID, job.ID); err != nil {
 		t.Fatal(err)

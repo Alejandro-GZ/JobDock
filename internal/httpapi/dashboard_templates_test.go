@@ -28,6 +28,25 @@ func TestDashboardTemplateResolverCombinesSemanticSlotsDeterministically(t *test
 	}
 }
 
+func TestDashboardTemplateMaterializesVersionedAppearanceAndKeepsLegacyDefaults(t *testing.T) {
+	showPoints := true
+	template := semanticTemplate(templateSlot("loss", []string{"metric:loss"}, 1, 1))
+	template.Widgets[0].Appearance = &dashboardWidgetAppearance{SchemaVersion: 1, ColorScheme: "cool", Legend: "open", LineStyle: "dashed", ShowPoints: &showPoints}
+	resolved := resolveDashboardTemplate(template, []observableSource{{Kind: "metric", Name: "loss", Tags: []string{"metric:loss"}}})
+	if len(resolved.Widgets) != 1 || !reflect.DeepEqual(resolved.Widgets[0].Appearance, template.Widgets[0].Appearance) {
+		t.Fatalf("appearance was not materialized: %#v", resolved.Widgets)
+	}
+	legacy := semanticTemplate(templateSlot("loss", []string{"metric:loss"}, 1, 1))
+	if err := validateDashboardTemplate(legacy); err != nil || resolveDashboardTemplate(legacy, []observableSource{{Kind: "metric", Name: "loss", Tags: []string{"metric:loss"}}}).Widgets[0].Appearance != nil {
+		t.Fatalf("legacy template appearance defaults changed: %v", err)
+	}
+	template.Widgets[0].Appearance.SchemaVersion = 2
+	fallback := resolveDashboardTemplate(template, nil)
+	if fallback.Compatibility != "incompatible" || fallback.FallbackReason != "unsupported_widget_appearance_version" {
+		t.Fatalf("future appearance did not degrade safely: %#v", fallback)
+	}
+}
+
 func TestDashboardTemplateResolverReportsMissingAmbiguousAndIncompatibleSlots(t *testing.T) {
 	tests := []struct {
 		name       string
