@@ -31,7 +31,7 @@ export type DashboardTemplateSlot = {
   on_ambiguous?: "error" | "omit_slot" | "omit_widget";
 };
 export type DashboardTemplateWidget = Omit<DashboardWidget, "sources"> & { slots: DashboardTemplateSlot[] };
-export type DashboardTemplate = { id: string; schema_version: 1; widgets: DashboardTemplateWidget[] };
+export type DashboardTemplate = { id: string; name?: string; description?: string; schema_version: 1; widgets: DashboardTemplateWidget[] };
 export type DashboardTemplateSlotResolution = {
   widget_id: string;
   slot_id: string;

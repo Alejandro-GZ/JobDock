@@ -62,3 +62,28 @@ one or more semantic source slots:
 Use `POST /api/v1/jobs/{jobId}/dashboard/templates/resolve` with an optional
 `attempt_id` and a `template` object. The response contains slot and widget
 diagnostics plus `widgets`, which uses the normal dashboard schema.
+
+## Official catalog
+
+`GET /api/v1/dashboard/templates` returns three product-maintained templates.
+They rely only on observable types and the standard semantic tags below; metric
+names and ML framework names are deliberately irrelevant.
+
+| Template | Required sources | Optional sources |
+| --- | --- | --- |
+| Training — General | `metric:loss` + `phase:train` | validation loss, `metric:learning_rate`, progress; confirmed checkpoints automatically remain available as chart markers |
+| Classification | training loss and `metric:accuracy` | validation loss, `metric:precision`, `metric:recall`, `metric:f1`, confusion matrix, progress |
+| Regression | training loss | validation loss, `metric:mae`, `metric:mse`, `metric:rmse` |
+
+For classification and regression scores, `phase:validation` is an optional
+preference. A validation series wins over an otherwise equivalent source, while
+an unphased source still works. If equally specific candidates exceed a slot's
+cardinality, the result remains explicitly ambiguous.
+
+Widgets backed only by absent optional sources are omitted. The resolved widgets
+are then packed back into the twelve-column grid in declaration order, so an
+optional learning-rate chart or confusion matrix cannot leave a broken hole.
+
+To receive the complete official-template experience, report metrics using the
+corresponding tags from the table. Metric names such as `objective_train` or
+`holdout_score` are valid: the resolver never infers meaning from those names.

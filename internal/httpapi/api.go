@@ -107,6 +107,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/jobs/{id}/events", a.withSession(false, false, a.jobEvents))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/metrics", a.withSession(false, false, a.jobMetrics))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/metrics/catalog", a.withSession(false, false, a.metricCatalog))
+	mux.HandleFunc("GET /api/v1/dashboard/templates", a.withSession(false, false, a.listDashboardTemplates))
 	mux.HandleFunc("POST /api/v1/jobs/{id}/dashboard/templates/resolve", a.withSession(false, false, a.resolveDashboardTemplate))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/dashboard", a.withSession(false, false, a.getDashboard))
 	mux.HandleFunc("PUT /api/v1/jobs/{id}/dashboard", a.withSession(false, true, a.putDashboard))

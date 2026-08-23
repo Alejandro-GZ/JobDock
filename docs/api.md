@@ -66,6 +66,11 @@ is read-only, attempt-scoped, deterministic, and never reads metric samples.
 See [Dashboard templates](dashboard-templates.md) for the schema and matching
 rules.
 
+`GET /api/v1/dashboard/templates` returns the product-maintained catalog. The
+MVP catalog contains the framework-neutral `training-general`, `classification`,
+and `regression` templates. Catalog retrieval does not inspect a job or load
+telemetry.
+
 Jobs without inputs use the regular JSON create request. To attach reproducible
 inputs, `POST /api/v1/jobs` accepts `multipart/form-data` with one `spec` JSON
 field and file fields named `input:<relative-path>`. The server stores every

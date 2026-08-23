@@ -362,6 +362,12 @@ paths:
         '200': {description: Attempt metric descriptors, content: {application/json: {schema: {$ref: '#/components/schemas/MetricDescriptorList'}}}}
         '404': {$ref: '#/components/responses/Problem'}
         '422': {$ref: '#/components/responses/Problem'}
+  /dashboard/templates:
+    get:
+      operationId: listDashboardTemplates
+      description: Return the product-maintained, framework-neutral dashboard template catalog.
+      responses:
+        '200': {description: Built-in dashboard templates, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardTemplateList'}}}}
   /jobs/{jobId}/dashboard/templates/resolve:
     post:
       operationId: resolveJobDashboardTemplate
@@ -1264,8 +1270,15 @@ components:
       required: [id, schema_version, widgets]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
+        name: {type: string, maxLength: 128}
+        description: {type: string, maxLength: 512}
         schema_version: {type: integer, const: 1}
         widgets: {type: array, minItems: 1, maxItems: 64, items: {$ref: '#/components/schemas/DashboardTemplateWidget'}}
+    DashboardTemplateList:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, minItems: 3, maxItems: 64, items: {$ref: '#/components/schemas/DashboardTemplate'}}
     DashboardTemplateResolveRequest:
       type: object
       additionalProperties: false

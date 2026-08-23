@@ -20,6 +20,7 @@ export const api={
   attemptOutput:(id:string,attemptId:string,path:string)=>`/api/v1/jobs/${encodeURIComponent(id)}/attempts/${encodeURIComponent(attemptId)}/outputs/${path.split("/").map(encodeURIComponent).join("/")}`,
   metrics:(id:string,query:string)=>request<MetricSeriesResponse>(`/jobs/${id}/metrics?${query}`),
   metricCatalog:async(id:string,attemptId?:string,tags:string[]=[])=>{const query=new URLSearchParams();if(attemptId)query.set("attempt_id",attemptId);for(const tag of tags)query.append("tag",tag);return(await request<{attempt_id:string;items:import("./types").MetricDescriptor[]}>(`/jobs/${id}/metrics/catalog${query.size?`?${query}`:""}`)).items},
+  dashboardTemplates:async()=>(await request<{items:DashboardTemplate[]}>("/dashboard/templates")).items,
   resolveDashboardTemplate:(id:string,template:DashboardTemplate,attemptId?:string)=>request<DashboardTemplateResolution>(`/jobs/${id}/dashboard/templates/resolve`,{method:"POST",body:JSON.stringify({attempt_id:attemptId,template})}),
   dashboard:(id:string)=>request<{schema_version:number;widgets:DashboardWidget[]|null;updated_at?:string;fallback_reason?:string}>(`/jobs/${id}/dashboard`),
   saveDashboard:(id:string,widgets:DashboardWidget[])=>request(`/jobs/${id}/dashboard`,{method:"PUT",body:JSON.stringify({schema_version:dashboardSchemaVersion,widgets})}),

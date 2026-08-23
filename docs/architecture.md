@@ -106,6 +106,11 @@ catalog, so their cost is independent of the number of historical samples.
 Dashboard templates are a declarative layer over that catalog. Their resolver
 produces ordinary dashboard widgets plus explicit slot diagnostics; it neither
 creates a second persisted dashboard model nor mutates observable definitions.
+Matrix and progress availability is registered in compact rich-observable
+descriptors during ingestion, allowing template resolution without reading
+matrix values or progress history. Product-maintained templates remain static,
+framework-neutral definitions and are copied into an ordinary dashboard only
+when explicitly applied.
 Both streams share a persisted monotonic cursor. Historical queries read at a
 cursor-consistent snapshot, while a resumable SSE tail carries only newly
 committed batches to the browser. This keeps live refresh work proportional to

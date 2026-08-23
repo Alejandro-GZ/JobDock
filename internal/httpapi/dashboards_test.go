@@ -154,6 +154,13 @@ func TestDashboardTemplateResolutionUsesAttemptDescriptorCatalog(t *testing.T) {
 	server := httptest.NewServer(New(config.Server{AllowInsecureHTTP: true, SessionTTL: time.Hour}, repository, files, box, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	defer server.Close()
 	client := loginSeriesUser(t, server.URL, owner.Username)
+	var templateCatalog struct {
+		Items []dashboardTemplate `json:"items"`
+	}
+	getSeriesJSON(t, client, server.URL+"/api/v1/dashboard/templates", &templateCatalog)
+	if len(templateCatalog.Items) != 3 || templateCatalog.Items[0].ID != "training-general" {
+		t.Fatalf("official dashboard template catalog: %#v", templateCatalog)
+	}
 	template := semanticTemplate(
 		templateSlot("train", []string{"metric:loss", "phase:train"}, 1, 1),
 		templateSlot("validation", []string{"metric:loss", "phase:validation"}, 1, 1),

@@ -48,6 +48,9 @@ func (s *Store) AppendProgress(ctx context.Context, jobID, attemptID, kind strin
 	if _, err = tx.ExecContext(ctx, `INSERT INTO job_progress_observations(job_id,attempt_id,kind,value,milestone,step,captured_at,metadata_json) VALUES(?,?,?,?,?,?,?,?)`, jobID, attemptID, kind, observation.Value, nullableString(observation.Milestone), observation.Step, captured.UnixMilli(), metadata); err != nil {
 		return mapConstraint(err)
 	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO job_rich_observable_descriptors(job_id,attempt_id,kind,name,created_at,updated_at) VALUES(?,?, 'progress','progress',?,?) ON CONFLICT(job_id,attempt_id,kind,name) DO UPDATE SET updated_at=excluded.updated_at`, jobID, attemptID, captured.UnixMilli(), captured.UnixMilli()); err != nil {
+		return mapConstraint(err)
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO job_observation_updates(job_id,attempt_id,kind,observed_at) VALUES(?,?, 'progress',?)`, jobID, attemptID, captured.UnixMilli()); err != nil {
 		return err
 	}
@@ -184,6 +187,9 @@ func (s *Store) AppendMatrix(ctx context.Context, item domain.MatrixObservation)
 	}
 	item.ID, _ = result.LastInsertId()
 	item.CapturedAt = &captured
+	if _, err = tx.ExecContext(ctx, `INSERT INTO job_rich_observable_descriptors(job_id,attempt_id,kind,name,created_at,updated_at) VALUES(?,?, 'matrix',?,?,?) ON CONFLICT(job_id,attempt_id,kind,name) DO UPDATE SET updated_at=excluded.updated_at`, item.JobID, item.AttemptID, item.Name, captured.UnixMilli(), captured.UnixMilli()); err != nil {
+		return item, mapConstraint(err)
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO job_observation_updates(job_id,attempt_id,kind,observed_at) VALUES(?,?, 'matrix',?)`, item.JobID, item.AttemptID, captured.UnixMilli()); err != nil {
 		return item, err
 	}

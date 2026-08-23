@@ -13,6 +13,8 @@ const dashboardTemplateSchemaVersion = 1
 
 type dashboardTemplate struct {
 	ID            string                    `json:"id"`
+	Name          string                    `json:"name,omitempty"`
+	Description   string                    `json:"description,omitempty"`
 	SchemaVersion int                       `json:"schema_version"`
 	Widgets       []dashboardTemplateWidget `json:"widgets"`
 }
@@ -122,7 +124,7 @@ func (a *API) resolveDashboardTemplate(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "attempt_not_found", "The requested attempt does not belong to this job")
 		return
 	}
-	descriptors, err := a.store.MetricDescriptors(r.Context(), job.ID, attemptID, nil)
+	descriptors, err := a.store.ObservableDescriptors(r.Context(), job.ID, attemptID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -139,6 +141,9 @@ func (a *API) resolveDashboardTemplate(w http.ResponseWriter, r *http.Request) {
 func validateDashboardTemplate(template dashboardTemplate) error {
 	if len(strings.TrimSpace(template.ID)) < 1 || len(template.ID) > 128 {
 		return errors.New("Template id must contain 1-128 characters")
+	}
+	if len(template.Name) > 128 || len(template.Description) > 512 {
+		return errors.New("Template name or description is too long")
 	}
 	if template.SchemaVersion != dashboardTemplateSchemaVersion {
 		return errors.New("Template schema version is not supported")
@@ -260,6 +265,7 @@ func resolveDashboardTemplate(template dashboardTemplate, catalog []observableSo
 			result.Widgets = append(result.Widgets, widget)
 		}
 	}
+	result.Widgets = compactDashboardWidgets(result.Widgets)
 	return result
 }
 
@@ -363,4 +369,45 @@ func containsString(values []string, expected string) bool {
 		}
 	}
 	return false
+}
+
+func compactDashboardWidgets(widgets []dashboardWidget) []dashboardWidget {
+	ordered := append([]dashboardWidget(nil), widgets...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].Position.Y != ordered[j].Position.Y {
+			return ordered[i].Position.Y < ordered[j].Position.Y
+		}
+		return ordered[i].Position.X < ordered[j].Position.X
+	})
+	occupied := map[[2]int]bool{}
+	for index := range ordered {
+		placed := false
+		for y := 0; !placed; y++ {
+			for x := 0; x <= 12-ordered[index].Size.Columns; x++ {
+				if !dashboardAreaAvailable(occupied, x, y, ordered[index].Size) {
+					continue
+				}
+				ordered[index].Position = dashboardWidgetPosition{X: x, Y: y}
+				for row := y; row < y+ordered[index].Size.Rows; row++ {
+					for column := x; column < x+ordered[index].Size.Columns; column++ {
+						occupied[[2]int{column, row}] = true
+					}
+				}
+				placed = true
+				break
+			}
+		}
+	}
+	return ordered
+}
+
+func dashboardAreaAvailable(occupied map[[2]int]bool, x, y int, size dashboardWidgetSize) bool {
+	for row := y; row < y+size.Rows; row++ {
+		for column := x; column < x+size.Columns; column++ {
+			if occupied[[2]int{column, row}] {
+				return false
+			}
+		}
+	}
+	return true
 }
