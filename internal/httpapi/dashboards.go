@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jobdock/jobdock/internal/ids"
 	"github.com/jobdock/jobdock/internal/store"
 )
 
@@ -58,25 +59,197 @@ func (a *API) getDashboard(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.authorizeJob(w, r); !ok {
 		return
 	}
-	item, err := a.store.DashboardPreference(r.Context(), currentUser(r).ID, r.PathValue("id"))
-	if err == store.ErrNotFound {
-		writeJSON(w, http.StatusOK, map[string]any{"schema_version": dashboardSchemaVersion, "widgets": nil, "compatibility": "compatible"})
+	item, err := a.dashboardForRequest(r)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeDashboard(w, item)
+}
+
+func writeDashboard(w http.ResponseWriter, item store.DashboardPreference) {
+	writeDashboardStatus(w, http.StatusOK, item)
+}
+
+func writeDashboardStatus(w http.ResponseWriter, status int, item store.DashboardPreference) {
+	if item.SchemaVersion != dashboardSchemaVersion {
+		writeJSON(w, status, map[string]any{"id": item.ID, "name": item.Name, "schema_version": dashboardSchemaVersion, "widgets": nil, "sort_order": item.SortOrder, "is_default": item.IsDefault, "compatibility": "incompatible", "fallback_reason": "unsupported_schema_version", "materialized_from": dashboardMaterialization(item), "created_at": item.CreatedAt, "updated_at": item.UpdatedAt})
+		return
+	}
+	config, compatibility, reason := restoreDashboardConfig(item.ConfigJSON)
+	response := map[string]any{"id": item.ID, "name": item.Name, "schema_version": item.SchemaVersion, "widgets": config.Widgets, "sort_order": item.SortOrder, "is_default": item.IsDefault, "compatibility": compatibility, "created_at": item.CreatedAt, "updated_at": item.UpdatedAt, "materialized_from": dashboardMaterialization(item)}
+	if reason != "" {
+		response["fallback_reason"] = reason
+	}
+	writeJSON(w, status, response)
+}
+
+func (a *API) dashboardForRequest(r *http.Request) (store.DashboardPreference, error) {
+	userID, jobID, dashboardID := currentUser(r).ID, r.PathValue("id"), r.PathValue("dashboardId")
+	if dashboardID != "" {
+		return a.store.Dashboard(r.Context(), userID, jobID, dashboardID)
+	}
+	item, err := a.store.DashboardPreference(r.Context(), userID, jobID)
+	if err != store.ErrNotFound {
+		return item, err
+	}
+	now := time.Now().UTC()
+	item = store.DashboardPreference{ID: ids.New(), UserID: userID, JobID: jobID, Name: "Dashboard", SchemaVersion: dashboardSchemaVersion, ConfigJSON: []byte(`{"widgets":null}`), IsDefault: true, CreatedAt: now, UpdatedAt: now}
+	if err = a.store.CreateDashboard(r.Context(), item, true); err != nil && err != store.ErrConflict {
+		return store.DashboardPreference{}, err
+	}
+	return a.store.DashboardPreference(r.Context(), userID, jobID)
+}
+
+func (a *API) listDashboards(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.authorizeJob(w, r); !ok {
+		return
+	}
+	if _, err := a.dashboardForRequest(r); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	items, activeID, err := a.store.ListDashboards(r.Context(), currentUser(r).ID, r.PathValue("id"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	summaries := make([]map[string]any, 0, len(items))
+	defaultID := ""
+	for _, item := range items {
+		if item.IsDefault {
+			defaultID = item.ID
+		}
+		summaries = append(summaries, map[string]any{"id": item.ID, "name": item.Name, "sort_order": item.SortOrder, "is_default": item.IsDefault, "created_at": item.CreatedAt, "updated_at": item.UpdatedAt})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": summaries, "active_dashboard_id": activeID, "default_dashboard_id": defaultID})
+}
+
+func (a *API) createDashboard(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.authorizeJob(w, r); !ok {
+		return
+	}
+	var body struct {
+		Name              string `json:"name"`
+		SourceDashboardID string `json:"source_dashboard_id"`
+		MakeActive        *bool  `json:"make_active"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&body) != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard", "Dashboard creation requires exactly one valid JSON object")
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	if len(body.Name) < 1 || len(body.Name) > 128 {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard_name", "Dashboard name must contain 1-128 characters")
+		return
+	}
+	if _, err := a.dashboardForRequest(r); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	now := time.Now().UTC()
+	item := store.DashboardPreference{ID: ids.New(), UserID: currentUser(r).ID, JobID: r.PathValue("id"), Name: body.Name, SchemaVersion: dashboardSchemaVersion, ConfigJSON: []byte(`{"widgets":null}`), CreatedAt: now, UpdatedAt: now}
+	if body.SourceDashboardID != "" {
+		source, err := a.store.Dashboard(r.Context(), item.UserID, item.JobID, body.SourceDashboardID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		item.SchemaVersion = source.SchemaVersion
+		item.ConfigJSON = append([]byte(nil), source.ConfigJSON...)
+		item.TemplateID = source.TemplateID
+		item.TemplateVersion = source.TemplateVersion
+		item.TemplateSchemaVersion = source.TemplateSchemaVersion
+		item.TemplateAppliedAt = source.TemplateAppliedAt
+	}
+	makeActive := body.MakeActive == nil || *body.MakeActive
+	if err := a.store.CreateDashboard(r.Context(), item, makeActive); err != nil {
+		if err == store.ErrConflict {
+			writeProblem(w, http.StatusConflict, "dashboard_conflict", "Dashboard names must be unique and each job supports at most 32 dashboards")
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+	created, _ := a.store.Dashboard(r.Context(), item.UserID, item.JobID, item.ID)
+	action := "dashboard.create"
+	if body.SourceDashboardID != "" {
+		action = "dashboard.duplicate"
+	}
+	_ = a.store.Audit(r.Context(), item.UserID, action, "dashboard", item.ID, map[string]any{"job_id": item.JobID, "source_dashboard_id": body.SourceDashboardID})
+	writeDashboardStatus(w, http.StatusCreated, created)
+}
+
+func (a *API) patchDashboard(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.authorizeJob(w, r); !ok {
+		return
+	}
+	var body struct {
+		Name    *string `json:"name"`
+		Active  *bool   `json:"active"`
+		Default *bool   `json:"is_default"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&body) != nil || decoder.Decode(&struct{}{}) != io.EOF || (body.Name == nil && body.Active == nil && body.Default == nil) {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard_update", "Provide a name, active state, or default state")
+		return
+	}
+	userID, jobID, dashboardID := currentUser(r).ID, r.PathValue("id"), r.PathValue("dashboardId")
+	if body.Name != nil {
+		name := strings.TrimSpace(*body.Name)
+		if len(name) < 1 || len(name) > 128 {
+			writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard_name", "Dashboard name must contain 1-128 characters")
+			return
+		}
+		if _, err := a.store.RenameDashboard(r.Context(), userID, jobID, dashboardID, name); err != nil {
+			if err == store.ErrConflict {
+				writeProblem(w, http.StatusConflict, "dashboard_name_conflict", "Dashboard names must be unique within a job")
+				return
+			}
+			writeStoreError(w, err)
+			return
+		}
+	}
+	if body.Active != nil && *body.Active {
+		if err := a.store.SetActiveDashboard(r.Context(), userID, jobID, dashboardID); err != nil {
+			writeStoreError(w, err)
+			return
+		}
+	}
+	if body.Default != nil && *body.Default {
+		if err := a.store.SetDefaultDashboard(r.Context(), userID, jobID, dashboardID); err != nil {
+			writeStoreError(w, err)
+			return
+		}
+	}
+	item, err := a.store.Dashboard(r.Context(), userID, jobID, dashboardID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	_ = a.store.Audit(r.Context(), userID, "dashboard.update", "dashboard", dashboardID, map[string]any{"job_id": jobID, "name_changed": body.Name != nil, "active": body.Active != nil && *body.Active, "default": body.Default != nil && *body.Default})
+	writeDashboard(w, item)
+}
+
+func (a *API) deleteDashboard(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.authorizeJob(w, r); !ok {
+		return
+	}
+	userID, jobID, dashboardID := currentUser(r).ID, r.PathValue("id"), r.PathValue("dashboardId")
+	fallback, err := a.store.DeleteDashboard(r.Context(), userID, jobID, dashboardID)
+	if err == store.ErrConflict {
+		writeProblem(w, http.StatusConflict, "last_dashboard", "A job must retain at least one dashboard")
 		return
 	}
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	if item.SchemaVersion != dashboardSchemaVersion {
-		writeJSON(w, http.StatusOK, map[string]any{"schema_version": dashboardSchemaVersion, "widgets": nil, "compatibility": "incompatible", "fallback_reason": "unsupported_schema_version", "materialized_from": dashboardMaterialization(item)})
-		return
-	}
-	config, compatibility, reason := restoreDashboardConfig(item.ConfigJSON)
-	response := map[string]any{"schema_version": item.SchemaVersion, "widgets": config.Widgets, "compatibility": compatibility, "updated_at": item.UpdatedAt, "materialized_from": dashboardMaterialization(item)}
-	if reason != "" {
-		response["fallback_reason"] = reason
-	}
-	writeJSON(w, http.StatusOK, response)
+	_ = a.store.Audit(r.Context(), userID, "dashboard.delete", "dashboard", dashboardID, map[string]any{"job_id": jobID, "active_dashboard_id": fallback})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) putDashboard(w http.ResponseWriter, r *http.Request) {
@@ -109,14 +282,12 @@ func (a *API) putDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	encoded, _ := json.Marshal(config)
 	now := time.Now().UTC()
-	item := store.DashboardPreference{UserID: currentUser(r).ID, JobID: r.PathValue("id"), SchemaVersion: body.SchemaVersion, ConfigJSON: encoded, UpdatedAt: now}
-	existing, existingErr := a.store.DashboardPreference(r.Context(), item.UserID, item.JobID)
-	if existingErr == nil {
-		item.TemplateID, item.TemplateVersion, item.TemplateSchemaVersion, item.TemplateAppliedAt = existing.TemplateID, existing.TemplateVersion, existing.TemplateSchemaVersion, existing.TemplateAppliedAt
-	} else if existingErr != store.ErrNotFound {
+	item, existingErr := a.dashboardForRequest(r)
+	if existingErr != nil {
 		writeStoreError(w, existingErr)
 		return
 	}
+	item.SchemaVersion, item.ConfigJSON, item.UpdatedAt = body.SchemaVersion, encoded, now
 	applied := false
 	if body.MaterializedFrom != nil {
 		if bytes.Equal(bytes.TrimSpace(body.MaterializedFrom), []byte("null")) {
@@ -131,17 +302,20 @@ func (a *API) putDashboard(w http.ResponseWriter, r *http.Request) {
 			applied = true
 		}
 	}
-	if err := a.store.PutDashboardPreference(r.Context(), item); err != nil {
+	if err := a.store.PutDashboard(r.Context(), item); err != nil {
 		writeStoreError(w, err)
 		return
 	}
 	if applied {
 		_ = a.store.Audit(r.Context(), item.UserID, "dashboard.template.apply", "job", item.JobID, map[string]any{"template_id": item.TemplateID, "template_version": item.TemplateVersion, "template_schema_version": item.TemplateSchemaVersion})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"schema_version": item.SchemaVersion, "widgets": config.Widgets, "compatibility": "compatible", "updated_at": item.UpdatedAt, "materialized_from": dashboardMaterialization(item)})
+	writeDashboard(w, item)
 }
 
 func restoreDashboardConfig(data []byte) (dashboardConfig, string, string) {
+	if bytes.Equal(bytes.TrimSpace(data), []byte(`{"widgets":null}`)) {
+		return dashboardConfig{Widgets: nil}, "compatible", ""
+	}
 	var raw struct {
 		Widgets []json.RawMessage `json:"widgets"`
 	}

@@ -103,6 +103,11 @@ non-empty dashboard requires confirmation. JobDock retains the prior layout for
 one-click restoration during that picker session, including through the toast
 action after applying.
 
+In a multi-dashboard job, a template is materialized only into the selected
+dashboard. Other dashboards and all attempt telemetry remain unchanged.
+Duplicating the selected dashboard copies its widget configuration, layout,
+styles, sources, and immutable template provenance, but never metric samples.
+
 The saved dashboard records `template_id`, `template_version`,
 `schema_version`, and the server-generated application time as provenance.
 Ordinary widget edits preserve that origin for reproducibility without making

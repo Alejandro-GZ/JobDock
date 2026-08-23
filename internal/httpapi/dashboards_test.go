@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -126,7 +127,7 @@ func TestDashboardConfigurationPersistsAndFallsBackSafely(t *testing.T) {
 		t.Fatalf("explicit provenance detach failed: %#v", versioned)
 	}
 	partialConfig := `{"widgets":[{"id":"loss","type":"lineplot","future_property":true,"size":{"columns":6,"rows":3},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}]},{"id":"future","type":"starplot","size":{"columns":6,"rows":3},"position":{"x":6,"y":0},"sources":[]}]}`
-	if _, err = repository.DB().ExecContext(ctx, `UPDATE dashboard_preferences SET config_json=? WHERE user_id=? AND job_id=?`, partialConfig, owner.ID, job.ID); err != nil {
+	if _, err = repository.DB().ExecContext(ctx, `UPDATE job_dashboards SET config_json=? WHERE user_id=? AND job_id=?`, partialConfig, owner.ID, job.ID); err != nil {
 		t.Fatal(err)
 	}
 	var partial struct {
@@ -138,7 +139,7 @@ func TestDashboardConfigurationPersistsAndFallsBackSafely(t *testing.T) {
 	if len(partial.Widgets) != 1 || partial.Widgets[0].ID != "loss" || partial.Compatibility != "partially_compatible" || partial.Reason != "unsupported_widgets_omitted" {
 		t.Fatalf("partially restored dashboard: %#v", partial)
 	}
-	if _, err = repository.DB().ExecContext(ctx, `UPDATE dashboard_preferences SET schema_version=99 WHERE user_id=? AND job_id=?`, owner.ID, job.ID); err != nil {
+	if _, err = repository.DB().ExecContext(ctx, `UPDATE job_dashboards SET schema_version=99 WHERE user_id=? AND job_id=?`, owner.ID, job.ID); err != nil {
 		t.Fatal(err)
 	}
 	var fallback struct {
@@ -161,6 +162,126 @@ func TestDashboardConfigurationPersistsAndFallsBackSafely(t *testing.T) {
 	if !foundApply {
 		t.Fatalf("dashboard template application was not audited: %#v", audit)
 	}
+}
+
+func TestMultipleDashboardLifecycleIsIndependentAndDeterministic(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	repository, err := store.Open(root + "/jobdock.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	owner := createSeriesUser(t, repository, "multiple-dashboard-owner")
+	job := domain.Job{ID: ids.New(), OwnerID: owner.ID, Spec: domain.JobSpec{Name: "multi-dashboard", Image: "alpine", Command: []string{"true"}, Resources: domain.Resources{CPUMillis: 100, MemoryBytes: 1024}}, Status: domain.JobQueued, DesiredStatus: domain.JobRunning, ObservedStatus: domain.JobQueued, CreatedAt: time.Now().UTC()}
+	if err = repository.CreateJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	files, _ := filestore.New(root, 1<<20, 1<<20, 1<<20)
+	box, _ := secretbox.New(bytes.Repeat([]byte{8}, 32))
+	server := httptest.NewServer(New(config.Server{AllowInsecureHTTP: true, SessionTTL: time.Hour}, repository, files, box, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
+	defer server.Close()
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	login, _ := json.Marshal(map[string]string{"username": owner.Username, "password": "correct series password"})
+	response, err := client.Post(server.URL+"/api/v1/auth/login", "application/json", bytes.NewReader(login))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var session struct {
+		CSRF string `json:"csrf_token"`
+	}
+	if err = json.NewDecoder(response.Body).Decode(&session); err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+
+	var initial struct {
+		Items []struct {
+			ID, Name  string
+			IsDefault bool `json:"is_default"`
+		} `json:"items"`
+		ActiveID  string `json:"active_dashboard_id"`
+		DefaultID string `json:"default_dashboard_id"`
+	}
+	getSeriesJSON(t, client, server.URL+"/api/v1/jobs/"+job.ID+"/dashboards", &initial)
+	if len(initial.Items) != 1 || initial.ActiveID == "" || initial.ActiveID != initial.DefaultID || !initial.Items[0].IsDefault {
+		t.Fatalf("initial dashboard set: %#v", initial)
+	}
+	firstID := initial.ActiveID
+	putDashboardJSON(t, client, server.URL+"/api/v1/jobs/"+job.ID+"/dashboards/"+firstID, session.CSRF, `{"schema_version":1,"widgets":[{"id":"loss","type":"lineplot","size":{"columns":6,"rows":3},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}]}]}`, http.StatusOK)
+
+	created := putDashboardJSON(t, client, server.URL+"/api/v1/jobs/"+job.ID+"/dashboards", session.CSRF, `{"name":"Validation","source_dashboard_id":"`+firstID+`"}`, http.StatusCreated)
+	var duplicate struct {
+		ID, Name string
+		Widgets  []dashboardWidget `json:"widgets"`
+	}
+	if err = json.Unmarshal(created, &duplicate); err != nil {
+		t.Fatal(err)
+	}
+	if duplicate.ID == firstID || duplicate.Name != "Validation" || len(duplicate.Widgets) != 1 {
+		t.Fatalf("duplicated dashboard: %#v", duplicate)
+	}
+	putDashboardJSON(t, client, server.URL+"/api/v1/jobs/"+job.ID+"/dashboards/"+duplicate.ID, session.CSRF, `{"name":"Evaluation","is_default":true,"active":true}`, http.StatusOK)
+	putDashboardJSON(t, client, server.URL+"/api/v1/jobs/"+job.ID+"/dashboards/"+duplicate.ID, session.CSRF, `{"schema_version":1,"widgets":[]}`, http.StatusOK)
+	var original struct {
+		Widgets []dashboardWidget `json:"widgets"`
+	}
+	getSeriesJSON(t, client, server.URL+"/api/v1/jobs/"+job.ID+"/dashboards/"+firstID, &original)
+	if len(original.Widgets) != 1 {
+		t.Fatalf("dashboard configurations were mixed: %#v", original)
+	}
+
+	request, _ := http.NewRequest(http.MethodDelete, server.URL+"/api/v1/jobs/"+job.ID+"/dashboards/"+duplicate.ID, nil)
+	request.Header.Set("X-CSRF-Token", session.CSRF)
+	result, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.Body.Close()
+	if result.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete dashboard status: %d", result.StatusCode)
+	}
+	getSeriesJSON(t, client, server.URL+"/api/v1/jobs/"+job.ID+"/dashboards", &initial)
+	if len(initial.Items) != 1 || initial.ActiveID != firstID || initial.DefaultID != firstID {
+		t.Fatalf("deterministic fallback: %#v", initial)
+	}
+	request, _ = http.NewRequest(http.MethodDelete, server.URL+"/api/v1/jobs/"+job.ID+"/dashboards/"+firstID, nil)
+	request.Header.Set("X-CSRF-Token", session.CSRF)
+	result, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.Body.Close()
+	if result.StatusCode != http.StatusConflict {
+		t.Fatalf("last dashboard delete status: %d", result.StatusCode)
+	}
+}
+
+func putDashboardJSON(t *testing.T, client *http.Client, url, csrf, payload string, wantStatus int) []byte {
+	t.Helper()
+	request, _ := http.NewRequest(http.MethodPost, url, bytes.NewBufferString(payload))
+	if strings.Contains(url, "/dashboards/") {
+		request.Method = http.MethodPut
+		if strings.HasPrefix(payload, `{"name"`) {
+			request.Method = http.MethodPatch
+		}
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", csrf)
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != wantStatus {
+		t.Fatalf("%s %s status=%d body=%s", request.Method, url, response.StatusCode, body)
+	}
+	return body
 }
 
 func TestDashboardValidationRejectsUnsupportedWidgets(t *testing.T) {

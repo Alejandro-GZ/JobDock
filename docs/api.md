@@ -90,6 +90,21 @@ sending an object records a newly applied template, and sending `null` detaches
 the origin explicitly. `GET` returns this provenance plus the saved dashboard's
 compatibility and any controlled fallback reason.
 
+Jobs can contain up to 32 independent dashboards per user. Use
+`GET /api/v1/jobs/{jobId}/dashboards` to list their stable IDs, names, ordering,
+active selection, and deterministic default. `POST` creates an empty dashboard;
+providing `source_dashboard_id` duplicates only configuration and template
+provenance, never attempt telemetry. The item endpoint supports `GET`/`PUT` for
+configuration, `PATCH` for rename, activation, and default selection, and
+`DELETE`. The final dashboard cannot be deleted. Removing the active or default
+dashboard selects the earliest remaining default/order entry atomically.
+
+The singular `/dashboard` endpoint remains a compatibility alias for the active
+dashboard. Dashboard configuration is job-scoped and therefore survives reruns;
+source availability, samples, and live streams remain explicitly attempt-scoped.
+Switching between dashboards reuses cached bounded series queries when the
+visible source set and attempt are unchanged.
+
 Jobs without inputs use the regular JSON create request. To attach reproducible
 inputs, `POST /api/v1/jobs` accepts `multipart/form-data` with one `spec` JSON
 field and file fields named `input:<relative-path>`. The server stores every

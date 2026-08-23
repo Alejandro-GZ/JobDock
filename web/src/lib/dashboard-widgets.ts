@@ -56,7 +56,9 @@ export type DashboardTemplateOverride = { widget_id: string; slot_id: string; so
 export type DashboardCompatibility = "compatible" | "partially_compatible" | "incompatible";
 export type DashboardTemplateReference = { template_id: string; template_version: number; schema_version: number };
 export type DashboardTemplateMaterialization = DashboardTemplateReference & { applied_at: string };
-export type DashboardPreference = { schema_version: number; widgets: DashboardWidget[] | null; compatibility: DashboardCompatibility; materialized_from?: DashboardTemplateMaterialization | null; updated_at?: string; fallback_reason?: "unsupported_schema_version" | "invalid_saved_configuration" | "unsupported_widgets_omitted" };
+export type DashboardSummary = {id:string;name:string;sort_order:number;is_default:boolean;created_at:string;updated_at:string};
+export type DashboardList = {items:DashboardSummary[];active_dashboard_id:string;default_dashboard_id:string};
+export type DashboardPreference = DashboardSummary & { schema_version: number; widgets: DashboardWidget[] | null; compatibility: DashboardCompatibility; materialized_from?: DashboardTemplateMaterialization | null; fallback_reason?: "unsupported_schema_version" | "invalid_saved_configuration" | "unsupported_widgets_omitted" };
 
 export const dashboardTemplateSchemaVersion=1;
 

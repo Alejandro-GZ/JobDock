@@ -410,6 +410,56 @@ paths:
         '200': {description: Persisted dashboard, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardPreference'}}}}
         '409': {$ref: '#/components/responses/Problem'}
         '422': {$ref: '#/components/responses/Problem'}
+  /jobs/{jobId}/dashboards:
+    get:
+      operationId: listJobDashboards
+      description: List the current user's independent dashboards for a job and identify the active and default dashboards. Dashboard configuration is job-scoped; observable availability remains attempt-scoped.
+      parameters: [{$ref: '#/components/parameters/JobID'}]
+      responses:
+        '200': {description: Ordered dashboard summaries, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardList'}}}}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+    post:
+      operationId: createJobDashboard
+      description: Create an empty dashboard or duplicate an existing dashboard configuration without copying telemetry.
+      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/CSRFToken'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardCreate'}}}}
+      responses:
+        '201': {description: Created dashboard, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardPreference'}}}}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+  /jobs/{jobId}/dashboards/{dashboardId}:
+    parameters:
+      - {$ref: '#/components/parameters/JobID'}
+      - {name: dashboardId, in: path, required: true, schema: {type: string, minLength: 1, maxLength: 256}}
+    get:
+      operationId: getJobDashboardById
+      responses:
+        '200': {description: Dashboard configuration, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardPreference'}}}}
+        '404': {$ref: '#/components/responses/Problem'}
+    put:
+      operationId: putJobDashboardById
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardPreferenceWrite'}}}}
+      responses:
+        '200': {description: Persisted dashboard, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardPreference'}}}}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+    patch:
+      operationId: patchJobDashboard
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardUpdate'}}}}
+      responses:
+        '200': {description: Updated dashboard, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardPreference'}}}}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+    delete:
+      operationId: deleteJobDashboard
+      description: Delete a dashboard. The final dashboard cannot be deleted; active/default fallback is deterministic.
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      responses:
+        '204': {description: Dashboard deleted}
+        '409': {$ref: '#/components/responses/Problem'}
   /jobs/{jobId}/checkpoints:
     get:
       operationId: listJobCheckpoints
@@ -880,7 +930,7 @@ components:
       type: object
       required: [id, user_id, name, prefix, scopes, created_at]
       properties:
-        id: {type: string, format: uuid}
+        id: {type: string, minLength: 1, maxLength: 256}
         user_id: {type: string, format: uuid}
         name: {type: string}
         prefix: {type: string, description: Non-secret prefix for identification}
@@ -1372,6 +1422,41 @@ components:
             - {$ref: '#/components/schemas/DashboardTemplateReference'}
             - {type: 'null'}
           description: Omit to preserve existing provenance; send null to detach it explicitly.
+    DashboardSummary:
+      type: object
+      additionalProperties: false
+      required: [id, name, sort_order, is_default, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string, minLength: 1, maxLength: 128}
+        sort_order: {type: integer, minimum: 0}
+        is_default: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    DashboardList:
+      type: object
+      additionalProperties: false
+      required: [items, active_dashboard_id, default_dashboard_id]
+      properties:
+        items: {type: array, minItems: 1, maxItems: 32, items: {$ref: '#/components/schemas/DashboardSummary'}}
+        active_dashboard_id: {type: string, minLength: 1, maxLength: 256}
+        default_dashboard_id: {type: string, minLength: 1, maxLength: 256}
+    DashboardCreate:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        source_dashboard_id: {type: string, minLength: 1, maxLength: 256, description: When present, duplicate this dashboard's configuration and template provenance.}
+        make_active: {type: boolean, default: true}
+    DashboardUpdate:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        active: {type: boolean, description: Setting true selects this dashboard. False is ignored because one dashboard must remain active.}
+        is_default: {type: boolean, description: Setting true makes this dashboard the deterministic default. False is ignored because one dashboard must remain default.}
     DashboardTemplateReference:
       type: object
       additionalProperties: false
@@ -1391,12 +1476,17 @@ components:
         applied_at: {type: string, format: date-time}
     DashboardPreference:
       type: object
-      required: [schema_version, widgets, compatibility]
+      required: [id, name, schema_version, widgets, sort_order, is_default, compatibility, created_at, updated_at]
       properties:
+        id: {type: string, minLength: 1, maxLength: 256}
+        name: {type: string, minLength: 1, maxLength: 128}
         schema_version: {type: integer, const: 1}
         widgets: {oneOf: [{type: array, maxItems: 64, items: {$ref: '#/components/schemas/DashboardWidget'}}, {type: 'null'}]}
+        sort_order: {type: integer, minimum: 0}
+        is_default: {type: boolean}
         compatibility: {type: string, enum: [compatible, partially_compatible, incompatible]}
         materialized_from: {oneOf: [{$ref: '#/components/schemas/DashboardTemplateMaterialization'}, {type: 'null'}]}
+        created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
         fallback_reason: {type: string, enum: [unsupported_schema_version, invalid_saved_configuration, unsupported_widgets_omitted]}
     ResourceSeriesResponse:
