@@ -54,9 +54,21 @@ one or more semantic source slots:
 
 `appearance` is an optional, versioned, library-independent presentation
 contract. Version 1 supports plot color schemes (`default`, `cool`, `warm`, or
-`monochrome`), legend behavior (`auto`, `open`, or `hidden`), solid or dashed
-line plots, optional line points, and an initial `absolute` or `normalized`
-confusion-matrix mode. Settings are accepted only by compatible widget types.
+`monochrome`), per-series labels, units and hexadecimal colors, legend and grid
+behavior, and optional title/subtitle overlays. Axis intent is expressed with
+library-neutral labels, units, automatic or manual ranges, and linear or
+logarithmic scales. Line plots can configure solid, dashed or dotted strokes,
+stroke width and markers; compatible plots also support marker size and
+opacity. Confusion matrices retain an initial `absolute` or `normalized` mode.
+Settings are accepted only by compatible widget types.
+
+Manual ranges require finite increasing bounds. Logarithmic ranges must be
+positive, and logarithmic X axes are valid only for scatter plots or series
+using step as their horizontal axis. The dashboard editor enforces stable
+product limits and includes a reset action that removes visual overrides while
+leaving telemetry and source selection unchanged. The serialized contract
+describes product intent and never stores renderer- or chart-library-specific
+properties.
 
 Resolving a template copies this object into the ordinary dashboard widget.
 The editor can then change the supported settings without modifying or linking

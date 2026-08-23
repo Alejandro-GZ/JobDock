@@ -43,12 +43,33 @@ type dashboardWidget struct {
 	Appearance    *dashboardWidgetAppearance `json:"appearance,omitempty"`
 }
 type dashboardWidgetAppearance struct {
-	SchemaVersion int    `json:"schema_version"`
-	ColorScheme   string `json:"color_scheme,omitempty"`
-	Legend        string `json:"legend,omitempty"`
-	LineStyle     string `json:"line_style,omitempty"`
-	ShowPoints    *bool  `json:"show_points,omitempty"`
-	MatrixMode    string `json:"matrix_mode,omitempty"`
+	SchemaVersion int                                  `json:"schema_version"`
+	Subtitle      string                               `json:"subtitle,omitempty"`
+	ColorScheme   string                               `json:"color_scheme,omitempty"`
+	Series        map[string]dashboardSeriesAppearance `json:"series,omitempty"`
+	Legend        string                               `json:"legend,omitempty"`
+	ShowGrid      *bool                                `json:"show_grid,omitempty"`
+	XAxis         *dashboardAxisAppearance             `json:"x_axis,omitempty"`
+	YAxis         *dashboardAxisAppearance             `json:"y_axis,omitempty"`
+	LineStyle     string                               `json:"line_style,omitempty"`
+	LineWidth     *float64                             `json:"line_width,omitempty"`
+	ShowPoints    *bool                                `json:"show_points,omitempty"`
+	PointSize     *float64                             `json:"point_size,omitempty"`
+	Opacity       *float64                             `json:"opacity,omitempty"`
+	MatrixMode    string                               `json:"matrix_mode,omitempty"`
+}
+type dashboardAxisAppearance struct {
+	Label string   `json:"label,omitempty"`
+	Unit  string   `json:"unit,omitempty"`
+	Scale string   `json:"scale,omitempty"`
+	Range string   `json:"range,omitempty"`
+	Min   *float64 `json:"min,omitempty"`
+	Max   *float64 `json:"max,omitempty"`
+}
+type dashboardSeriesAppearance struct {
+	Label string `json:"label,omitempty"`
+	Unit  string `json:"unit,omitempty"`
+	Color string `json:"color,omitempty"`
 }
 
 // UnmarshalJSON deliberately owns forward-compatible appearance decoding. The
@@ -465,19 +486,80 @@ func validateDashboardWidgetAppearance(widget dashboardWidget) error {
 		return dashboardError("Widget appearance legend is invalid")
 	}
 	plot := widget.Type == "lineplot" || widget.Type == "barplot" || widget.Type == "scatterplot"
-	if !plot && (appearance.ColorScheme != "" || appearance.Legend != "") {
+	if len(appearance.Subtitle) > 160 {
+		return dashboardError("Widget appearance subtitle may contain at most 160 characters")
+	}
+	if len(appearance.Series) > 64 {
+		return dashboardError("Widget appearance may customize at most 64 series")
+	}
+	for key, series := range appearance.Series {
+		if len(strings.TrimSpace(key)) < 1 || len(key) > 260 || len(series.Label) > 120 || len(series.Unit) > 64 || series.Color != "" && !validDashboardColor(series.Color) {
+			return dashboardError("Widget appearance series customization is invalid")
+		}
+	}
+	if err := validateDashboardAxisAppearance(appearance.XAxis); err != nil {
+		return err
+	}
+	if err := validateDashboardAxisAppearance(appearance.YAxis); err != nil {
+		return err
+	}
+	if !plot && (appearance.Subtitle != "" || appearance.ColorScheme != "" || len(appearance.Series) > 0 || appearance.Legend != "" || appearance.ShowGrid != nil || appearance.XAxis != nil || appearance.YAxis != nil || appearance.LineWidth != nil || appearance.PointSize != nil || appearance.Opacity != nil) {
 		return dashboardError("Widget appearance contains plot-only properties")
 	}
-	if appearance.LineStyle != "" && (widget.Type != "lineplot" || appearance.LineStyle != "solid" && appearance.LineStyle != "dashed") {
+	if appearance.LineStyle != "" && (widget.Type != "lineplot" || appearance.LineStyle != "solid" && appearance.LineStyle != "dashed" && appearance.LineStyle != "dotted") {
 		return dashboardError("Widget appearance line_style is invalid for this widget")
 	}
-	if appearance.ShowPoints != nil && widget.Type != "lineplot" {
+	if appearance.LineWidth != nil && (widget.Type != "lineplot" || *appearance.LineWidth < .5 || *appearance.LineWidth > 12) {
+		return dashboardError("Widget appearance line_width is invalid for this widget")
+	}
+	if appearance.ShowPoints != nil && widget.Type != "lineplot" && widget.Type != "scatterplot" {
 		return dashboardError("Widget appearance show_points is invalid for this widget")
+	}
+	if appearance.PointSize != nil && (widget.Type != "lineplot" && widget.Type != "scatterplot" || *appearance.PointSize < 1 || *appearance.PointSize > 16) {
+		return dashboardError("Widget appearance point_size is invalid for this widget")
+	}
+	if appearance.Opacity != nil && (*appearance.Opacity < .05 || *appearance.Opacity > 1) {
+		return dashboardError("Widget appearance opacity must be between 0.05 and 1")
+	}
+	if appearance.XAxis != nil && appearance.XAxis.Scale == "log" && widget.Type != "scatterplot" && widget.XAxis != "step" {
+		return dashboardError("A logarithmic X axis requires a scatter plot or step-based series")
 	}
 	if appearance.MatrixMode != "" && (widget.Type != "confusion_matrix" || appearance.MatrixMode != "absolute" && appearance.MatrixMode != "normalized") {
 		return dashboardError("Widget appearance matrix_mode is invalid for this widget")
 	}
 	return nil
+}
+
+func validateDashboardAxisAppearance(axis *dashboardAxisAppearance) error {
+	if axis == nil {
+		return nil
+	}
+	if len(axis.Label) > 80 || len(axis.Unit) > 64 || axis.Scale != "" && axis.Scale != "linear" && axis.Scale != "log" || axis.Range != "" && axis.Range != "auto" && axis.Range != "manual" {
+		return dashboardError("Widget appearance axis configuration is invalid")
+	}
+	if axis.Range == "manual" {
+		if axis.Min == nil || axis.Max == nil || *axis.Min >= *axis.Max || axis.Scale == "log" && *axis.Min <= 0 {
+			return dashboardError("A manual axis range requires valid increasing bounds")
+		}
+	} else if axis.Min != nil || axis.Max != nil {
+		return dashboardError("Axis bounds require a manual range")
+	}
+	return nil
+}
+
+func validDashboardColor(value string) bool {
+	if len(value) != 7 || value[0] != '#' {
+		return false
+	}
+	for _, character := range value[1:] {
+		if character < '0' || character > '9' {
+			lower := character | 0x20
+			if lower < 'a' || lower > 'f' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func supportedDashboardWidgetTypes() map[string]bool {

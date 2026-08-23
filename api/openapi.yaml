@@ -1313,11 +1313,39 @@ components:
       description: Versioned, library-independent presentation settings. Omitted settings use product defaults.
       properties:
         schema_version: {type: integer, const: 1}
+        subtitle: {type: string, maxLength: 160}
         color_scheme: {type: string, enum: [default, cool, warm, monochrome], description: Supported by plot widgets.}
+        series:
+          type: object
+          maxProperties: 64
+          additionalProperties: {$ref: '#/components/schemas/DashboardSeriesAppearance'}
         legend: {type: string, enum: [auto, hidden, open], description: Supported by plot widgets.}
-        line_style: {type: string, enum: [solid, dashed], description: Supported by line plots.}
-        show_points: {type: boolean, description: Supported by line plots.}
+        show_grid: {type: boolean, description: Supported by plot widgets.}
+        x_axis: {$ref: '#/components/schemas/DashboardAxisAppearance'}
+        y_axis: {$ref: '#/components/schemas/DashboardAxisAppearance'}
+        line_style: {type: string, enum: [solid, dashed, dotted], description: Supported by line plots.}
+        line_width: {type: number, minimum: 0.5, maximum: 12, description: Supported by line plots.}
+        show_points: {type: boolean, description: Supported by line and scatter plots.}
+        point_size: {type: number, minimum: 1, maximum: 16, description: Supported by line and scatter plots.}
+        opacity: {type: number, minimum: 0.05, maximum: 1, description: Supported by plot widgets.}
         matrix_mode: {type: string, enum: [absolute, normalized], description: Supported by confusion matrices.}
+    DashboardAxisAppearance:
+      type: object
+      additionalProperties: false
+      properties:
+        label: {type: string, maxLength: 80}
+        unit: {type: string, maxLength: 64}
+        scale: {type: string, enum: [linear, log]}
+        range: {type: string, enum: [auto, manual]}
+        min: {type: number}
+        max: {type: number}
+    DashboardSeriesAppearance:
+      type: object
+      additionalProperties: false
+      properties:
+        label: {type: string, maxLength: 120}
+        unit: {type: string, maxLength: 64}
+        color: {type: string, pattern: '^#[0-9A-Fa-f]{6}$'}
     DashboardWidget:
       type: object
       additionalProperties: false

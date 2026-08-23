@@ -59,4 +59,10 @@ describe("ObservationPlot",()=>{
     expect(container.querySelectorAll('[role="img"] circle')).toHaveLength(2);
     expect(container.querySelector('path[stroke-dasharray="6 4"]')?.getAttribute("stroke")).toBe("#ea580c");
   });
+  it("applies common axes, series, grid, marker and opacity settings",()=>{
+    const {container}=render(<ObservationPlot type="lineplot" title="Styled" series={[loss]} xAxis="step" appearance={{schema_version:1,subtitle:"Validation",series:{"metric:loss":{label:"Objective",unit:"score",color:"#123abc"}},show_grid:false,x_axis:{label:"Epoch",scale:"log",range:"manual",min:1,max:10},y_axis:{label:"Loss",unit:"ratio",range:"manual",min:0,max:1},line_style:"dotted",line_width:3,show_points:true,point_size:5,opacity:.6}}/>);
+    expect(screen.getByText("Validation")).toBeTruthy();expect(screen.getByText("Epoch")).toBeTruthy();expect(screen.getByText("Loss (ratio)")).toBeTruthy();
+    const path=container.querySelector('path[stroke="#123abc"]')!;expect(path.getAttribute("stroke-width")).toBe("3");expect(path.getAttribute("stroke-dasharray")).toBe("2 3");expect(path.parentElement?.getAttribute("opacity")).toBe("0.6");expect(container.querySelectorAll('circle[r="5"]')).toHaveLength(2);expect(container.querySelectorAll("line.stroke-border")).toHaveLength(0);
+    expect(screen.getByRole("button",{name:"Styled legend"})).toBeTruthy();
+  });
 });

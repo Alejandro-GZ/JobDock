@@ -61,7 +61,7 @@ func TestDashboardConfigurationPersistsAndFallsBackSafely(t *testing.T) {
 	if initial.SchemaVersion != 1 || string(initial.Widgets) != "null" {
 		t.Fatalf("initial dashboard: %#v", initial)
 	}
-	payload := `{"schema_version":1,"widgets":[{"id":"loss","type":"lineplot","title":"Training loss","size":{"columns":6,"rows":3},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}],"x_axis":"step","time_range":"6h","grid_columns":12,"appearance":{"schema_version":1,"color_scheme":"cool","legend":"open","line_style":"dashed","show_points":true,"future_property":"ignored"}}]}`
+	payload := `{"schema_version":1,"widgets":[{"id":"loss","type":"lineplot","title":"Training loss","size":{"columns":6,"rows":3},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}],"x_axis":"step","time_range":"6h","grid_columns":12,"appearance":{"schema_version":1,"subtitle":"Validation split","color_scheme":"cool","series":{"metric:loss":{"label":"Loss","unit":"ratio","color":"#123abc"}},"legend":"open","show_grid":false,"x_axis":{"label":"Step","scale":"log","range":"manual","min":1,"max":100},"y_axis":{"label":"Objective","unit":"ratio","scale":"linear","range":"auto"},"line_style":"dotted","line_width":3.5,"show_points":true,"point_size":4,"opacity":0.75,"future_property":"ignored"}}]}`
 	request, _ := http.NewRequest(http.MethodPut, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard", bytes.NewBufferString(payload))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-CSRF-Token", session.CSRF)
@@ -78,7 +78,8 @@ func TestDashboardConfigurationPersistsAndFallsBackSafely(t *testing.T) {
 		Widgets       []dashboardWidget `json:"widgets"`
 	}
 	getSeriesJSON(t, client, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard", &saved)
-	if saved.SchemaVersion != 1 || len(saved.Widgets) != 1 || saved.Widgets[0].Sources[0].Name != "loss" || saved.Widgets[0].Appearance == nil || saved.Widgets[0].Appearance.ColorScheme != "cool" || saved.Widgets[0].Appearance.LineStyle != "dashed" {
+	appearance := saved.Widgets[0].Appearance
+	if saved.SchemaVersion != 1 || len(saved.Widgets) != 1 || saved.Widgets[0].Sources[0].Name != "loss" || appearance == nil || appearance.ColorScheme != "cool" || appearance.LineStyle != "dotted" || appearance.XAxis == nil || appearance.XAxis.Scale != "log" || appearance.Series["metric:loss"].Color != "#123abc" || appearance.LineWidth == nil || *appearance.LineWidth != 3.5 || appearance.Opacity == nil || *appearance.Opacity != .75 {
 		t.Fatalf("saved dashboard: %#v", saved)
 	}
 	materializedPayload := `{"schema_version":1,"widgets":[{"id":"loss","type":"lineplot","size":{"columns":6,"rows":3},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}]}],"materialized_from":{"template_id":"training-general","template_version":1,"schema_version":1}}`
@@ -169,6 +170,22 @@ func TestDashboardConfigurationPersistsAndFallsBackSafely(t *testing.T) {
 	}
 	if !foundApply {
 		t.Fatalf("dashboard template application was not audited: %#v", audit)
+	}
+}
+
+func TestDashboardAppearanceValidationRejectsIncompatibleSettings(t *testing.T) {
+	minimum, maximum, zero, tooLarge := 1.0, 10.0, 0.0, 17.0
+	cases := []dashboardWidget{
+		{ID: "logs", Type: "logs", Size: dashboardWidgetSize{Columns: 1, Rows: 1}, Sources: []dashboardWidgetSource{}, Appearance: &dashboardWidgetAppearance{SchemaVersion: 1, XAxis: &dashboardAxisAppearance{Scale: "linear"}}},
+		{ID: "color", Type: "lineplot", XAxis: "step", Size: dashboardWidgetSize{Columns: 1, Rows: 1}, Sources: []dashboardWidgetSource{}, Appearance: &dashboardWidgetAppearance{SchemaVersion: 1, Series: map[string]dashboardSeriesAppearance{"metric:loss": {Color: "red"}}}},
+		{ID: "range", Type: "lineplot", XAxis: "step", Size: dashboardWidgetSize{Columns: 1, Rows: 1}, Sources: []dashboardWidgetSource{}, Appearance: &dashboardWidgetAppearance{SchemaVersion: 1, YAxis: &dashboardAxisAppearance{Range: "manual", Min: &maximum, Max: &minimum}}},
+		{ID: "log", Type: "lineplot", XAxis: "step", Size: dashboardWidgetSize{Columns: 1, Rows: 1}, Sources: []dashboardWidgetSource{}, Appearance: &dashboardWidgetAppearance{SchemaVersion: 1, YAxis: &dashboardAxisAppearance{Scale: "log", Range: "manual", Min: &zero, Max: &maximum}}},
+		{ID: "point", Type: "scatterplot", Size: dashboardWidgetSize{Columns: 1, Rows: 1}, Sources: []dashboardWidgetSource{}, Appearance: &dashboardWidgetAppearance{SchemaVersion: 1, PointSize: &tooLarge}},
+	}
+	for _, widget := range cases {
+		if err := validateDashboardConfig(dashboardConfig{Widgets: []dashboardWidget{widget}}); err == nil {
+			t.Fatalf("appearance for %s was accepted", widget.ID)
+		}
 	}
 }
 
