@@ -20,6 +20,19 @@ describe("ObservabilityDashboard",()=>{
     const {rerender}=render(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready numericSources={[source]} matrices={[]} markers={[]} initialWidgets={saved}/>));expect(await screen.findByRole("img",{name:/Line plot lineplot/})).toBeTruthy();
     rerender(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready editMode numericSources={[source]} matrices={[]} markers={[]} initialWidgets={saved}/>));expect(screen.queryByRole("img",{name:/Line plot lineplot/})).toBeNull();expect(screen.getByText("metric / loss")).toBeTruthy();
   });
+  it("preconfigures declared phase sources and activates them when data arrives",async()=>{
+    const waiting={kind:"metric" as const,name:"validation_loss",title:"validation_loss",unit:"ratio",points:[],phase:"validation",declared:true,observed:false},saved=[{id:"future-loss",type:"lineplot" as const,size:{columns:6,rows:3},position:{x:0,y:0},sources:[{kind:"metric" as const,name:"validation_loss"}],grid_columns:12 as const}];
+    const {rerender}=render(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready numericSources={[waiting]} matrices={[]} markers={[]} initialWidgets={saved}/>));
+    expect(await screen.findByText("Waiting for data")).toBeTruthy();expect(screen.getByText("Phase: validation")).toBeTruthy();
+    rerender(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready numericSources={[{...waiting,observed:true,points:[{timestamp:1_000,value:.4}]}]} matrices={[]} markers={[]} initialWidgets={saved}/>));
+    expect(await screen.findByRole("img",{name:/Line plot lineplot with 1 points/})).toBeTruthy();expect(screen.queryByText("Waiting for data")).toBeNull();
+  });
+  it("offers declared matrix sources before observations exist",async()=>{
+    const user=userEvent.setup(),descriptors=[{name:"validation_confusion",type:"matrix",phase:"validation",declared:true,observed:false}],saved=[{id:"matrix",type:"confusion_matrix" as const,size:{columns:6,rows:3},position:{x:0,y:0},sources:[{kind:"matrix" as const,name:"validation_confusion"}],grid_columns:12 as const}];
+    const {rerender}=render(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready editMode numericSources={[]} observableSources={descriptors} matrices={[]} markers={[]} initialWidgets={saved}/>));
+    await user.click(screen.getByRole("button",{name:"Configure widget"}));expect(screen.getByRole("combobox",{name:"Source"}).textContent).toContain("validation · validation_confusion");
+    await user.click(screen.getByRole("button",{name:"Cancel"}));rerender(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready numericSources={[]} observableSources={descriptors} matrices={[]} markers={[]} initialWidgets={saved}/>));expect(await screen.findByText("Waiting for data")).toBeTruthy();
+  });
   it("materializes a template replacement as an ordinary editable dashboard",async()=>{
     const source={kind:"metric" as const,name:"loss",title:"loss",unit:"ratio",points:[]},saved=[{id:"logs",type:"logs" as const,size:{columns:4,rows:2},position:{x:0,y:0},sources:[{kind:"log" as const,name:"stdout"}],grid_columns:4 as const}],replacement=[{id:"loss",type:"lineplot" as const,size:{columns:2,rows:1},position:{x:0,y:0},sources:[{kind:"metric" as const,name:"loss"}],grid_columns:4 as const}],changed=vi.fn();
     const {rerender}=render(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready editMode numericSources={[source]} matrices={[]} markers={[]} initialWidgets={saved} onWidgetsChange={changed}/>));

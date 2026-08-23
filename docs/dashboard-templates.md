@@ -124,6 +124,21 @@ Templates are optional. Jobs with legacy or untagged telemetry continue to use
 their existing manual or default dashboard even when no official template can
 be resolved.
 
+## Preparing dashboards before a phase starts
+
+When an attempt publishes an observability manifest, declared metric, matrix,
+and progress sources are available to both the dashboard editor and semantic
+template resolver before they contain samples. This lets a user create a
+phase-specific dashboard or apply a compatible template before training,
+validation, evaluation, or another declared phase begins.
+
+A widget backed by a declared but unobserved source displays `Waiting for data`.
+No placeholder samples are generated. The widget starts rendering as soon as
+the first real observation arrives, without changing its saved configuration.
+Other widgets remain usable if an optional declared source is never emitted.
+Attempts without a manifest retain discovery-only behavior: their editor lists
+only sources observed during execution.
+
 ## Official catalog
 
 `GET /api/v1/dashboard/templates` returns approximately fifty templates grouped
