@@ -26,6 +26,7 @@ var ErrNotFound = errors.New("not found")
 var ErrConflict = errors.New("conflict")
 var ErrRawTelemetry = errors.New("raw resource telemetry is not persisted")
 var ErrMetricDescriptorConflict = errors.New("metric descriptor conflicts with the existing series")
+var ErrObservableDeclarationConflict = errors.New("observable source declaration conflicts with the existing descriptor")
 
 type Store struct {
 	db *sql.DB

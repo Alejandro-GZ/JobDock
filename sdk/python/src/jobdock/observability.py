@@ -24,6 +24,27 @@ class Metric:
 
 
 @dataclass(frozen=True, slots=True)
+class ObservableSource:
+    """Schema for an observable source that may not have emitted data yet."""
+
+    name: str
+    type: str = "metric"
+    unit: str | None = None
+    tags: SemanticTags | None = None
+    metadata: Metadata | None = None
+    phase: str | None = None
+    milestone: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ObservabilityManifest:
+    """Bounded, attempt-scoped declaration of expected observability."""
+
+    sources: Sequence[ObservableSource]
+    version: int = 1
+
+
+@dataclass(frozen=True, slots=True)
 class CheckpointObservation:
     label: str | None = None
     step: int | None = None

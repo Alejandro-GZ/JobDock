@@ -16,7 +16,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
-from .observability import CheckpointObservation, JSONValue, MatrixObservation, Metric, Milestone, ProgressObservation
+from .observability import CheckpointObservation, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ProgressObservation
 from . import __version__
 
 logger = logging.getLogger("jobdock")
@@ -41,6 +41,7 @@ class NoopJob:
     def confusion_matrix(self, name: str, values: Iterable[Iterable[float]], labels: Iterable[str], *, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None: pass
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None: pass
     def metrics(self, items: Iterable[Metric]) -> None: pass
+    def declare_observability(self, manifest: ObservabilityManifest) -> None: pass
     def param(self, name: str, value: str | int | float | bool) -> None: pass
     def event(self, event_type: str, payload: dict[str, Any] | None = None) -> None: pass
     def artifact(self, relative_path: str | os.PathLike[str]) -> Path: return Path(relative_path)
@@ -117,6 +118,21 @@ class Job:
         payload = [_metric_payload(item) for item in items]
         if payload:
             self._enqueue("metrics", {"items": payload})
+
+    def declare_observability(self, manifest: ObservabilityManifest) -> None:
+        """Declare expected sources without emitting observations."""
+        if manifest.version != 1:
+            raise ValueError("observability manifest version must be 1")
+        sources = [_observable_source_payload(source) for source in manifest.sources]
+        if not sources or len(sources) > 256:
+            raise ValueError("observability manifest must contain 1-256 sources")
+        identities = {(source["type"], source["name"]) for source in sources}
+        if len(identities) != len(sources):
+            raise ValueError("observability source type/name pairs must be unique")
+        payload = {"version": 1, "sources": sources}
+        if len(json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")) > 256 << 10:
+            raise ValueError("observability manifest must not exceed 256 KiB")
+        self._enqueue("observability/manifest", payload)
 
     def param(self, name: str, value: str | int | float | bool) -> None:
         if not name or not isinstance(value, (str, int, float, bool)):
@@ -297,6 +313,38 @@ def _metric_payload(metric: Metric) -> dict[str, Any]:
     tags = _validated_semantic_tags(metric.tags)
     if tags is not None:
         item["tags"] = tags
+    return item
+
+
+_observable_source_type_pattern = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
+
+
+def _observable_source_payload(source: ObservableSource) -> dict[str, Any]:
+    name = source.name.strip()
+    source_type = source.type.strip().lower()
+    unit = source.unit.strip() if source.unit is not None else None
+    phase = source.phase.strip() if source.phase is not None else None
+    milestone = source.milestone.strip() if source.milestone is not None else None
+    if not name or len(name) > 128:
+        raise ValueError("observable source name must contain 1-128 characters")
+    if not _observable_source_type_pattern.fullmatch(source_type):
+        raise ValueError("observable source type must be a lowercase portable identifier")
+    if unit is not None and (not unit or len(unit) > 64):
+        raise ValueError("observable source unit must contain 1-64 characters")
+    if phase is not None and (not phase or len(phase) > 128):
+        raise ValueError("observable source phase must contain 1-128 characters")
+    if milestone is not None and (not milestone or len(milestone) > 128):
+        raise ValueError("observable source milestone must contain 1-128 characters")
+    if phase is not None and milestone is not None:
+        raise ValueError("an observable source may belong to a phase or milestone, not both")
+    item: dict[str, Any] = {"name": name, "type": source_type}
+    if unit is not None: item["unit"] = unit
+    tags = _validated_semantic_tags(source.tags)
+    if tags is not None: item["tags"] = tags
+    metadata = _validated_metadata(source.metadata)
+    if metadata is not None: item["metadata"] = metadata
+    if phase is not None: item["phase"] = phase
+    if milestone is not None: item["milestone"] = milestone
     return item
 
 

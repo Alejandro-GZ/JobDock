@@ -62,6 +62,23 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 	server := httptest.NewServer(api.Handler())
 	defer server.Close()
 
+	manifestPayload := `{"version":1,"sources":[{"name":"loss","type":"metric","unit":"ratio","tags":["metric:loss","phase:train"],"metadata":{"split":"train"},"phase":"train"},{"name":"future_accuracy","type":"metric","unit":"ratio","tags":["metric:accuracy"],"phase":"validation"},{"name":"validation/confusion","type":"matrix","milestone":"validated"}]}`
+	manifestRequest, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/job-context/observability/manifest", strings.NewReader(manifestPayload))
+	manifestRequest.Header.Set("Content-Type", "application/json")
+	manifestRequest.Header.Set("Authorization", "Bearer "+jobToken)
+	manifestResponse, err := http.DefaultClient.Do(manifestRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestResponse.Body.Close()
+	if manifestResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("manifest ingestion status: %d", manifestResponse.StatusCode)
+	}
+	var syntheticSamples int
+	if err = repository.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM job_metric_samples WHERE attempt_id=?`, attemptID).Scan(&syntheticSamples); err != nil || syntheticSamples != 0 {
+		t.Fatalf("manifest created metric points: count=%d err=%v", syntheticSamples, err)
+	}
+
 	metricPayload, _ := json.Marshal(map[string]any{"items": []any{
 		map[string]any{"name": "loss", "value": .5, "step": 1, "timestamp": base.Add(20 * time.Second), "unit": "ratio", "metadata": map[string]any{"split": "train"}, "tags": []string{"phase:Train", "metric:loss", "phase:train"}},
 		map[string]any{"name": "accuracy", "value": .8, "step": 1, "timestamp": base.Add(20 * time.Second)},
@@ -90,8 +107,23 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 		Items     []store.MetricDescriptor `json:"items"`
 	}
 	getSeriesJSON(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/metrics/catalog?attempt_id="+attemptID, &catalog)
-	if catalog.AttemptID != attemptID || len(catalog.Items) != 2 || catalog.Items[1].Type != "metric" || strings.Join(catalog.Items[1].Tags, ",") != "metric:loss,phase:train" {
+	if catalog.AttemptID != attemptID || len(catalog.Items) != 3 {
 		t.Fatalf("semantic metric catalog: %#v", catalog)
+	}
+	byName := map[string]store.MetricDescriptor{}
+	for _, item := range catalog.Items {
+		byName[item.Name] = item
+	}
+	if !byName["future_accuracy"].Declared || byName["future_accuracy"].Observed || !byName["loss"].Declared || !byName["loss"].Observed || strings.Join(byName["loss"].Tags, ",") != "metric:loss,phase:train" {
+		t.Fatalf("declared metric catalog state: %#v", catalog)
+	}
+	var observableCatalog struct {
+		AttemptID string                   `json:"attempt_id"`
+		Items     []store.MetricDescriptor `json:"items"`
+	}
+	getSeriesJSON(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/observability/catalog?attempt_id="+attemptID, &observableCatalog)
+	if observableCatalog.AttemptID != attemptID || len(observableCatalog.Items) != 4 || observableCatalog.Items[3].Name != "validation/confusion" || !observableCatalog.Items[3].Declared || observableCatalog.Items[3].Observed {
+		t.Fatalf("observable catalog: %#v", observableCatalog)
 	}
 	var filteredCatalog struct {
 		AttemptID string                   `json:"attempt_id"`
@@ -149,6 +181,19 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 	if conflictResponse.StatusCode != http.StatusConflict || problem["code"] != "metric_descriptor_conflict" {
 		t.Fatalf("descriptor conflict response: %d %#v", conflictResponse.StatusCode, problem)
 	}
+	manifestConflict, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/job-context/observability/manifest", strings.NewReader(`{"version":1,"sources":[{"name":"loss","type":"metric","unit":"seconds"}]}`))
+	manifestConflict.Header.Set("Content-Type", "application/json")
+	manifestConflict.Header.Set("Authorization", "Bearer "+jobToken)
+	manifestConflictResponse, err := http.DefaultClient.Do(manifestConflict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	problem = map[string]any{}
+	_ = json.NewDecoder(manifestConflictResponse.Body).Decode(&problem)
+	manifestConflictResponse.Body.Close()
+	if manifestConflictResponse.StatusCode != http.StatusConflict || problem["code"] != "observable_declaration_conflict" {
+		t.Fatalf("manifest conflict response: %d %#v", manifestConflictResponse.StatusCode, problem)
+	}
 	invalidCases := []struct {
 		payload string
 		status  int
@@ -202,7 +247,7 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 		}
 	}
 	otherClient := loginSeriesUser(t, server.URL, other.Username)
-	for _, endpoint := range []string{metricURL, resourceURL, server.URL + "/api/v1/jobs/" + job.ID + "/metrics/catalog?attempt_id=" + attemptID} {
+	for _, endpoint := range []string{metricURL, resourceURL, server.URL + "/api/v1/jobs/" + job.ID + "/metrics/catalog?attempt_id=" + attemptID, server.URL + "/api/v1/jobs/" + job.ID + "/observability/catalog?attempt_id=" + attemptID} {
 		response, requestErr := otherClient.Get(endpoint)
 		if requestErr != nil {
 			t.Fatal(requestErr)

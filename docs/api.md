@@ -52,11 +52,23 @@ validated against the job, which prevents series from different reruns being
 combined.
 
 `GET /api/v1/jobs/{jobId}/metrics/catalog` discovers attempt-scoped metric
-sources from descriptors only. It returns `name`, `type`, `unit`, `tags`, and
-bounded metadata without loading samples. Repeating `tag` applies AND semantics;
+sources from descriptors only. It returns `name`, `type`, `unit`, `tags`,
+bounded metadata, optional structural phase/milestone scope, and explicit
+`declared`/`observed` state without loading samples. Repeating `tag` applies AND semantics;
 for example `?tag=metric:loss&tag=phase:validation` returns only series carrying
 both dimensions. Legacy untagged metrics remain visible in the unfiltered
 catalog and simply do not match a tag filter.
+
+Running jobs may send `POST /api/v1/job-context/observability/manifest` with a
+versioned, bounded list of expected source schemas. The server derives the
+attempt exclusively from the job token and persists declarations separately
+from samples. `GET /api/v1/jobs/{jobId}/observability/catalog` returns the
+attempt-scoped union of declared metrics and richer sources with their observed
+state. A declaration therefore never creates a fake point, cursor, or
+timestamp. Version 1 accepts 1–256 unique type/name pairs in at most 256 KiB;
+each source may carry a unit, semantic tags, bounded metadata, and either a
+phase or milestone scope. Jobs that never declare a manifest retain dynamic
+source discovery exactly as before.
 
 `POST /api/v1/jobs/{jobId}/dashboard/templates/resolve` evaluates a versioned
 dashboard template against that same bounded catalog. The response reports each

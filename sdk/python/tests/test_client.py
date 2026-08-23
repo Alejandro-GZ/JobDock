@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from jobdock import CheckpointObservation, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, Phase, ProgressObservation, SEMANTIC_CATALOG_VERSION, current_job
+from jobdock import CheckpointObservation, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, Phase, ProgressObservation, SEMANTIC_CATALOG_VERSION, current_job
 
 
 def test_current_job_is_noop_without_environment(monkeypatch):
@@ -53,6 +53,25 @@ def test_standard_semantics_are_typed_and_mix_with_custom_tags(tmp_path: Path, m
     job.close()
 
 
+def test_observability_manifest_declares_schema_without_values(tmp_path: Path, monkeypatch):
+    job = Job("id", "http://jobdock.test", "token", tmp_path)
+    queued = []
+    monkeypatch.setattr(job, "_enqueue", lambda endpoint, payload: queued.append((endpoint, payload)))
+    job.declare_observability(ObservabilityManifest(sources=[
+        ObservableSource("train/loss", unit="ratio", tags=[MetricRole.LOSS, Phase.TRAIN], metadata={"dataset": "cifar10"}, phase="train"),
+        ObservableSource("validation/confusion", type="matrix", milestone="validated"),
+    ]))
+    assert queued == [("observability/manifest", {"version": 1, "sources": [
+        {"name": "train/loss", "type": "metric", "unit": "ratio", "tags": ["metric:loss", "phase:train"], "metadata": {"dataset": "cifar10"}, "phase": "train"},
+        {"name": "validation/confusion", "type": "matrix", "milestone": "validated"},
+    ]})]
+    with pytest.raises(ValueError, match="phase or milestone"):
+        job.declare_observability(ObservabilityManifest([ObservableSource("loss", phase="train", milestone="done")]))
+    with pytest.raises(ValueError, match="unique"):
+        job.declare_observability(ObservabilityManifest([ObservableSource("loss"), ObservableSource("loss")]))
+    job.close()
+
+
 def test_typed_semantics_match_the_canonical_catalog():
     catalog_path = Path(__file__).resolve().parents[3] / "internal" / "httpapi" / "catalog" / "observability.json"
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
@@ -93,7 +112,13 @@ def test_noop_accepts_enriched_contracts_without_consuming_iterables():
         yield "metric:loss"
     noop.metric("loss", 1, timestamp=datetime.now(timezone.utc), unit="ratio", metadata={"split": "train"}, tags=tags())
     noop.metrics(observations())
-    assert consumed is False and tags_consumed is False
+    manifest_consumed = False
+    def sources():
+        nonlocal manifest_consumed
+        manifest_consumed = True
+        yield ObservableSource("loss")
+    noop.declare_observability(ObservabilityManifest(sources()))
+    assert consumed is False and tags_consumed is False and manifest_consumed is False
     assert CheckpointObservation(label="best").label == "best"
     assert ProgressObservation(.5, milestone="train").milestone == "train"
     assert Milestone("train", weight=1).weight == 1

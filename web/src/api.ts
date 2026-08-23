@@ -20,6 +20,7 @@ export const api={
   attemptOutput:(id:string,attemptId:string,path:string)=>`/api/v1/jobs/${encodeURIComponent(id)}/attempts/${encodeURIComponent(attemptId)}/outputs/${path.split("/").map(encodeURIComponent).join("/")}`,
   metrics:(id:string,query:string)=>request<MetricSeriesResponse>(`/jobs/${id}/metrics?${query}`),
   metricCatalog:async(id:string,attemptId?:string,tags:string[]=[])=>{const query=new URLSearchParams();if(attemptId)query.set("attempt_id",attemptId);for(const tag of tags)query.append("tag",tag);return(await request<{attempt_id:string;items:import("./types").MetricDescriptor[]}>(`/jobs/${id}/metrics/catalog${query.size?`?${query}`:""}`)).items},
+  observabilityCatalog:async(id:string,attemptId?:string)=>{const query=attemptId?`?attempt_id=${encodeURIComponent(attemptId)}`:"";return request<{attempt_id:string;items:import("./types").ObservableSourceDescriptor[]}>(`/jobs/${id}/observability/catalog${query}`)},
   dashboardTemplates:async()=>(await request<{items:DashboardTemplate[]}>("/dashboard/templates")).items,
   dashboardTemplateMatches:async(id:string,attemptId:string)=>(await request<{attempt_id:string;items:DashboardTemplateMatch[]}>(`/jobs/${id}/dashboard/templates/matches?attempt_id=${encodeURIComponent(attemptId)}`)).items,
   resolveDashboardTemplate:(id:string,template:DashboardTemplate,attemptId?:string,overrides:DashboardTemplateOverride[]=[])=>request<DashboardTemplateResolution>(`/jobs/${id}/dashboard/templates/resolve`,{method:"POST",body:JSON.stringify({attempt_id:attemptId,template,overrides})}),

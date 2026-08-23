@@ -355,6 +355,19 @@ type MetricSeries struct {
 	SampleCount int64          `json:"sample_count"`
 }
 
+// ObservableSourceDeclaration describes an attempt-scoped source before it
+// emits data. Phase and milestone are structural scopes and deliberately do
+// not reuse the numeric observation step.
+type ObservableSourceDeclaration struct {
+	Name      string         `json:"name"`
+	Type      string         `json:"type"`
+	Unit      string         `json:"unit,omitempty"`
+	Tags      []string       `json:"tags,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	Phase     string         `json:"phase,omitempty"`
+	Milestone string         `json:"milestone,omitempty"`
+}
+
 // ObservationContext is the presentation-agnostic context shared by richer
 // observability primitives. Specialized persistence is introduced by the
 // stories that make each primitive queryable.

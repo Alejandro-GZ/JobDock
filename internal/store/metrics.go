@@ -14,27 +14,26 @@ import (
 )
 
 type MetricDescriptor struct {
-	Name     string         `json:"name"`
-	Type     string         `json:"type"`
-	Unit     string         `json:"unit,omitempty"`
-	Metadata map[string]any `json:"metadata,omitempty"`
-	Tags     []string       `json:"tags,omitempty"`
+	Name      string         `json:"name"`
+	Type      string         `json:"type"`
+	Unit      string         `json:"unit,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	Tags      []string       `json:"tags,omitempty"`
+	Phase     string         `json:"phase,omitempty"`
+	Milestone string         `json:"milestone,omitempty"`
+	Declared  bool           `json:"declared"`
+	Observed  bool           `json:"observed"`
 }
 
 func (s *Store) MetricDescriptors(ctx context.Context, jobID, attemptID string, requiredTags []string) ([]MetricDescriptor, error) {
-	query := metricDescriptorQuery(len(requiredTags))
-	arguments := []any{jobID, attemptID}
-	for _, tag := range requiredTags {
-		arguments = append(arguments, tag)
-	}
-	rows, err := s.db.QueryContext(ctx, query, arguments...)
+	rows, err := s.db.QueryContext(ctx, metricDescriptorQuery(0), jobID, attemptID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	result := make([]MetricDescriptor, 0)
 	for rows.Next() {
-		item := MetricDescriptor{Type: "metric"}
+		item := MetricDescriptor{Type: "metric", Observed: true}
 		var metadata string
 		var tags string
 		if err = rows.Scan(&item.Name, &item.Unit, &metadata, &tags); err != nil {
@@ -48,7 +47,27 @@ func (s *Store) MetricDescriptors(ctx context.Context, jobID, attemptID string, 
 		}
 		result = append(result, item)
 	}
-	return result, rows.Err()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	declared, err := s.DeclaredObservableSources(ctx, jobID, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	metrics := make([]MetricDescriptor, 0, len(declared))
+	for _, item := range declared {
+		if item.Type == "metric" {
+			metrics = append(metrics, item)
+		}
+	}
+	merged := mergeObservableDescriptors(result, metrics)
+	filtered := merged[:0]
+	for _, item := range merged {
+		if descriptorHasTags(item, requiredTags) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered, nil
 }
 
 func metricDescriptorQuery(tagCount int) string {
@@ -105,6 +124,25 @@ func ensureMetricDescriptor(ctx context.Context, tx *sql.Tx, sample domain.Metri
 	tags, encodeErr := encodeMetricTags(sample.Tags)
 	if encodeErr != nil {
 		return encodeErr
+	}
+	var declaredUnit, declaredMetadata, declaredTags sql.NullString
+	declarationErr := tx.QueryRowContext(ctx, `SELECT unit,metadata_json,tags_json FROM job_observability_manifest_sources WHERE attempt_id=? AND source_type='metric' AND name=?`, sample.AttemptID, sample.Name).Scan(&declaredUnit, &declaredMetadata, &declaredTags)
+	if declarationErr != nil && !errors.Is(declarationErr, sql.ErrNoRows) {
+		return declarationErr
+	}
+	if declarationErr == nil {
+		if sample.Unit != "" && declaredUnit.Valid && sample.Unit != declaredUnit.String || metadata != "" && declaredMetadata.Valid && metadata != declaredMetadata.String || tags != "" && declaredTags.Valid && tags != declaredTags.String {
+			return ErrMetricDescriptorConflict
+		}
+		if sample.Unit == "" && declaredUnit.Valid {
+			sample.Unit = declaredUnit.String
+		}
+		if metadata == "" && declaredMetadata.Valid {
+			metadata = declaredMetadata.String
+		}
+		if tags == "" && declaredTags.Valid {
+			tags = declaredTags.String
+		}
 	}
 	now := time.Now().UTC().UnixMilli()
 	if errors.Is(err, sql.ErrNoRows) {

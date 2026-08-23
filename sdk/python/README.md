@@ -35,6 +35,33 @@ job.metrics([
 ])
 ```
 
+Expected sources can be declared before they emit data. This stores schema for
+the current attempt only; it does not create metric points or synthetic
+observations:
+
+```python
+from jobdock import MetricRole, ObservableSource, ObservabilityManifest, Phase
+
+job.declare_observability(ObservabilityManifest(sources=[
+    ObservableSource(
+        "train/loss",
+        unit="ratio",
+        tags=[MetricRole.LOSS, Phase.TRAIN],
+        metadata={"dataset": "cifar10"},
+        phase="train",
+    ),
+    ObservableSource("validation/confusion", type="matrix", phase="validation"),
+    ObservableSource("pipeline", type="progress", milestone="training_complete"),
+]))
+```
+
+Sources are global when both `phase` and `milestone` are omitted. Those scopes
+are structural identifiers and never replace a metric's numeric `step`.
+Manifests use version 1, contain 1–256 unique type/name pairs, and are limited
+to 256 KiB. Each source retains the existing limits of 32 semantic tags, a
+64-character unit, and 16 KiB of portable JSON metadata. Declaration is
+optional; jobs that omit it continue to discover sources from real telemetry.
+
 `unit`, `metadata`, and `tags` are series descriptors for one metric name and
 attempt. Omitted descriptor fields inherit the existing values; conflicting
 values are rejected as a whole batch. Use distinct names such as `train/loss`

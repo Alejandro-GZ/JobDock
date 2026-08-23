@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -33,6 +34,17 @@ func TestRichObservableDescriptorsAreStableAndAttemptScoped(t *testing.T) {
 	if _, err = repository.DB().ExecContext(ctx, `INSERT INTO job_attempts(id,job_id,attempt_number,node_id,assignment_id,status,job_token_hash,created_at) VALUES(?,?,1,?,?,?,?,?)`, attemptID, job.ID, node.ID, ids.New(), "RUNNING", ids.New(), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
+	declarations := []domain.ObservableSourceDeclaration{
+		{Name: "loss", Type: "metric", Unit: "ratio", Tags: []string{"metric:loss"}, Phase: "train"},
+		{Name: "future_accuracy", Type: "metric", Unit: "ratio", Tags: []string{"metric:accuracy"}, Phase: "validation"},
+		{Name: "validation", Type: "matrix", Phase: "validation"},
+	}
+	if err = repository.DeclareObservableSources(ctx, job.ID, attemptID, declarations); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.DeclareObservableSources(ctx, job.ID, attemptID, declarations); err != nil {
+		t.Fatalf("identical manifest must be idempotent: %v", err)
+	}
 	if err = repository.AppendMetricSamples(ctx, []domain.MetricSample{{JobID: job.ID, AttemptID: attemptID, Name: "loss", Value: .5, CapturedAt: time.Now().UTC(), Tags: []string{"metric:loss"}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -52,8 +64,15 @@ func TestRichObservableDescriptorsAreStableAndAttemptScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(descriptors) != 3 || descriptors[0].Type != "metric" || descriptors[0].Name != "loss" || descriptors[1].Type != "matrix" || descriptors[1].Name != "validation" || descriptors[2].Type != "progress" || descriptors[2].Name != "progress" {
+	if len(descriptors) != 4 || descriptors[0].Name != "future_accuracy" || !descriptors[0].Declared || descriptors[0].Observed || descriptors[0].Phase != "validation" || descriptors[1].Name != "loss" || !descriptors[1].Declared || !descriptors[1].Observed || descriptors[1].Unit != "ratio" || descriptors[2].Type != "matrix" || !descriptors[2].Declared || !descriptors[2].Observed || descriptors[3].Type != "progress" || descriptors[3].Declared || !descriptors[3].Observed {
 		t.Fatalf("observable descriptors: %#v", descriptors)
+	}
+	var metricSamples int
+	if err = repository.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM job_metric_samples WHERE attempt_id=?`, attemptID).Scan(&metricSamples); err != nil || metricSamples != 1 {
+		t.Fatalf("manifest created synthetic metric samples: count=%d err=%v", metricSamples, err)
+	}
+	if err = repository.DeclareObservableSources(ctx, job.ID, attemptID, []domain.ObservableSourceDeclaration{{Name: "loss", Type: "metric", Unit: "seconds"}}); !errors.Is(err, store.ErrObservableDeclarationConflict) {
+		t.Fatalf("conflicting declaration: %v", err)
 	}
 	otherAttemptID := ids.New()
 	if _, err = repository.DB().ExecContext(ctx, `INSERT INTO job_attempts(id,job_id,attempt_number,node_id,assignment_id,status,job_token_hash,created_at) VALUES(?,?,2,?,?,?,?,?)`, otherAttemptID, job.ID, node.ID, ids.New(), "RUNNING", ids.New(), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {

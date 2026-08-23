@@ -362,6 +362,16 @@ paths:
         '200': {description: Attempt metric descriptors, content: {application/json: {schema: {$ref: '#/components/schemas/MetricDescriptorList'}}}}
         '404': {$ref: '#/components/responses/Problem'}
         '422': {$ref: '#/components/responses/Problem'}
+  /jobs/{jobId}/observability/catalog:
+    get:
+      operationId: getJobObservabilityCatalog
+      description: List the bounded attempt-scoped union of declared and observed sources without loading telemetry history.
+      parameters:
+        - {$ref: '#/components/parameters/JobID'}
+        - {$ref: '#/components/parameters/AttemptIDQuery'}
+      responses:
+        '200': {description: Attempt observable-source catalog, content: {application/json: {schema: {$ref: '#/components/schemas/ObservableSourceDescriptorList'}}}}
+        '404': {$ref: '#/components/responses/Problem'}
   /dashboard/templates:
     get:
       operationId: listDashboardTemplates
@@ -837,6 +847,18 @@ paths:
         required: true
         content: {application/json: {schema: {$ref: '#/components/schemas/MetricBatch'}}}
       responses: {'202': {description: Metrics accepted}}
+  /job-context/observability/manifest:
+    post:
+      security: [{bearerToken: []}]
+      operationId: declareObservabilityManifest
+      description: Declare attempt-scoped observable-source schemas without creating samples or observations.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/ObservabilityManifest'}}}
+      responses:
+        '202': {description: Manifest accepted}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
   /job-context/params:
     post:
       security: [{bearerToken: []}]
@@ -1238,19 +1260,43 @@ components:
     MetricDescriptor:
       type: object
       additionalProperties: false
-      required: [name, type]
+      required: [name, type, declared, observed]
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
         type: {type: string, enum: [metric]}
         unit: {type: string, maxLength: 64}
         tags: {$ref: '#/components/schemas/SemanticMetricTags'}
         metadata: {$ref: '#/components/schemas/ObservationMetadata'}
+        phase: {type: string, minLength: 1, maxLength: 128}
+        milestone: {type: string, minLength: 1, maxLength: 128}
+        declared: {type: boolean}
+        observed: {type: boolean}
     MetricDescriptorList:
       type: object
       required: [attempt_id, items]
       properties:
         attempt_id: {type: string}
         items: {type: array, maxItems: 256, items: {$ref: '#/components/schemas/MetricDescriptor'}}
+    ObservableSourceDescriptor:
+      type: object
+      additionalProperties: false
+      required: [name, type, declared, observed]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        type: {type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$'}
+        unit: {type: string, maxLength: 64}
+        tags: {$ref: '#/components/schemas/SemanticMetricTags'}
+        metadata: {$ref: '#/components/schemas/ObservationMetadata'}
+        phase: {type: string, minLength: 1, maxLength: 128}
+        milestone: {type: string, minLength: 1, maxLength: 128}
+        declared: {type: boolean}
+        observed: {type: boolean}
+    ObservableSourceDescriptorList:
+      type: object
+      required: [attempt_id, items]
+      properties:
+        attempt_id: {type: string}
+        items: {type: array, maxItems: 256, items: {$ref: '#/components/schemas/ObservableSourceDescriptor'}}
     DashboardWidgetSource:
       type: object
       additionalProperties: false
@@ -1668,6 +1714,30 @@ components:
               unit: {type: string, minLength: 1, maxLength: 64}
               tags: {$ref: '#/components/schemas/SemanticMetricTags'}
               metadata: {$ref: '#/components/schemas/ObservationMetadata'}
+    ObservableSourceDeclaration:
+      type: object
+      additionalProperties: false
+      required: [name, type]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        type: {type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$'}
+        unit: {type: string, minLength: 1, maxLength: 64}
+        tags: {$ref: '#/components/schemas/SemanticMetricTags'}
+        metadata: {$ref: '#/components/schemas/ObservationMetadata'}
+        phase: {type: string, minLength: 1, maxLength: 128}
+        milestone: {type: string, minLength: 1, maxLength: 128}
+    ObservabilityManifest:
+      type: object
+      additionalProperties: false
+      required: [version, sources]
+      properties:
+        version: {type: integer, enum: [1]}
+        sources:
+          type: array
+          minItems: 1
+          maxItems: 256
+          description: Unique by type and name. The complete encoded manifest is limited to 256 KiB.
+          items: {$ref: '#/components/schemas/ObservableSourceDeclaration'}
     SemanticMetricTags:
       type: array
       maxItems: 32

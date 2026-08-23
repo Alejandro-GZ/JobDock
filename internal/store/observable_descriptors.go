@@ -14,13 +14,20 @@ func (s *Store) ObservableDescriptors(ctx context.Context, jobID, attemptID stri
 		return nil, err
 	}
 	defer rows.Close()
-	result := append([]MetricDescriptor(nil), metrics...)
+	observed := append([]MetricDescriptor(nil), metrics...)
 	for rows.Next() {
-		var item MetricDescriptor
+		item := MetricDescriptor{Observed: true}
 		if err = rows.Scan(&item.Type, &item.Name); err != nil {
 			return nil, err
 		}
-		result = append(result, item)
+		observed = append(observed, item)
 	}
-	return result, rows.Err()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	declared, err := s.DeclaredObservableSources(ctx, jobID, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	return mergeObservableDescriptors(observed, declared), nil
 }
