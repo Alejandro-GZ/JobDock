@@ -13,6 +13,7 @@ describe("ObservationPlot",()=>{
   it("opens a compact legend and separates incompatible Y scales",async()=>{
     const user=userEvent.setup();
     render(<ObservationPlot type="lineplot" title="Training" series={[loss,duration]} xAxis="step"/>);
+    expect(screen.getByText("Training").className).toContain("group-hover/widget:opacity-0");
     expect(screen.queryByText("loss")).toBeNull();
     await user.click(screen.getByRole("button",{name:"Training legend"}));
     expect(screen.getByText("loss")).toBeTruthy();
