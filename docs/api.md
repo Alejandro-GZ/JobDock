@@ -75,6 +75,17 @@ MVP catalog contains the framework-neutral `training-general`, `classification`,
 and `regression` templates. Catalog retrieval does not inspect a job or load
 telemetry.
 
+Template IDs are stable. `version` identifies a revision of one template while
+`schema_version` identifies the declarative language. Resolution reports
+`compatible`, `partially_compatible`, or `incompatible`; unsupported schemas and
+widget types use a machine-readable fallback instead of failing dashboard load.
+
+`PUT /api/v1/jobs/{jobId}/dashboard` accepts optional `materialized_from`
+provenance. Omitting it preserves the current origin during normal edits,
+sending an object records a newly applied template, and sending `null` detaches
+the origin explicitly. `GET` returns this provenance plus the saved dashboard's
+compatibility and any controlled fallback reason.
+
 Jobs without inputs use the regular JSON create request. To attach reproducible
 inputs, `POST /api/v1/jobs` accepts `multipart/form-data` with one `spec` JSON
 field and file fields named `input:<relative-path>`. The server stores every

@@ -1,7 +1,7 @@
 import type{AuditEvent,Build,BuildPlan,Checkpoint,Job,JobAttempt,JobEvent,JobSpec,MatrixObservation,MetricSeriesResponse,Node,PersonalAccessToken,ProgressState,ResourceSeriesResponse,Secret,User}from "./types";
 import { jobFormData } from "@/lib/job-inputs";
 import { buildFormData,type BuildMode,type DockerfileConfig } from "@/lib/builds";
-import { dashboardSchemaVersion,type DashboardTemplate,type DashboardTemplateOverride,type DashboardTemplateResolution,type DashboardWidget } from "@/lib/dashboard-widgets";
+import { dashboardSchemaVersion,type DashboardPreference,type DashboardTemplate,type DashboardTemplateOverride,type DashboardTemplateReference,type DashboardTemplateResolution,type DashboardWidget } from "@/lib/dashboard-widgets";
 let csrfToken="";
 export class APIError extends Error{constructor(public status:number,public code:string,message:string){super(message)}}
 async function request<T>(path:string,options:RequestInit={}):Promise<T>{const headers=new Headers(options.headers);if(options.body&&!(options.body instanceof FormData))headers.set("Content-Type","application/json");if(options.method&&!['GET','HEAD'].includes(options.method)){headers.set("X-CSRF-Token",csrfToken);if(!headers.has("Idempotency-Key")&&(path==="/jobs"||path==="/builds"||path.endsWith("/stop")||path.endsWith("/rerun")||path.endsWith("/confirm")||path.endsWith("/cancel")||options.method==="DELETE"))headers.set("Idempotency-Key",idempotencyKey())}const response=await fetch(`/api/v1${path}`,{...options,headers,credentials:"same-origin"});if(!response.ok){const problem=await response.json().catch(()=>({}));throw new APIError(response.status,problem.code??"request_failed",problem.detail??response.statusText)}if(response.status===204)return undefined as T;return response.json() as Promise<T>}
@@ -22,8 +22,8 @@ export const api={
   metricCatalog:async(id:string,attemptId?:string,tags:string[]=[])=>{const query=new URLSearchParams();if(attemptId)query.set("attempt_id",attemptId);for(const tag of tags)query.append("tag",tag);return(await request<{attempt_id:string;items:import("./types").MetricDescriptor[]}>(`/jobs/${id}/metrics/catalog${query.size?`?${query}`:""}`)).items},
   dashboardTemplates:async()=>(await request<{items:DashboardTemplate[]}>("/dashboard/templates")).items,
   resolveDashboardTemplate:(id:string,template:DashboardTemplate,attemptId?:string,overrides:DashboardTemplateOverride[]=[])=>request<DashboardTemplateResolution>(`/jobs/${id}/dashboard/templates/resolve`,{method:"POST",body:JSON.stringify({attempt_id:attemptId,template,overrides})}),
-  dashboard:(id:string)=>request<{schema_version:number;widgets:DashboardWidget[]|null;updated_at?:string;fallback_reason?:string}>(`/jobs/${id}/dashboard`),
-  saveDashboard:(id:string,widgets:DashboardWidget[])=>request(`/jobs/${id}/dashboard`,{method:"PUT",body:JSON.stringify({schema_version:dashboardSchemaVersion,widgets})}),
+  dashboard:(id:string)=>request<DashboardPreference>(`/jobs/${id}/dashboard`),
+  saveDashboard:(id:string,widgets:DashboardWidget[],materializedFrom?:DashboardTemplateReference|null)=>request<DashboardPreference>(`/jobs/${id}/dashboard`,{method:"PUT",body:JSON.stringify({schema_version:dashboardSchemaVersion,widgets,...(materializedFrom===undefined?{}:{materialized_from:materializedFrom})})}),
   resources:(id:string,query:string)=>request<ResourceSeriesResponse>(`/jobs/${id}/resources?${query}`),
   checkpoints:async(id:string,attemptId:string)=>(await request<{items:Checkpoint[]}>(`/jobs/${id}/checkpoints?attempt_id=${encodeURIComponent(attemptId)}&limit=500`)).items,
   progress:(id:string,attemptId:string)=>request<ProgressState>(`/jobs/${id}/progress?attempt_id=${encodeURIComponent(attemptId)}`),

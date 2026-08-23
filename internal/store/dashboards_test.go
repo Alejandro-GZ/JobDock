@@ -29,12 +29,12 @@ func TestDashboardPreferenceIsVersionedAndIsolatedByUserAndJob(t *testing.T) {
 	if err = repository.CreateJob(ctx, job); err != nil {
 		t.Fatal(err)
 	}
-	preference := store.DashboardPreference{UserID: first.ID, JobID: job.ID, SchemaVersion: 1, ConfigJSON: []byte(`{"widgets":[]}`), UpdatedAt: now}
+	preference := store.DashboardPreference{UserID: first.ID, JobID: job.ID, SchemaVersion: 1, ConfigJSON: []byte(`{"widgets":[]}`), TemplateID: "training-general", TemplateVersion: 1, TemplateSchemaVersion: 1, TemplateAppliedAt: &now, UpdatedAt: now}
 	if err = repository.PutDashboardPreference(ctx, preference); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := repository.DashboardPreference(ctx, first.ID, job.ID)
-	if err != nil || loaded.SchemaVersion != 1 || string(loaded.ConfigJSON) != `{"widgets":[]}` {
+	if err != nil || loaded.SchemaVersion != 1 || string(loaded.ConfigJSON) != `{"widgets":[]}` || loaded.TemplateID != "training-general" || loaded.TemplateVersion != 1 || loaded.TemplateAppliedAt == nil || !loaded.TemplateAppliedAt.Equal(now) {
 		t.Fatalf("loaded preference: %#v %v", loaded, err)
 	}
 	if _, err = repository.DashboardPreference(ctx, second.ID, job.ID); err != store.ErrNotFound {

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -14,6 +15,17 @@ const dashboardSchemaVersion = 1
 
 type dashboardConfig struct {
 	Widgets []dashboardWidget `json:"widgets"`
+}
+type dashboardTemplateReference struct {
+	TemplateID      string `json:"template_id"`
+	TemplateVersion int    `json:"template_version"`
+	SchemaVersion   int    `json:"schema_version"`
+}
+type dashboardTemplateMaterialization struct {
+	TemplateID      string    `json:"template_id"`
+	TemplateVersion int       `json:"template_version"`
+	SchemaVersion   int       `json:"schema_version"`
+	AppliedAt       time.Time `json:"applied_at"`
 }
 type dashboardWidget struct {
 	ID            string                  `json:"id"`
@@ -48,7 +60,7 @@ func (a *API) getDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := a.store.DashboardPreference(r.Context(), currentUser(r).ID, r.PathValue("id"))
 	if err == store.ErrNotFound {
-		writeJSON(w, http.StatusOK, map[string]any{"schema_version": dashboardSchemaVersion, "widgets": nil})
+		writeJSON(w, http.StatusOK, map[string]any{"schema_version": dashboardSchemaVersion, "widgets": nil, "compatibility": "compatible"})
 		return
 	}
 	if err != nil {
@@ -56,15 +68,15 @@ func (a *API) getDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if item.SchemaVersion != dashboardSchemaVersion {
-		writeJSON(w, http.StatusOK, map[string]any{"schema_version": dashboardSchemaVersion, "widgets": nil, "fallback_reason": "unsupported_schema_version"})
+		writeJSON(w, http.StatusOK, map[string]any{"schema_version": dashboardSchemaVersion, "widgets": nil, "compatibility": "incompatible", "fallback_reason": "unsupported_schema_version", "materialized_from": dashboardMaterialization(item)})
 		return
 	}
-	var config dashboardConfig
-	if json.Unmarshal(item.ConfigJSON, &config) != nil || validateDashboardConfig(config) != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"schema_version": dashboardSchemaVersion, "widgets": nil, "fallback_reason": "invalid_saved_configuration"})
-		return
+	config, compatibility, reason := restoreDashboardConfig(item.ConfigJSON)
+	response := map[string]any{"schema_version": item.SchemaVersion, "widgets": config.Widgets, "compatibility": compatibility, "updated_at": item.UpdatedAt, "materialized_from": dashboardMaterialization(item)}
+	if reason != "" {
+		response["fallback_reason"] = reason
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"schema_version": item.SchemaVersion, "widgets": config.Widgets, "updated_at": item.UpdatedAt})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (a *API) putDashboard(w http.ResponseWriter, r *http.Request) {
@@ -72,8 +84,9 @@ func (a *API) putDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		SchemaVersion int               `json:"schema_version"`
-		Widgets       []dashboardWidget `json:"widgets"`
+		SchemaVersion    int               `json:"schema_version"`
+		Widgets          []dashboardWidget `json:"widgets"`
+		MaterializedFrom json.RawMessage   `json:"materialized_from"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	decoder.DisallowUnknownFields()
@@ -95,12 +108,78 @@ func (a *API) putDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	encoded, _ := json.Marshal(config)
-	item := store.DashboardPreference{UserID: currentUser(r).ID, JobID: r.PathValue("id"), SchemaVersion: body.SchemaVersion, ConfigJSON: encoded, UpdatedAt: time.Now().UTC()}
+	now := time.Now().UTC()
+	item := store.DashboardPreference{UserID: currentUser(r).ID, JobID: r.PathValue("id"), SchemaVersion: body.SchemaVersion, ConfigJSON: encoded, UpdatedAt: now}
+	existing, existingErr := a.store.DashboardPreference(r.Context(), item.UserID, item.JobID)
+	if existingErr == nil {
+		item.TemplateID, item.TemplateVersion, item.TemplateSchemaVersion, item.TemplateAppliedAt = existing.TemplateID, existing.TemplateVersion, existing.TemplateSchemaVersion, existing.TemplateAppliedAt
+	} else if existingErr != store.ErrNotFound {
+		writeStoreError(w, existingErr)
+		return
+	}
+	applied := false
+	if body.MaterializedFrom != nil {
+		if bytes.Equal(bytes.TrimSpace(body.MaterializedFrom), []byte("null")) {
+			item.TemplateID, item.TemplateVersion, item.TemplateSchemaVersion, item.TemplateAppliedAt = "", 0, 0, nil
+		} else {
+			var reference dashboardTemplateReference
+			if json.Unmarshal(body.MaterializedFrom, &reference) != nil || validateDashboardTemplateReference(reference) != nil {
+				writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard_template_reference", "Dashboard template provenance is invalid")
+				return
+			}
+			item.TemplateID, item.TemplateVersion, item.TemplateSchemaVersion, item.TemplateAppliedAt = reference.TemplateID, reference.TemplateVersion, reference.SchemaVersion, &now
+			applied = true
+		}
+	}
 	if err := a.store.PutDashboardPreference(r.Context(), item); err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"schema_version": item.SchemaVersion, "widgets": config.Widgets, "updated_at": item.UpdatedAt})
+	if applied {
+		_ = a.store.Audit(r.Context(), item.UserID, "dashboard.template.apply", "job", item.JobID, map[string]any{"template_id": item.TemplateID, "template_version": item.TemplateVersion, "template_schema_version": item.TemplateSchemaVersion})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"schema_version": item.SchemaVersion, "widgets": config.Widgets, "compatibility": "compatible", "updated_at": item.UpdatedAt, "materialized_from": dashboardMaterialization(item)})
+}
+
+func restoreDashboardConfig(data []byte) (dashboardConfig, string, string) {
+	var raw struct {
+		Widgets []json.RawMessage `json:"widgets"`
+	}
+	if json.Unmarshal(data, &raw) != nil || raw.Widgets == nil || len(raw.Widgets) > 64 {
+		return dashboardConfig{Widgets: nil}, "incompatible", "invalid_saved_configuration"
+	}
+	config := dashboardConfig{Widgets: make([]dashboardWidget, 0, len(raw.Widgets))}
+	seen, omitted := map[string]bool{}, 0
+	for _, encoded := range raw.Widgets {
+		var widget dashboardWidget
+		if json.Unmarshal(encoded, &widget) != nil || seen[widget.ID] || validateDashboardConfig(dashboardConfig{Widgets: []dashboardWidget{widget}}) != nil {
+			omitted++
+			continue
+		}
+		seen[widget.ID] = true
+		config.Widgets = append(config.Widgets, widget)
+	}
+	if omitted == 0 {
+		return config, "compatible", ""
+	}
+	if len(config.Widgets) == 0 && len(raw.Widgets) > 0 {
+		return dashboardConfig{Widgets: nil}, "incompatible", "invalid_saved_configuration"
+	}
+	return config, "partially_compatible", "unsupported_widgets_omitted"
+}
+
+func validateDashboardTemplateReference(reference dashboardTemplateReference) error {
+	if len(strings.TrimSpace(reference.TemplateID)) < 1 || len(reference.TemplateID) > 128 || reference.TemplateVersion < 1 || reference.SchemaVersion < 1 {
+		return dashboardError("Dashboard template provenance is invalid")
+	}
+	return nil
+}
+
+func dashboardMaterialization(item store.DashboardPreference) *dashboardTemplateMaterialization {
+	if item.TemplateID == "" || item.TemplateAppliedAt == nil {
+		return nil
+	}
+	return &dashboardTemplateMaterialization{TemplateID: item.TemplateID, TemplateVersion: item.TemplateVersion, SchemaVersion: item.TemplateSchemaVersion, AppliedAt: *item.TemplateAppliedAt}
 }
 
 func validateDashboardConfig(config dashboardConfig) error {
@@ -108,8 +187,8 @@ func validateDashboardConfig(config dashboardConfig) error {
 		return dashboardError("A dashboard may contain at most 64 widgets")
 	}
 	ids := map[string]bool{}
-	validTypes := map[string]bool{"lineplot": true, "barplot": true, "scatterplot": true, "confusion_matrix": true, "progress": true, "logs": true, "gauge": true}
-	validKinds := map[string]bool{"metric": true, "resource": true, "matrix": true, "progress": true, "log": true}
+	validTypes := supportedDashboardWidgetTypes()
+	validKinds := supportedDashboardSourceKinds()
 	for _, widget := range config.Widgets {
 		if len(widget.ID) < 1 || len(widget.ID) > 128 || ids[widget.ID] {
 			return dashboardError("Widget IDs must be unique and contain 1-128 characters")
@@ -158,6 +237,14 @@ func validateDashboardConfig(config dashboardConfig) error {
 		}
 	}
 	return nil
+}
+
+func supportedDashboardWidgetTypes() map[string]bool {
+	return map[string]bool{"lineplot": true, "barplot": true, "scatterplot": true, "confusion_matrix": true, "progress": true, "logs": true, "gauge": true}
+}
+
+func supportedDashboardSourceKinds() map[string]bool {
+	return map[string]bool{"metric": true, "resource": true, "matrix": true, "progress": true, "log": true}
 }
 
 type dashboardError string

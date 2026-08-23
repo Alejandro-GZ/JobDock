@@ -49,6 +49,35 @@ func TestDashboardTemplateResolverReportsMissingAmbiguousAndIncompatibleSlots(t 
 	}
 }
 
+func TestDashboardTemplateResolverClassifiesOverallCompatibilityAndFallsBack(t *testing.T) {
+	legacy := semanticTemplate(templateSlot("loss", []string{"metric:loss"}, 1, 1))
+	legacy.Version = 0
+	migrated := resolveDashboardTemplate(legacy, []observableSource{{Kind: "metric", Name: "loss", Tags: []string{"metric:loss"}}})
+	if migrated.TemplateVersion != 1 || migrated.Compatibility != "compatible" {
+		t.Fatalf("legacy template migration: %#v", migrated)
+	}
+	optional := templateSlot("validation", []string{"metric:loss", "phase:validation"}, 0, 1)
+	partial := resolveDashboardTemplate(semanticTemplate(templateSlot("train", []string{"metric:loss", "phase:train"}, 1, 1), optional), []observableSource{{Kind: "metric", Name: "loss", Tags: []string{"metric:loss", "phase:train"}}})
+	if partial.Compatibility != "partially_compatible" || partial.TemplateVersion != 1 {
+		t.Fatalf("partial compatibility: %#v", partial)
+	}
+	incompatible := resolveDashboardTemplate(semanticTemplate(templateSlot("train", []string{"metric:loss"}, 1, 1)), nil)
+	if incompatible.Compatibility != "incompatible" {
+		t.Fatalf("missing required source compatibility: %#v", incompatible)
+	}
+	future := semanticTemplate(templateSlot("train", []string{"metric:loss"}, 1, 1))
+	future.SchemaVersion = 99
+	fallback := resolveDashboardTemplate(future, nil)
+	if fallback.Compatibility != "incompatible" || fallback.FallbackReason != "unsupported_schema_version" || len(fallback.Widgets) != 0 {
+		t.Fatalf("future schema fallback: %#v", fallback)
+	}
+	future.SchemaVersion, future.Widgets[0].Type = dashboardTemplateSchemaVersion, "starplot"
+	fallback = resolveDashboardTemplate(future, nil)
+	if fallback.Compatibility != "incompatible" || fallback.FallbackReason != "unsupported_widget_type" {
+		t.Fatalf("future widget fallback: %#v", fallback)
+	}
+}
+
 func TestDashboardTemplateResolverAppliesValidatedManualAmbiguityOverride(t *testing.T) {
 	template := semanticTemplate(templateSlot("loss", []string{"metric:loss"}, 1, 1))
 	catalog := []observableSource{{Kind: "metric", Name: "objective_a", Tags: []string{"metric:loss"}}, {Kind: "metric", Name: "objective_b", Tags: []string{"metric:loss"}}}
@@ -100,7 +129,7 @@ func TestDashboardTemplateValidationRejectsUnsafeOrIncompatibleDefinitions(t *te
 }
 
 func semanticTemplate(slots ...dashboardTemplateSlot) dashboardTemplate {
-	return dashboardTemplate{ID: "training", SchemaVersion: 1, Widgets: []dashboardTemplateWidget{{ID: "loss", Type: "lineplot", Size: dashboardWidgetSize{Columns: 12, Rows: 4}, Position: dashboardWidgetPosition{X: 0, Y: 0}, Slots: slots, XAxis: "step", TimeRange: "all", GridColumns: 12}}}
+	return dashboardTemplate{ID: "training", SchemaVersion: 1, Version: 1, Widgets: []dashboardTemplateWidget{{ID: "loss", Type: "lineplot", Size: dashboardWidgetSize{Columns: 12, Rows: 4}, Position: dashboardWidgetPosition{X: 0, Y: 0}, Slots: slots, XAxis: "step", TimeRange: "all", GridColumns: 12}}}
 }
 
 func templateSlot(id string, tags []string, minimum, maximum int) dashboardTemplateSlot {

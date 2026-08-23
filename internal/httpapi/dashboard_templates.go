@@ -10,12 +10,14 @@ import (
 )
 
 const dashboardTemplateSchemaVersion = 1
+const dashboardTemplateDefinitionVersion = 1
 
 type dashboardTemplate struct {
 	ID            string                    `json:"id"`
 	Name          string                    `json:"name,omitempty"`
 	Description   string                    `json:"description,omitempty"`
 	SchemaVersion int                       `json:"schema_version"`
+	Version       int                       `json:"version"`
 	Widgets       []dashboardTemplateWidget `json:"widgets"`
 }
 
@@ -63,12 +65,15 @@ type observableSource struct {
 }
 
 type dashboardTemplateResolution struct {
-	TemplateID    string                            `json:"template_id"`
-	SchemaVersion int                               `json:"schema_version"`
-	AttemptID     string                            `json:"attempt_id"`
-	Widgets       []dashboardWidget                 `json:"widgets"`
-	WidgetResults []dashboardTemplateWidgetResult   `json:"widget_results"`
-	SlotResults   []dashboardTemplateSlotResolution `json:"slot_results"`
+	TemplateID      string                            `json:"template_id"`
+	SchemaVersion   int                               `json:"schema_version"`
+	TemplateVersion int                               `json:"template_version"`
+	AttemptID       string                            `json:"attempt_id"`
+	Compatibility   string                            `json:"compatibility"`
+	FallbackReason  string                            `json:"fallback_reason,omitempty"`
+	Widgets         []dashboardWidget                 `json:"widgets"`
+	WidgetResults   []dashboardTemplateWidgetResult   `json:"widget_results"`
+	SlotResults     []dashboardTemplateSlotResolution `json:"slot_results"`
 }
 
 type dashboardTemplateWidgetResult struct {
@@ -95,7 +100,6 @@ func (a *API) resolveDashboardTemplate(w http.ResponseWriter, r *http.Request) {
 		Overrides []dashboardTemplateOverride `json:"overrides,omitempty"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil {
 		writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard_template", "Dashboard template resolution requires valid JSON smaller than 128 KiB")
 		return
@@ -104,13 +108,18 @@ func (a *API) resolveDashboardTemplate(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard_template", "Dashboard template resolution accepts exactly one JSON object")
 		return
 	}
-	if body.Template.SchemaVersion != dashboardTemplateSchemaVersion {
-		writeProblem(w, http.StatusConflict, "unsupported_dashboard_template_schema", "Only dashboard template schema version 1 is supported")
+	if body.Template.Version == 0 && body.Template.SchemaVersion == dashboardTemplateSchemaVersion {
+		body.Template.Version = dashboardTemplateDefinitionVersion
+	}
+	if len(strings.TrimSpace(body.Template.ID)) < 1 || body.Template.SchemaVersion < 1 || body.Template.Version < 1 {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard_template", "Dashboard template id, schema version, and version are required")
 		return
 	}
-	if err := validateDashboardTemplate(body.Template); err != nil {
-		writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard_template", err.Error())
-		return
+	if dashboardTemplateIncompatibility(body.Template) == "" {
+		if err := validateDashboardTemplate(body.Template); err != nil {
+			writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard_template", err.Error())
+			return
+		}
 	}
 	if len(body.Overrides) > 4096 {
 		writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard_template_override", "A template resolution may contain at most 4096 slot overrides")
@@ -121,6 +130,10 @@ func (a *API) resolveDashboardTemplate(w http.ResponseWriter, r *http.Request) {
 		attemptID = job.AttemptID
 	}
 	if attemptID == "" {
+		if reason := dashboardTemplateIncompatibility(body.Template); reason != "" {
+			writeJSON(w, http.StatusOK, incompatibleDashboardTemplateResolution(body.Template, "", reason))
+			return
+		}
 		result, resolveErr := resolveDashboardTemplateWithOverrides(body.Template, nil, body.Overrides)
 		if resolveErr != nil {
 			writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard_template_override", resolveErr.Error())
@@ -137,6 +150,10 @@ func (a *API) resolveDashboardTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	if !belongs {
 		writeProblem(w, http.StatusNotFound, "attempt_not_found", "The requested attempt does not belong to this job")
+		return
+	}
+	if reason := dashboardTemplateIncompatibility(body.Template); reason != "" {
+		writeJSON(w, http.StatusOK, incompatibleDashboardTemplateResolution(body.Template, attemptID, reason))
 		return
 	}
 	descriptors, err := a.store.ObservableDescriptors(r.Context(), job.ID, attemptID)
@@ -166,6 +183,9 @@ func validateDashboardTemplate(template dashboardTemplate) error {
 	}
 	if template.SchemaVersion != dashboardTemplateSchemaVersion {
 		return errors.New("Template schema version is not supported")
+	}
+	if template.Version < 1 {
+		return errors.New("Template version must be a positive integer")
 	}
 	if len(template.Widgets) < 1 || len(template.Widgets) > 64 {
 		return errors.New("A template must contain 1-64 widgets")
@@ -234,6 +254,12 @@ func resolveDashboardTemplate(template dashboardTemplate, catalog []observableSo
 }
 
 func resolveDashboardTemplateWithOverrides(template dashboardTemplate, catalog []observableSource, overrides []dashboardTemplateOverride) (dashboardTemplateResolution, error) {
+	if template.Version == 0 && template.SchemaVersion == dashboardTemplateSchemaVersion {
+		template.Version = dashboardTemplateDefinitionVersion
+	}
+	if reason := dashboardTemplateIncompatibility(template); reason != "" {
+		return incompatibleDashboardTemplateResolution(template, "", reason), nil
+	}
 	ordered := append([]observableSource(nil), catalog...)
 	for index := range ordered {
 		ordered[index].Tags, _ = normalizeMetricTags(ordered[index].Tags)
@@ -253,7 +279,7 @@ func resolveDashboardTemplateWithOverrides(template dashboardTemplate, catalog [
 		overrideBySlot[key] = override
 	}
 	usedOverrides := map[string]bool{}
-	result := dashboardTemplateResolution{TemplateID: template.ID, SchemaVersion: template.SchemaVersion, Widgets: []dashboardWidget{}, WidgetResults: []dashboardTemplateWidgetResult{}, SlotResults: []dashboardTemplateSlotResolution{}}
+	result := dashboardTemplateResolution{TemplateID: template.ID, SchemaVersion: template.SchemaVersion, TemplateVersion: template.Version, Compatibility: "compatible", Widgets: []dashboardWidget{}, WidgetResults: []dashboardTemplateWidgetResult{}, SlotResults: []dashboardTemplateSlotResolution{}}
 	for _, definition := range template.Widgets {
 		widget := templateWidget(definition, []dashboardWidgetSource{})
 		widgetStatus := "resolved"
@@ -303,6 +329,13 @@ func resolveDashboardTemplateWithOverrides(template dashboardTemplate, catalog [
 			widgetStatus, omitWidget = "omitted", true
 		}
 		result.WidgetResults = append(result.WidgetResults, dashboardTemplateWidgetResult{WidgetID: definition.ID, Status: widgetStatus})
+		if widgetStatus == "unresolved" {
+			result.Compatibility = "incompatible"
+		} else if widgetStatus == "partial" || widgetStatus == "omitted" {
+			if result.Compatibility == "compatible" {
+				result.Compatibility = "partially_compatible"
+			}
+		}
 		if !omitWidget {
 			result.Widgets = append(result.Widgets, widget)
 		}
@@ -312,6 +345,22 @@ func resolveDashboardTemplateWithOverrides(template dashboardTemplate, catalog [
 	}
 	result.Widgets = compactDashboardWidgets(result.Widgets)
 	return result, nil
+}
+
+func dashboardTemplateIncompatibility(template dashboardTemplate) string {
+	if template.SchemaVersion != dashboardTemplateSchemaVersion {
+		return "unsupported_schema_version"
+	}
+	for _, widget := range template.Widgets {
+		if !supportedDashboardWidgetTypes()[widget.Type] {
+			return "unsupported_widget_type"
+		}
+	}
+	return ""
+}
+
+func incompatibleDashboardTemplateResolution(template dashboardTemplate, attemptID, reason string) dashboardTemplateResolution {
+	return dashboardTemplateResolution{TemplateID: template.ID, SchemaVersion: template.SchemaVersion, TemplateVersion: template.Version, AttemptID: attemptID, Compatibility: "incompatible", FallbackReason: reason, Widgets: []dashboardWidget{}, WidgetResults: []dashboardTemplateWidgetResult{}, SlotResults: []dashboardTemplateSlotResolution{}}
 }
 
 func validateDashboardTemplateOverride(slot dashboardTemplateSlot, candidates, requested []dashboardWidgetSource) ([]dashboardWidgetSource, error) {

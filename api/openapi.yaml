@@ -377,7 +377,6 @@ paths:
       responses:
         '200': {description: Deterministic slot diagnostics and materialized dashboard widgets, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardTemplateResolution'}}}}
         '404': {$ref: '#/components/responses/Problem'}
-        '409': {$ref: '#/components/responses/Problem'}
         '422': {$ref: '#/components/responses/Problem'}
   /jobs/{jobId}/dashboard:
     get:
@@ -1267,12 +1266,13 @@ components:
     DashboardTemplate:
       type: object
       additionalProperties: false
-      required: [id, schema_version, widgets]
+      required: [id, schema_version, version, widgets]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
         name: {type: string, maxLength: 128}
         description: {type: string, maxLength: 512}
         schema_version: {type: integer, const: 1}
+        version: {type: integer, minimum: 1, description: Monotonic definition version for this stable template id.}
         widgets: {type: array, minItems: 1, maxItems: 64, items: {$ref: '#/components/schemas/DashboardTemplateWidget'}}
     DashboardTemplateList:
       type: object
@@ -1308,11 +1308,14 @@ components:
         selected: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/DashboardWidgetSource'}}
     DashboardTemplateResolution:
       type: object
-      required: [template_id, schema_version, attempt_id, widgets, widget_results, slot_results]
+      required: [template_id, schema_version, template_version, attempt_id, compatibility, widgets, widget_results, slot_results]
       properties:
         template_id: {type: string}
         schema_version: {type: integer, const: 1}
+        template_version: {type: integer, minimum: 0}
         attempt_id: {type: string}
+        compatibility: {type: string, enum: [compatible, partially_compatible, incompatible]}
+        fallback_reason: {type: string, enum: [unsupported_schema_version, unsupported_widget_type]}
         widgets: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/DashboardWidget'}}
         widget_results:
           type: array
@@ -1331,14 +1334,38 @@ components:
       properties:
         schema_version: {type: integer, const: 1}
         widgets: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/DashboardWidget'}}
+        materialized_from:
+          oneOf:
+            - {$ref: '#/components/schemas/DashboardTemplateReference'}
+            - {type: 'null'}
+          description: Omit to preserve existing provenance; send null to detach it explicitly.
+    DashboardTemplateReference:
+      type: object
+      additionalProperties: false
+      required: [template_id, template_version, schema_version]
+      properties:
+        template_id: {type: string, minLength: 1, maxLength: 128}
+        template_version: {type: integer, minimum: 1}
+        schema_version: {type: integer, minimum: 1}
+    DashboardTemplateMaterialization:
+      type: object
+      additionalProperties: false
+      required: [template_id, template_version, schema_version, applied_at]
+      properties:
+        template_id: {type: string, minLength: 1, maxLength: 128}
+        template_version: {type: integer, minimum: 1}
+        schema_version: {type: integer, minimum: 1}
+        applied_at: {type: string, format: date-time}
     DashboardPreference:
       type: object
-      required: [schema_version, widgets]
+      required: [schema_version, widgets, compatibility]
       properties:
         schema_version: {type: integer, const: 1}
         widgets: {oneOf: [{type: array, maxItems: 64, items: {$ref: '#/components/schemas/DashboardWidget'}}, {type: 'null'}]}
+        compatibility: {type: string, enum: [compatible, partially_compatible, incompatible]}
+        materialized_from: {oneOf: [{$ref: '#/components/schemas/DashboardTemplateMaterialization'}, {type: 'null'}]}
         updated_at: {type: string, format: date-time}
-        fallback_reason: {type: string, enum: [unsupported_schema_version, invalid_saved_configuration]}
+        fallback_reason: {type: string, enum: [unsupported_schema_version, invalid_saved_configuration, unsupported_widgets_omitted]}
     ResourceSeriesResponse:
       type: object
       required: [attempt_id, cursor, from, to, resolution_seconds, truncated, points]

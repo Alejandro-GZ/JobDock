@@ -31,7 +31,7 @@ export type DashboardTemplateSlot = {
   on_ambiguous?: "error" | "omit_slot" | "omit_widget";
 };
 export type DashboardTemplateWidget = Omit<DashboardWidget, "sources"> & { slots: DashboardTemplateSlot[] };
-export type DashboardTemplate = { id: string; name?: string; description?: string; schema_version: 1; widgets: DashboardTemplateWidget[] };
+export type DashboardTemplate = { id: string; name?: string; description?: string; schema_version: number; version: number; widgets: DashboardTemplateWidget[] };
 export type DashboardTemplateSlotResolution = {
   widget_id: string;
   slot_id: string;
@@ -41,13 +41,20 @@ export type DashboardTemplateSlotResolution = {
 };
 export type DashboardTemplateResolution = {
   template_id: string;
-  schema_version: 1;
+  schema_version: number;
+  template_version: number;
   attempt_id: string;
+  compatibility: DashboardCompatibility;
+  fallback_reason?: "unsupported_schema_version" | "unsupported_widget_type";
   widgets: DashboardWidget[];
   widget_results: Array<{ widget_id: string; status: "resolved" | "partial" | "omitted" | "unresolved" }>;
   slot_results: DashboardTemplateSlotResolution[];
 };
 export type DashboardTemplateOverride = { widget_id: string; slot_id: string; sources: DashboardWidgetSource[] };
+export type DashboardCompatibility = "compatible" | "partially_compatible" | "incompatible";
+export type DashboardTemplateReference = { template_id: string; template_version: number; schema_version: number };
+export type DashboardTemplateMaterialization = DashboardTemplateReference & { applied_at: string };
+export type DashboardPreference = { schema_version: number; widgets: DashboardWidget[] | null; compatibility: DashboardCompatibility; materialized_from?: DashboardTemplateMaterialization | null; updated_at?: string; fallback_reason?: "unsupported_schema_version" | "invalid_saved_configuration" | "unsupported_widgets_omitted" };
 
 export const dashboardTemplateSchemaVersion=1;
 

@@ -12,7 +12,7 @@ func officialDashboardTemplates() []dashboardTemplate {
 
 func trainingDashboardTemplate() dashboardTemplate {
 	return dashboardTemplate{
-		ID: "training-general", Name: "Training — General", Description: "Training and validation loss, learning rate, progress, and checkpoint markers when available.", SchemaVersion: dashboardTemplateSchemaVersion,
+		ID: "training-general", Name: "Training — General", Description: "Training and validation loss, learning rate, progress, and checkpoint markers when available.", SchemaVersion: dashboardTemplateSchemaVersion, Version: dashboardTemplateDefinitionVersion,
 		Widgets: []dashboardTemplateWidget{
 			officialWidget("loss", "lineplot", 12, 4, 0, 0,
 				officialSlot("training-loss", []string{"metric:loss", "phase:train"}, nil, 1, 1, "metric", "error"),
@@ -30,7 +30,7 @@ func trainingDashboardTemplate() dashboardTemplate {
 
 func classificationDashboardTemplate() dashboardTemplate {
 	return dashboardTemplate{
-		ID: "classification", Name: "Classification", Description: "Loss, classification scores, progress, and a confusion matrix when available.", SchemaVersion: dashboardTemplateSchemaVersion,
+		ID: "classification", Name: "Classification", Description: "Loss, classification scores, progress, and a confusion matrix when available.", SchemaVersion: dashboardTemplateSchemaVersion, Version: dashboardTemplateDefinitionVersion,
 		Widgets: []dashboardTemplateWidget{
 			officialWidget("loss", "lineplot", 12, 4, 0, 0,
 				officialSlot("training-loss", []string{"metric:loss", "phase:train"}, nil, 1, 1, "metric", "error"),
@@ -54,7 +54,7 @@ func classificationDashboardTemplate() dashboardTemplate {
 
 func regressionDashboardTemplate() dashboardTemplate {
 	return dashboardTemplate{
-		ID: "regression", Name: "Regression", Description: "Loss and recognized regression-error metrics, preferring validation sources.", SchemaVersion: dashboardTemplateSchemaVersion,
+		ID: "regression", Name: "Regression", Description: "Loss and recognized regression-error metrics, preferring validation sources.", SchemaVersion: dashboardTemplateSchemaVersion, Version: dashboardTemplateDefinitionVersion,
 		Widgets: []dashboardTemplateWidget{
 			officialWidget("loss", "lineplot", 12, 4, 0, 0,
 				officialSlot("training-loss", []string{"metric:loss", "phase:train"}, nil, 1, 1, "metric", "error"),

@@ -5,12 +5,15 @@ existing dashboard widgets. They do not contain metric names and they are not a
 second persisted dashboard format. Resolving a template returns ordinary
 dashboard widgets that can later be saved and edited like any other dashboard.
 
-Template schema version 1 declares layout and presentation on each widget, plus
+Every definition has a stable `id`, a monotonic `version` for changes to that
+specific template, and an independent `schema_version` for the template
+language. Template schema version 1 declares layout and presentation on each widget, plus
 one or more semantic source slots:
 
 ```json
 {
   "id": "training-example",
+  "version": 1,
   "schema_version": 1,
   "widgets": [
     {
@@ -63,6 +66,23 @@ Use `POST /api/v1/jobs/{jobId}/dashboard/templates/resolve` with an optional
 `attempt_id` and a `template` object. The response contains slot and widget
 diagnostics plus `widgets`, which uses the normal dashboard schema.
 
+The resolver also returns an overall compatibility state:
+
+- `compatible`: every declared widget can be materialized as written.
+- `partially_compatible`: optional slots or widgets were safely omitted.
+- `incompatible`: a required source is unresolved, or the template schema or a
+  widget type is unsupported.
+
+Unsupported schema versions and widget types return a controlled resolution
+with no materialized widgets and a machine-readable `fallback_reason`. They do
+not prevent the existing dashboard from opening. Schema migrations are explicit
+server-side transformations; when no migration exists, JobDock uses this
+fallback instead of guessing.
+
+Definitions created before template-level versioning omitted `version`; the
+schema-v1 migration assigns them version 1 explicitly. Current catalog responses
+always include the field.
+
 The request may also include explicit `overrides` for ambiguous slots. Each
 override identifies a template widget and slot and selects one or more sources
 from that slot's reported candidates. The server validates source membership,
@@ -82,6 +102,18 @@ resized, edited, or deleted with the existing dashboard editor. Replacing a
 non-empty dashboard requires confirmation. JobDock retains the prior layout for
 one-click restoration during that picker session, including through the toast
 action after applying.
+
+The saved dashboard records `template_id`, `template_version`,
+`schema_version`, and the server-generated application time as provenance.
+Ordinary widget edits preserve that origin for reproducibility without making
+the dashboard live-linked to later template releases. Applying a template also
+creates a `dashboard.template.apply` audit event.
+
+When a saved dashboard contains a future widget type, JobDock restores the
+recognized widgets and reports `partially_compatible`. If no safe widget can be
+restored, or the dashboard schema is unsupported, it loads the normal default
+layout with an explicit incompatible fallback. Unknown widget properties are
+ignored during restoration.
 
 Templates are optional. Jobs with legacy or untagged telemetry continue to use
 their existing manual or default dashboard even when no official template can

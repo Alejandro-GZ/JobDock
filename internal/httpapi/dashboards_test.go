@@ -80,16 +80,86 @@ func TestDashboardConfigurationPersistsAndFallsBackSafely(t *testing.T) {
 	if saved.SchemaVersion != 1 || len(saved.Widgets) != 1 || saved.Widgets[0].Sources[0].Name != "loss" {
 		t.Fatalf("saved dashboard: %#v", saved)
 	}
+	materializedPayload := `{"schema_version":1,"widgets":[{"id":"loss","type":"lineplot","size":{"columns":6,"rows":3},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}]}],"materialized_from":{"template_id":"training-general","template_version":1,"schema_version":1}}`
+	request, _ = http.NewRequest(http.MethodPut, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard", bytes.NewBufferString(materializedPayload))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", session.CSRF)
+	result, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.Body.Close()
+	if result.StatusCode != http.StatusOK {
+		t.Fatalf("materialize dashboard status: %d", result.StatusCode)
+	}
+	var versioned struct {
+		Compatibility    string                            `json:"compatibility"`
+		MaterializedFrom *dashboardTemplateMaterialization `json:"materialized_from"`
+	}
+	getSeriesJSON(t, client, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard", &versioned)
+	if versioned.Compatibility != "compatible" || versioned.MaterializedFrom == nil || versioned.MaterializedFrom.TemplateID != "training-general" || versioned.MaterializedFrom.TemplateVersion != 1 || versioned.MaterializedFrom.AppliedAt.IsZero() {
+		t.Fatalf("dashboard provenance: %#v", versioned)
+	}
+	request, _ = http.NewRequest(http.MethodPut, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard", bytes.NewBufferString(payload))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", session.CSRF)
+	result, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.Body.Close()
+	getSeriesJSON(t, client, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard", &versioned)
+	if versioned.MaterializedFrom == nil || versioned.MaterializedFrom.TemplateID != "training-general" {
+		t.Fatalf("ordinary edit discarded provenance: %#v", versioned)
+	}
+	detachedPayload := `{"schema_version":1,"widgets":[{"id":"loss","type":"lineplot","size":{"columns":6,"rows":3},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}]}],"materialized_from":null}`
+	request, _ = http.NewRequest(http.MethodPut, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard", bytes.NewBufferString(detachedPayload))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", session.CSRF)
+	result, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.Body.Close()
+	getSeriesJSON(t, client, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard", &versioned)
+	if versioned.MaterializedFrom != nil {
+		t.Fatalf("explicit provenance detach failed: %#v", versioned)
+	}
+	partialConfig := `{"widgets":[{"id":"loss","type":"lineplot","future_property":true,"size":{"columns":6,"rows":3},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}]},{"id":"future","type":"starplot","size":{"columns":6,"rows":3},"position":{"x":6,"y":0},"sources":[]}]}`
+	if _, err = repository.DB().ExecContext(ctx, `UPDATE dashboard_preferences SET config_json=? WHERE user_id=? AND job_id=?`, partialConfig, owner.ID, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	var partial struct {
+		Widgets       []dashboardWidget `json:"widgets"`
+		Compatibility string            `json:"compatibility"`
+		Reason        string            `json:"fallback_reason"`
+	}
+	getSeriesJSON(t, client, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard", &partial)
+	if len(partial.Widgets) != 1 || partial.Widgets[0].ID != "loss" || partial.Compatibility != "partially_compatible" || partial.Reason != "unsupported_widgets_omitted" {
+		t.Fatalf("partially restored dashboard: %#v", partial)
+	}
 	if _, err = repository.DB().ExecContext(ctx, `UPDATE dashboard_preferences SET schema_version=99 WHERE user_id=? AND job_id=?`, owner.ID, job.ID); err != nil {
 		t.Fatal(err)
 	}
 	var fallback struct {
-		Widgets json.RawMessage `json:"widgets"`
-		Reason  string          `json:"fallback_reason"`
+		Widgets       json.RawMessage `json:"widgets"`
+		Compatibility string          `json:"compatibility"`
+		Reason        string          `json:"fallback_reason"`
 	}
 	getSeriesJSON(t, client, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard", &fallback)
-	if string(fallback.Widgets) != "null" || fallback.Reason != "unsupported_schema_version" {
+	if string(fallback.Widgets) != "null" || fallback.Compatibility != "incompatible" || fallback.Reason != "unsupported_schema_version" {
 		t.Fatalf("fallback: %#v", fallback)
+	}
+	audit, err := repository.ListAudit(ctx, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundApply := false
+	for _, event := range audit {
+		foundApply = foundApply || event.Action == "dashboard.template.apply" && event.Metadata["template_id"] == "training-general"
+	}
+	if !foundApply {
+		t.Fatalf("dashboard template application was not audited: %#v", audit)
 	}
 }
 
@@ -230,6 +300,26 @@ func TestDashboardTemplateResolutionUsesAttemptDescriptorCatalog(t *testing.T) {
 	if invalidResponse.StatusCode != http.StatusUnprocessableEntity {
 		body, _ := io.ReadAll(invalidResponse.Body)
 		t.Fatalf("invalid manual template resolution status=%d body=%s", invalidResponse.StatusCode, body)
+	}
+	future := ambiguous
+	future.SchemaVersion = 99
+	payload, _ = json.Marshal(map[string]any{"attempt_id": attemptID, "template": future})
+	request, _ = http.NewRequest(http.MethodPost, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard/templates/resolve", bytes.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	fallbackResponse, requestErr := client.Do(request)
+	if requestErr != nil {
+		t.Fatal(requestErr)
+	}
+	defer fallbackResponse.Body.Close()
+	if fallbackResponse.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(fallbackResponse.Body)
+		t.Fatalf("future template fallback status=%d body=%s", fallbackResponse.StatusCode, body)
+	}
+	if err = json.NewDecoder(fallbackResponse.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Compatibility != "incompatible" || result.FallbackReason != "unsupported_schema_version" || result.AttemptID != attemptID || len(result.Widgets) != 0 {
+		t.Fatalf("future template fallback: %#v", result)
 	}
 	items, err := repository.MetricDescriptors(ctx, job.ID, attemptID, nil)
 	if err != nil || len(items) != 2 {

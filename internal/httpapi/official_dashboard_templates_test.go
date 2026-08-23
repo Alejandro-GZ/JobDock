@@ -13,7 +13,7 @@ func TestOfficialDashboardTemplateCatalogIsValidAndFrameworkNeutral(t *testing.T
 	}
 	wantIDs := []string{"training-general", "classification", "regression"}
 	for index, template := range templates {
-		if template.ID != wantIDs[index] || template.Name == "" || template.Description == "" {
+		if template.ID != wantIDs[index] || template.Name == "" || template.Description == "" || template.SchemaVersion != dashboardTemplateSchemaVersion || template.Version < 1 {
 			t.Fatalf("official template metadata: %#v", template)
 		}
 		if err := validateDashboardTemplate(template); err != nil {

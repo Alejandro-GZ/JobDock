@@ -110,7 +110,11 @@ Matrix and progress availability is registered in compact rich-observable
 descriptors during ingestion, allowing template resolution without reading
 matrix values or progress history. Product-maintained templates remain static,
 framework-neutral definitions and are copied into an ordinary dashboard only
-when explicitly applied.
+when explicitly applied. Stable template IDs have independent definition and
+schema versions. Resolution classifies full, partial, and incompatible matches;
+unsupported definitions fall back without touching the saved dashboard. A
+materialized dashboard stores immutable origin metadata for reproducibility,
+but subsequent widget edits remain independent from the template catalog.
 Both streams share a persisted monotonic cursor. Historical queries read at a
 cursor-consistent snapshot, while a resumable SSE tail carries only newly
 committed batches to the browser. This keeps live refresh work proportional to

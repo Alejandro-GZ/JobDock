@@ -7,7 +7,7 @@ import { DashboardTemplatePicker } from "@/components/dashboard-template-picker"
 import { ObservabilityDashboard, type NumericWidgetSource } from "@/components/observability-dashboard";
 import { appendMetricUpdate, appendResourceUpdate, metricPoints, resourcePoints, seriesQuery } from "@/lib/series";
 import type { Job, MetricSeriesResponse, ResourceSeriesResponse, SeriesUpdate } from "@/types";
-import type { DashboardWidget } from "@/lib/dashboard-widgets";
+import type { DashboardTemplateReference, DashboardWidget } from "@/lib/dashboard-widgets";
 
 export function MetricsPanel({ job, editMode=false,templateOpen=false,onTemplateOpenChange=()=>undefined }: { job: Job;editMode?:boolean;templateOpen?:boolean;onTemplateOpenChange?:(open:boolean)=>void }) {
   const queryClient = useQueryClient();
@@ -54,16 +54,17 @@ export function MetricsPanel({ job, editMode=false,templateOpen=false,onTemplate
   const metricSeries:NumericWidgetSource[]=(catalog.data??[]).map(descriptor=>{const series=metrics.data?.series.find(item=>item.name===descriptor.name);return{kind:"metric",name:descriptor.name,title:descriptor.name,unit:series?.unit||descriptor.unit||"unitless",points:series?metricPoints(series.points):[],summary:series?{last:series.last,min:series.min,max:series.max}:undefined}});
   const dashboardReady=dashboard.isSuccess&&catalog.isSuccess&&metrics.isSuccess&&resources.isSuccess&&(!job.attempt_id||(checkpoints.isSuccess&&progress.isSuccess&&matrices.isSuccess));
   const saveDashboard=useCallback((widgets:DashboardWidget[])=>{setDashboardWidgets(widgets);if(saveTimer.current)clearTimeout(saveTimer.current);const pending={jobID:job.id,widgets};pendingSave.current=pending;saveTimer.current=setTimeout(()=>{api.saveDashboard(pending.jobID,pending.widgets).catch((error:Error)=>toast.error("Dashboard could not be saved",{description:error.message}));if(pendingSave.current===pending)pendingSave.current=undefined},400)},[job.id]);
-  const replaceDashboard=useCallback(async(widgets:DashboardWidget[])=>{const previous=structuredClone(currentWidgets.current);if(saveTimer.current)clearTimeout(saveTimer.current);pendingSave.current=undefined;setDashboardWidgets(widgets);setReplacement({key:`${Date.now()}-${Math.random()}`,widgets});try{await api.saveDashboard(job.id,widgets);queryClient.setQueryData(["job-dashboard",job.id],{schema_version:1,widgets})}catch(error){setDashboardWidgets(previous);setReplacement({key:`rollback-${Date.now()}-${Math.random()}`,widgets:previous});throw error}},[job.id,queryClient]);
+  const replaceDashboard=useCallback(async(widgets:DashboardWidget[],materializedFrom:DashboardTemplateReference|null)=>{const previous=structuredClone(currentWidgets.current);if(saveTimer.current)clearTimeout(saveTimer.current);pendingSave.current=undefined;setDashboardWidgets(widgets);setReplacement({key:`${Date.now()}-${Math.random()}`,widgets});try{const saved=await api.saveDashboard(job.id,widgets,materializedFrom);queryClient.setQueryData(["job-dashboard",job.id],saved)}catch(error){setDashboardWidgets(previous);setReplacement({key:`rollback-${Date.now()}-${Math.random()}`,widgets:previous});throw error}},[job.id,queryClient]);
   const rememberWidgets=useCallback((widgets:DashboardWidget[])=>{currentWidgets.current=structuredClone(widgets)},[]);
   useEffect(()=>()=>{if(saveTimer.current)clearTimeout(saveTimer.current);const pending=pendingSave.current;if(pending){pendingSave.current=undefined;void api.saveDashboard(pending.jobID,pending.widgets).catch(()=>undefined)}},[job.id]);
   return <div className="flex h-full min-h-0 flex-col gap-2">
+    {dashboard.data?.fallback_reason&&<p role="status" className="flex shrink-0 items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-amber-700 dark:text-amber-300"><TriangleAlert className="size-4"/>{dashboard.data.compatibility==="partially_compatible"?"Unsupported widgets were omitted; the compatible layout remains editable.":"The saved dashboard is incompatible, so JobDock loaded the safe default layout."}</p>}
     {(metrics.data?.truncated || resources.data?.truncated) && <p className="flex shrink-0 items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-amber-700 dark:text-amber-300"><TriangleAlert className="size-4"/>The selected range exceeded the point limit. Choose a shorter range.</p>}
     {(dashboard.isError||catalog.isError||metrics.isError||resources.isError||progress.isError||matrices.isError||checkpoints.isError)
       ? <div role="alert" className="grid min-h-[320px] place-items-center rounded-md border border-destructive/30 text-sm text-destructive">The observability dashboard could not be loaded.</div>
       : <div className="min-h-0 flex-1"><ObservabilityDashboard jobID={job.id} attemptID={job.attempt_id??"unassigned"} ready={dashboardReady} numericSources={[...metricSeries,...resourceSeries]} progress={progress.data} matrices={matrices.data??[]} markers={markers} initialWidgets={dashboard.data?.widgets} onWidgetsChange={saveDashboard} onWidgetsReady={rememberWidgets} replacement={replacement} editMode={editMode}/></div>
     }
-    {job.attempt_id&&<DashboardTemplatePicker open={templateOpen} onOpenChange={onTemplateOpenChange} jobID={job.id} attemptID={job.attempt_id} currentWidgets={currentWidgets.current} onApply={replaceDashboard}/>}
+    {job.attempt_id&&<DashboardTemplatePicker open={templateOpen} onOpenChange={onTemplateOpenChange} jobID={job.id} attemptID={job.attempt_id} currentWidgets={currentWidgets.current} currentMaterialization={dashboard.data?.materialized_from} onApply={replaceDashboard}/>}
   </div>;
 }
 
