@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from jobdock import CheckpointObservation, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, Phase, ProgressObservation, SEMANTIC_CATALOG_VERSION, current_job
+from jobdock import CheckpointObservation, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, ObservabilityPhase, Phase, ProgressObservation, SEMANTIC_CATALOG_VERSION, current_job
 
 
 def test_current_job_is_noop_without_environment(monkeypatch):
@@ -72,6 +72,24 @@ def test_observability_manifest_declares_schema_without_values(tmp_path: Path, m
     job.close()
 
 
+def test_observability_can_extend_with_stable_phases_at_runtime(tmp_path: Path, monkeypatch):
+    job = Job("id", "http://jobdock.test", "token", tmp_path)
+    queued = []
+    monkeypatch.setattr(job, "_enqueue", lambda endpoint, payload: queued.append((endpoint, payload)))
+    job.extend_observability(
+        phases=[ObservabilityPhase("Model_Selection", "Model selection", order=20, metadata={"strategy": "hpo"})],
+        sources=[ObservableSource("trial/best_score", tags=[MetricRole.BEST_SCORE], phase="model_selection")],
+    )
+    assert queued == [("observability/manifest", {
+        "version": 1,
+        "sources": [{"name": "trial/best_score", "type": "metric", "tags": ["metric:best_score"], "phase": "model_selection"}],
+        "phases": [{"id": "model_selection", "name": "Model selection", "order": 20, "metadata": {"strategy": "hpo"}}],
+    })]
+    with pytest.raises(ValueError, match="phase ids must be unique"):
+        job.declare_observability(ObservabilityManifest([], phases=[ObservabilityPhase("train"), ObservabilityPhase("TRAIN")]))
+    job.close()
+
+
 def test_typed_semantics_match_the_canonical_catalog():
     catalog_path = Path(__file__).resolve().parents[3] / "internal" / "httpapi" / "catalog" / "observability.json"
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
@@ -118,7 +136,13 @@ def test_noop_accepts_enriched_contracts_without_consuming_iterables():
         manifest_consumed = True
         yield ObservableSource("loss")
     noop.declare_observability(ObservabilityManifest(sources()))
-    assert consumed is False and tags_consumed is False and manifest_consumed is False
+    phase_consumed = False
+    def phases():
+        nonlocal phase_consumed
+        phase_consumed = True
+        yield ObservabilityPhase("train")
+    noop.extend_observability(sources=sources(), phases=phases())
+    assert consumed is False and tags_consumed is False and manifest_consumed is False and phase_consumed is False
     assert CheckpointObservation(label="best").label == "best"
     assert ProgressObservation(.5, milestone="train").milestone == "train"
     assert Milestone("train", weight=1).weight == 1

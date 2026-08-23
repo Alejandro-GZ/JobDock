@@ -24,6 +24,7 @@ export type ObservationMetadata=Record<string,unknown>;
 export type MetricSeries={name:string;unit?:string;tags?:string[];metadata?:ObservationMetadata;points:MetricPoint[];last:number;min:number;max:number;sample_count:number};
 export type MetricSeriesResponse={attempt_id:string;cursor:number;from:string;to:string;resolution_seconds:number;truncated:boolean;series:MetricSeries[]};
 export type ObservableSourceDescriptor={name:string;type:string;unit?:string;tags?:string[];metadata?:ObservationMetadata;phase?:string;milestone?:string;declared:boolean;observed:boolean};
+export type ObservabilityPhase={id:string;name?:string;order?:number;metadata?:ObservationMetadata};
 export type MetricDescriptor=ObservableSourceDescriptor&{type:"metric"};
 export type ResourcePoint={cursor?:number;attempt_id:string;captured_at:string;resolution_seconds:number;sample_count:number;cpu_millis:number;memory_bytes:number;gpu_utilization_basis_points?:number;gpu_memory_bytes?:number};
 export type ResourceSeriesResponse={attempt_id:string;cursor:number;from:string;to:string;resolution_seconds:number;truncated:boolean;points:ResourcePoint[]};

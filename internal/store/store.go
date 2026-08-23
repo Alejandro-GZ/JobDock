@@ -799,7 +799,7 @@ func (s *Store) AppendServerEvent(ctx context.Context, jobID, eventType string, 
 }
 
 func (s *Store) JobByToken(ctx context.Context, tokenHash string) (domain.Job, error) {
-	row := s.db.QueryRowContext(ctx, jobSelect+` JOIN job_attempts a ON a.job_id=j.id WHERE a.job_token_hash=?`, tokenHash)
+	row := s.db.QueryRowContext(ctx, jobSelect+` JOIN job_attempts a ON a.job_id=j.id AND a.id=j.attempt_id WHERE a.job_token_hash=?`, tokenHash)
 	return scanJob(row)
 }
 

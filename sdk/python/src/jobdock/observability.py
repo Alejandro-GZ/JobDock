@@ -42,6 +42,17 @@ class ObservabilityManifest:
 
     sources: Sequence[ObservableSource]
     version: int = 1
+    phases: Sequence["ObservabilityPhase"] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ObservabilityPhase:
+    """Stable pipeline phase known before it begins."""
+
+    id: str
+    name: str | None = None
+    order: int | None = None
+    metadata: Metadata | None = None
 
 
 @dataclass(frozen=True, slots=True)

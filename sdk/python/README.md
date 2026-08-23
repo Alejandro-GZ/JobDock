@@ -40,7 +40,7 @@ the current attempt only; it does not create metric points or synthetic
 observations:
 
 ```python
-from jobdock import MetricRole, ObservableSource, ObservabilityManifest, Phase
+from jobdock import MetricRole, ObservableSource, ObservabilityManifest, ObservabilityPhase, Phase
 
 job.declare_observability(ObservabilityManifest(sources=[
     ObservableSource(
@@ -52,6 +52,9 @@ job.declare_observability(ObservabilityManifest(sources=[
     ),
     ObservableSource("validation/confusion", type="matrix", phase="validation"),
     ObservableSource("pipeline", type="progress", milestone="training_complete"),
+], phases=[
+    ObservabilityPhase("train", "Training", order=10, metadata={"epochs": 100}),
+    ObservabilityPhase("validation", "Validation", order=20),
 ]))
 ```
 
@@ -61,6 +64,25 @@ Manifests use version 1, contain 1–256 unique type/name pairs, and are limited
 to 256 KiB. Each source retains the existing limits of 32 semantic tags, a
 64-character unit, and 16 KiB of portable JSON metadata. Declaration is
 optional; jobs that omit it continue to discover sources from real telemetry.
+
+Pipelines that discover work dynamically can extend the same attempt catalog.
+Identical calls are no-ops and do not create duplicate phases, sources, or
+events:
+
+```python
+job.extend_observability(
+    phases=[ObservabilityPhase("model_selection", "Model selection", order=30)],
+    sources=[ObservableSource(
+        "trial/best_score",
+        tags=[MetricRole.BEST_SCORE],
+        phase="model_selection",
+    )],
+)
+```
+
+Phase IDs are stable lowercase identifiers; display names, order and metadata
+are optional. Once declared, changing a source's type/unit/tags or changing an
+existing phase definition is rejected instead of rewriting historical meaning.
 
 `unit`, `metadata`, and `tags` are series descriptors for one metric name and
 attempt. Omitted descriptor fields inherit the existing values; conflicting

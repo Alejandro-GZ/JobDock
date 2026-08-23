@@ -1450,6 +1450,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		writeProblem(w, 404, "not_found", "Resource was not found")
 	case errors.Is(err, store.ErrConflict):
 		writeProblem(w, 409, "conflict", err.Error())
+	case errors.Is(err, store.ErrObservableDeclarationConflict):
+		writeProblem(w, 409, "observable_declaration_conflict", err.Error())
 	default:
 		writeProblem(w, 500, "database_error", err.Error())
 	}

@@ -851,12 +851,12 @@ paths:
     post:
       security: [{bearerToken: []}]
       operationId: declareObservabilityManifest
-      description: Declare attempt-scoped observable-source schemas without creating samples or observations.
+      description: Idempotently declare or extend attempt-scoped observable-source schemas and stable phases without creating samples or observations.
       requestBody:
         required: true
         content: {application/json: {schema: {$ref: '#/components/schemas/ObservabilityManifest'}}}
       responses:
-        '202': {description: Manifest accepted}
+        '202': {description: Manifest accepted, content: {application/json: {schema: {$ref: '#/components/schemas/ObservabilityManifestUpdate'}}}}
         '409': {$ref: '#/components/responses/Problem'}
         '422': {$ref: '#/components/responses/Problem'}
   /job-context/params:
@@ -1267,7 +1267,7 @@ components:
         unit: {type: string, maxLength: 64}
         tags: {$ref: '#/components/schemas/SemanticMetricTags'}
         metadata: {$ref: '#/components/schemas/ObservationMetadata'}
-        phase: {type: string, minLength: 1, maxLength: 128}
+        phase: {type: string, pattern: '^[a-z][a-z0-9_.-]{0,127}$'}
         milestone: {type: string, minLength: 1, maxLength: 128}
         declared: {type: boolean}
         observed: {type: boolean}
@@ -1287,16 +1287,17 @@ components:
         unit: {type: string, maxLength: 64}
         tags: {$ref: '#/components/schemas/SemanticMetricTags'}
         metadata: {$ref: '#/components/schemas/ObservationMetadata'}
-        phase: {type: string, minLength: 1, maxLength: 128}
+        phase: {type: string, pattern: '^[a-z][a-z0-9_.-]{0,127}$'}
         milestone: {type: string, minLength: 1, maxLength: 128}
         declared: {type: boolean}
         observed: {type: boolean}
     ObservableSourceDescriptorList:
       type: object
-      required: [attempt_id, items]
+      required: [attempt_id, items, phases]
       properties:
         attempt_id: {type: string}
         items: {type: array, maxItems: 256, items: {$ref: '#/components/schemas/ObservableSourceDescriptor'}}
+        phases: {type: array, maxItems: 128, items: {$ref: '#/components/schemas/ObservabilityPhase'}}
     DashboardWidgetSource:
       type: object
       additionalProperties: false
@@ -1724,20 +1725,43 @@ components:
         unit: {type: string, minLength: 1, maxLength: 64}
         tags: {$ref: '#/components/schemas/SemanticMetricTags'}
         metadata: {$ref: '#/components/schemas/ObservationMetadata'}
-        phase: {type: string, minLength: 1, maxLength: 128}
+        phase: {type: string, pattern: '^[a-z][a-z0-9_.-]{0,127}$'}
         milestone: {type: string, minLength: 1, maxLength: 128}
     ObservabilityManifest:
       type: object
       additionalProperties: false
-      required: [version, sources]
+      required: [version]
+      anyOf:
+        - {required: [sources]}
+        - {required: [phases]}
       properties:
         version: {type: integer, enum: [1]}
         sources:
           type: array
           minItems: 1
           maxItems: 256
-          description: Unique by type and name. The complete encoded manifest is limited to 256 KiB.
+          description: Unique by name. The complete encoded manifest is limited to 256 KiB.
           items: {$ref: '#/components/schemas/ObservableSourceDeclaration'}
+        phases:
+          type: array
+          minItems: 1
+          maxItems: 128
+          items: {$ref: '#/components/schemas/ObservabilityPhase'}
+    ObservabilityPhase:
+      type: object
+      additionalProperties: false
+      required: [id]
+      properties:
+        id: {type: string, pattern: '^[a-z][a-z0-9_.-]{0,127}$'}
+        name: {type: string, minLength: 1, maxLength: 128}
+        order: {type: integer, minimum: 0, maximum: 4096}
+        metadata: {$ref: '#/components/schemas/ObservationMetadata'}
+    ObservabilityManifestUpdate:
+      type: object
+      required: [sources_added, phases_added]
+      properties:
+        sources_added: {type: array, maxItems: 256, items: {type: string}}
+        phases_added: {type: array, maxItems: 128, items: {type: string}}
     SemanticMetricTags:
       type: array
       maxItems: 32

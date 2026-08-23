@@ -45,6 +45,9 @@ func (s *Store) AppendProgress(ctx context.Context, jobID, attemptID, kind strin
 		return err
 	}
 	defer tx.Rollback()
+	if err = ensureDeclaredSourceType(ctx, tx, attemptID, "progress", "progress"); err != nil {
+		return err
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO job_progress_observations(job_id,attempt_id,kind,value,milestone,step,captured_at,metadata_json) VALUES(?,?,?,?,?,?,?,?)`, jobID, attemptID, kind, observation.Value, nullableString(observation.Milestone), observation.Step, captured.UnixMilli(), metadata); err != nil {
 		return mapConstraint(err)
 	}
@@ -181,6 +184,9 @@ func (s *Store) AppendMatrix(ctx context.Context, item domain.MatrixObservation)
 		return item, err
 	}
 	defer tx.Rollback()
+	if err = ensureDeclaredSourceType(ctx, tx, item.AttemptID, item.Name, "matrix"); err != nil {
+		return item, err
+	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO job_matrix_observations(job_id,attempt_id,name,step,captured_at,labels_json,values_json,metadata_json) VALUES(?,?,?,?,?,?,?,?)`, item.JobID, item.AttemptID, item.Name, item.Step, captured.UnixMilli(), labels, values, metadata)
 	if err != nil {
 		return item, mapConstraint(err)

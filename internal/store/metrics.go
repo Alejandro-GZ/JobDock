@@ -126,12 +126,13 @@ func ensureMetricDescriptor(ctx context.Context, tx *sql.Tx, sample domain.Metri
 		return encodeErr
 	}
 	var declaredUnit, declaredMetadata, declaredTags sql.NullString
-	declarationErr := tx.QueryRowContext(ctx, `SELECT unit,metadata_json,tags_json FROM job_observability_manifest_sources WHERE attempt_id=? AND source_type='metric' AND name=?`, sample.AttemptID, sample.Name).Scan(&declaredUnit, &declaredMetadata, &declaredTags)
+	var declaredType string
+	declarationErr := tx.QueryRowContext(ctx, `SELECT source_type,unit,metadata_json,tags_json FROM job_observability_manifest_sources WHERE attempt_id=? AND name=?`, sample.AttemptID, sample.Name).Scan(&declaredType, &declaredUnit, &declaredMetadata, &declaredTags)
 	if declarationErr != nil && !errors.Is(declarationErr, sql.ErrNoRows) {
 		return declarationErr
 	}
 	if declarationErr == nil {
-		if sample.Unit != "" && declaredUnit.Valid && sample.Unit != declaredUnit.String || metadata != "" && declaredMetadata.Valid && metadata != declaredMetadata.String || tags != "" && declaredTags.Valid && tags != declaredTags.String {
+		if declaredType != "metric" || sample.Unit != "" && declaredUnit.Valid && sample.Unit != declaredUnit.String || metadata != "" && declaredMetadata.Valid && metadata != declaredMetadata.String || tags != "" && declaredTags.Valid && tags != declaredTags.String {
 			return ErrMetricDescriptorConflict
 		}
 		if sample.Unit == "" && declaredUnit.Valid {

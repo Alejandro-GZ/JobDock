@@ -9,7 +9,7 @@ except PackageNotFoundError:
     __version__ = "0.0.0.dev0"
 
 from .client import Job, NoopJob, current_job
-from .observability import CheckpointObservation, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ProgressObservation, SemanticTags
+from .observability import CheckpointObservation, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ObservabilityPhase, ProgressObservation, SemanticTags
 from .semantics import MetricRole, Phase, SEMANTIC_CATALOG_VERSION
 
-__all__ = ["CheckpointObservation", "JSONValue", "Job", "MatrixObservation", "Metric", "MetricRole", "Milestone", "NoopJob", "ObservableSource", "ObservabilityManifest", "Phase", "ProgressObservation", "SEMANTIC_CATALOG_VERSION", "SemanticTags", "__version__", "current_job"]
+__all__ = ["CheckpointObservation", "JSONValue", "Job", "MatrixObservation", "Metric", "MetricRole", "Milestone", "NoopJob", "ObservableSource", "ObservabilityManifest", "ObservabilityPhase", "Phase", "ProgressObservation", "SEMANTIC_CATALOG_VERSION", "SemanticTags", "__version__", "current_job"]

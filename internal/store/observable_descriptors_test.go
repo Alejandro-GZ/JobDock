@@ -39,11 +39,19 @@ func TestRichObservableDescriptorsAreStableAndAttemptScoped(t *testing.T) {
 		{Name: "future_accuracy", Type: "metric", Unit: "ratio", Tags: []string{"metric:accuracy"}, Phase: "validation"},
 		{Name: "validation", Type: "matrix", Phase: "validation"},
 	}
-	if err = repository.DeclareObservableSources(ctx, job.ID, attemptID, declarations); err != nil {
+	trainOrder, validationOrder := 10, 20
+	phases := []domain.ObservabilityPhaseDeclaration{{ID: "validation", Name: "Validation", Order: &validationOrder, Metadata: map[string]any{"dataset": "holdout"}}, {ID: "train", Name: "Training", Order: &trainOrder}}
+	update, err := repository.ApplyObservabilityManifest(ctx, job.ID, attemptID, declarations, phases)
+	if err != nil || len(update.SourcesAdded) != 3 || len(update.PhasesAdded) != 2 {
 		t.Fatal(err)
 	}
-	if err = repository.DeclareObservableSources(ctx, job.ID, attemptID, declarations); err != nil {
-		t.Fatalf("identical manifest must be idempotent: %v", err)
+	update, err = repository.ApplyObservabilityManifest(ctx, job.ID, attemptID, declarations, phases)
+	if err != nil || len(update.SourcesAdded) != 0 || len(update.PhasesAdded) != 0 {
+		t.Fatalf("identical manifest must be idempotent: %#v %v", update, err)
+	}
+	storedPhases, err := repository.ObservabilityPhases(ctx, job.ID, attemptID)
+	if err != nil || len(storedPhases) != 2 || storedPhases[0].ID != "train" || storedPhases[1].ID != "validation" || storedPhases[1].Metadata["dataset"] != "holdout" {
+		t.Fatalf("ordered attempt phases: %#v %v", storedPhases, err)
 	}
 	if err = repository.AppendMetricSamples(ctx, []domain.MetricSample{{JobID: job.ID, AttemptID: attemptID, Name: "loss", Value: .5, CapturedAt: time.Now().UTC(), Tags: []string{"metric:loss"}}}); err != nil {
 		t.Fatal(err)
@@ -74,6 +82,13 @@ func TestRichObservableDescriptorsAreStableAndAttemptScoped(t *testing.T) {
 	if err = repository.DeclareObservableSources(ctx, job.ID, attemptID, []domain.ObservableSourceDeclaration{{Name: "loss", Type: "metric", Unit: "seconds"}}); !errors.Is(err, store.ErrObservableDeclarationConflict) {
 		t.Fatalf("conflicting declaration: %v", err)
 	}
+	if err = repository.DeclareObservableSources(ctx, job.ID, attemptID, []domain.ObservableSourceDeclaration{{Name: "loss", Type: "matrix"}}); !errors.Is(err, store.ErrObservableDeclarationConflict) {
+		t.Fatalf("incompatible source type change: %v", err)
+	}
+	changedOrder := 30
+	if _, err = repository.ApplyObservabilityManifest(ctx, job.ID, attemptID, nil, []domain.ObservabilityPhaseDeclaration{{ID: "train", Name: "Training", Order: &changedOrder}}); !errors.Is(err, store.ErrObservableDeclarationConflict) {
+		t.Fatalf("incompatible phase change: %v", err)
+	}
 	otherAttemptID := ids.New()
 	if _, err = repository.DB().ExecContext(ctx, `INSERT INTO job_attempts(id,job_id,attempt_number,node_id,assignment_id,status,job_token_hash,created_at) VALUES(?,?,2,?,?,?,?,?)`, otherAttemptID, job.ID, node.ID, ids.New(), "RUNNING", ids.New(), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
@@ -81,5 +96,9 @@ func TestRichObservableDescriptorsAreStableAndAttemptScoped(t *testing.T) {
 	other, err := repository.ObservableDescriptors(ctx, job.ID, otherAttemptID)
 	if err != nil || len(other) != 0 {
 		t.Fatalf("descriptors leaked across attempts: %#v %v", other, err)
+	}
+	otherPhases, err := repository.ObservabilityPhases(ctx, job.ID, otherAttemptID)
+	if err != nil || len(otherPhases) != 0 {
+		t.Fatalf("phases leaked across attempts: %#v %v", otherPhases, err)
 	}
 }

@@ -16,7 +16,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
-from .observability import CheckpointObservation, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ProgressObservation
+from .observability import CheckpointObservation, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ObservabilityPhase, ProgressObservation
 from . import __version__
 
 logger = logging.getLogger("jobdock")
@@ -42,6 +42,7 @@ class NoopJob:
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None: pass
     def metrics(self, items: Iterable[Metric]) -> None: pass
     def declare_observability(self, manifest: ObservabilityManifest) -> None: pass
+    def extend_observability(self, *, sources: Iterable[ObservableSource] = (), phases: Iterable[ObservabilityPhase] = ()) -> None: pass
     def param(self, name: str, value: str | int | float | bool) -> None: pass
     def event(self, event_type: str, payload: dict[str, Any] | None = None) -> None: pass
     def artifact(self, relative_path: str | os.PathLike[str]) -> Path: return Path(relative_path)
@@ -121,18 +122,11 @@ class Job:
 
     def declare_observability(self, manifest: ObservabilityManifest) -> None:
         """Declare expected sources without emitting observations."""
-        if manifest.version != 1:
-            raise ValueError("observability manifest version must be 1")
-        sources = [_observable_source_payload(source) for source in manifest.sources]
-        if not sources or len(sources) > 256:
-            raise ValueError("observability manifest must contain 1-256 sources")
-        identities = {(source["type"], source["name"]) for source in sources}
-        if len(identities) != len(sources):
-            raise ValueError("observability source type/name pairs must be unique")
-        payload = {"version": 1, "sources": sources}
-        if len(json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")) > 256 << 10:
-            raise ValueError("observability manifest must not exceed 256 KiB")
-        self._enqueue("observability/manifest", payload)
+        self._enqueue("observability/manifest", _observability_manifest_payload(manifest))
+
+    def extend_observability(self, *, sources: Iterable[ObservableSource] = (), phases: Iterable[ObservabilityPhase] = ()) -> None:
+        """Idempotently add sources or stable phases while a job is running."""
+        self.declare_observability(ObservabilityManifest(tuple(sources), phases=tuple(phases)))
 
     def param(self, name: str, value: str | int | float | bool) -> None:
         if not name or not isinstance(value, (str, int, float, bool)):
@@ -323,7 +317,7 @@ def _observable_source_payload(source: ObservableSource) -> dict[str, Any]:
     name = source.name.strip()
     source_type = source.type.strip().lower()
     unit = source.unit.strip() if source.unit is not None else None
-    phase = source.phase.strip() if source.phase is not None else None
+    phase = source.phase.strip().lower() if source.phase is not None else None
     milestone = source.milestone.strip() if source.milestone is not None else None
     if not name or len(name) > 128:
         raise ValueError("observable source name must contain 1-128 characters")
@@ -331,8 +325,8 @@ def _observable_source_payload(source: ObservableSource) -> dict[str, Any]:
         raise ValueError("observable source type must be a lowercase portable identifier")
     if unit is not None and (not unit or len(unit) > 64):
         raise ValueError("observable source unit must contain 1-64 characters")
-    if phase is not None and (not phase or len(phase) > 128):
-        raise ValueError("observable source phase must contain 1-128 characters")
+    if phase is not None and not _observability_phase_id_pattern.fullmatch(phase):
+        raise ValueError("observable source phase must be a stable lowercase identifier")
     if milestone is not None and (not milestone or len(milestone) > 128):
         raise ValueError("observable source milestone must contain 1-128 characters")
     if phase is not None and milestone is not None:
@@ -346,6 +340,45 @@ def _observable_source_payload(source: ObservableSource) -> dict[str, Any]:
     if phase is not None: item["phase"] = phase
     if milestone is not None: item["milestone"] = milestone
     return item
+
+
+_observability_phase_id_pattern = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+
+
+def _observability_phase_payload(phase: ObservabilityPhase) -> dict[str, Any]:
+    phase_id = phase.id.strip().lower()
+    name = phase.name.strip() if phase.name is not None else None
+    if not _observability_phase_id_pattern.fullmatch(phase_id):
+        raise ValueError("observability phase id must be a lowercase portable identifier")
+    if name is not None and (not name or len(name) > 128):
+        raise ValueError("observability phase name must contain 1-128 characters")
+    if phase.order is not None and (isinstance(phase.order, bool) or not isinstance(phase.order, int) or phase.order < 0 or phase.order > 4096):
+        raise ValueError("observability phase order must be an integer between 0 and 4096")
+    item: dict[str, Any] = {"id": phase_id}
+    if name is not None: item["name"] = name
+    if phase.order is not None: item["order"] = phase.order
+    metadata = _validated_metadata(phase.metadata)
+    if metadata is not None: item["metadata"] = metadata
+    return item
+
+
+def _observability_manifest_payload(manifest: ObservabilityManifest) -> dict[str, Any]:
+    if manifest.version != 1:
+        raise ValueError("observability manifest version must be 1")
+    sources = [_observable_source_payload(source) for source in manifest.sources]
+    phases = [_observability_phase_payload(phase) for phase in manifest.phases]
+    if not sources and not phases or len(sources) > 256 or len(phases) > 128:
+        raise ValueError("observability manifest requires sources or phases and allows at most 256 sources and 128 phases")
+    if len({source["name"] for source in sources}) != len(sources):
+        raise ValueError("observability source names must be unique")
+    if len({phase["id"] for phase in phases}) != len(phases):
+        raise ValueError("observability phase ids must be unique")
+    payload: dict[str, Any] = {"version": 1}
+    if sources: payload["sources"] = sources
+    if phases: payload["phases"] = phases
+    if len(json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")) > 256 << 10:
+        raise ValueError("observability manifest must not exceed 256 KiB")
+    return payload
 
 
 _semantic_tag_pattern = re.compile(r"^[a-z][a-z0-9_.-]{0,31}:[a-z0-9][a-z0-9_.-]{0,63}$")

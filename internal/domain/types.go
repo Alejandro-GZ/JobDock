@@ -368,6 +368,13 @@ type ObservableSourceDeclaration struct {
 	Milestone string         `json:"milestone,omitempty"`
 }
 
+type ObservabilityPhaseDeclaration struct {
+	ID       string         `json:"id"`
+	Name     string         `json:"name,omitempty"`
+	Order    *int           `json:"order,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
 // ObservationContext is the presentation-agnostic context shared by richer
 // observability primitives. Specialized persistence is introduced by the
 // stories that make each primitive queryable.

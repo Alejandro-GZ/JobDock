@@ -62,7 +62,7 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 	server := httptest.NewServer(api.Handler())
 	defer server.Close()
 
-	manifestPayload := `{"version":1,"sources":[{"name":"loss","type":"metric","unit":"ratio","tags":["metric:loss","phase:train"],"metadata":{"split":"train"},"phase":"train"},{"name":"future_accuracy","type":"metric","unit":"ratio","tags":["metric:accuracy"],"phase":"validation"},{"name":"validation/confusion","type":"matrix","milestone":"validated"}]}`
+	manifestPayload := `{"version":1,"sources":[{"name":"loss","type":"metric","unit":"ratio","tags":["metric:loss","phase:train"],"metadata":{"split":"train"},"phase":"train"},{"name":"future_accuracy","type":"metric","unit":"ratio","tags":["metric:accuracy"],"phase":"validation"},{"name":"validation/confusion","type":"matrix","milestone":"validated"}],"phases":[{"id":"validation","name":"Validation","order":20},{"id":"train","name":"Training","order":10,"metadata":{"epochs":10}}]}`
 	manifestRequest, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/job-context/observability/manifest", strings.NewReader(manifestPayload))
 	manifestRequest.Header.Set("Content-Type", "application/json")
 	manifestRequest.Header.Set("Authorization", "Bearer "+jobToken)
@@ -70,9 +70,14 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var manifestUpdate store.ObservabilityManifestUpdate
+	_ = json.NewDecoder(manifestResponse.Body).Decode(&manifestUpdate)
 	manifestResponse.Body.Close()
 	if manifestResponse.StatusCode != http.StatusAccepted {
 		t.Fatalf("manifest ingestion status: %d", manifestResponse.StatusCode)
+	}
+	if len(manifestUpdate.SourcesAdded) != 3 || len(manifestUpdate.PhasesAdded) != 2 {
+		t.Fatalf("initial manifest update: %#v", manifestUpdate)
 	}
 	var syntheticSamples int
 	if err = repository.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM job_metric_samples WHERE attempt_id=?`, attemptID).Scan(&syntheticSamples); err != nil || syntheticSamples != 0 {
@@ -94,11 +99,37 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 	if metricResponse.StatusCode != http.StatusAccepted {
 		t.Fatalf("metric ingestion status: %d", metricResponse.StatusCode)
 	}
+	extensionPayload := `{"version":1,"sources":[{"name":"trial/best_score","type":"metric","unit":"ratio","tags":["metric:best_score"],"phase":"model_selection"}],"phases":[{"id":"model_selection","name":"Model selection","order":30}]}`
+	for call := 0; call < 2; call++ {
+		extensionRequest, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/job-context/observability/manifest", strings.NewReader(extensionPayload))
+		extensionRequest.Header.Set("Content-Type", "application/json")
+		extensionRequest.Header.Set("Authorization", "Bearer "+jobToken)
+		extensionResponse, requestErr := http.DefaultClient.Do(extensionRequest)
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		var extensionUpdate store.ObservabilityManifestUpdate
+		_ = json.NewDecoder(extensionResponse.Body).Decode(&extensionUpdate)
+		extensionResponse.Body.Close()
+		if extensionResponse.StatusCode != http.StatusAccepted || call == 0 && (len(extensionUpdate.SourcesAdded) != 1 || len(extensionUpdate.PhasesAdded) != 1) || call == 1 && (len(extensionUpdate.SourcesAdded) != 0 || len(extensionUpdate.PhasesAdded) != 0) {
+			t.Fatalf("runtime manifest extension call=%d status=%d update=%#v", call, extensionResponse.StatusCode, extensionUpdate)
+		}
+	}
 	events, _ := repository.Events(ctx, job.ID, 0)
+	manifestEvents := 0
 	for _, event := range events {
 		if event.Type == "metrics" {
 			t.Fatal("structured metrics were also persisted as generic job events")
 		}
+		if event.Type == "observability_manifest_updated" {
+			manifestEvents++
+			if event.AttemptID != attemptID {
+				t.Fatalf("manifest event is not attempt-aware: %#v", event)
+			}
+		}
+	}
+	if manifestEvents != 2 {
+		t.Fatalf("manifest changes should emit exactly two events, got %d", manifestEvents)
 	}
 
 	ownerClient := loginSeriesUser(t, server.URL, owner.Username)
@@ -107,7 +138,7 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 		Items     []store.MetricDescriptor `json:"items"`
 	}
 	getSeriesJSON(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/metrics/catalog?attempt_id="+attemptID, &catalog)
-	if catalog.AttemptID != attemptID || len(catalog.Items) != 3 {
+	if catalog.AttemptID != attemptID || len(catalog.Items) != 4 {
 		t.Fatalf("semantic metric catalog: %#v", catalog)
 	}
 	byName := map[string]store.MetricDescriptor{}
@@ -118,11 +149,12 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 		t.Fatalf("declared metric catalog state: %#v", catalog)
 	}
 	var observableCatalog struct {
-		AttemptID string                   `json:"attempt_id"`
-		Items     []store.MetricDescriptor `json:"items"`
+		AttemptID string                                 `json:"attempt_id"`
+		Items     []store.MetricDescriptor               `json:"items"`
+		Phases    []domain.ObservabilityPhaseDeclaration `json:"phases"`
 	}
 	getSeriesJSON(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/observability/catalog?attempt_id="+attemptID, &observableCatalog)
-	if observableCatalog.AttemptID != attemptID || len(observableCatalog.Items) != 4 || observableCatalog.Items[3].Name != "validation/confusion" || !observableCatalog.Items[3].Declared || observableCatalog.Items[3].Observed {
+	if observableCatalog.AttemptID != attemptID || len(observableCatalog.Items) != 5 || observableCatalog.Items[4].Name != "validation/confusion" || !observableCatalog.Items[4].Declared || observableCatalog.Items[4].Observed || len(observableCatalog.Phases) != 3 || observableCatalog.Phases[0].ID != "train" || observableCatalog.Phases[2].ID != "model_selection" {
 		t.Fatalf("observable catalog: %#v", observableCatalog)
 	}
 	var filteredCatalog struct {

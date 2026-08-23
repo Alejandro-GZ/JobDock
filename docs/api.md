@@ -60,14 +60,20 @@ both dimensions. Legacy untagged metrics remain visible in the unfiltered
 catalog and simply do not match a tag filter.
 
 Running jobs may send `POST /api/v1/job-context/observability/manifest` with a
-versioned, bounded list of expected source schemas. The server derives the
+versioned, bounded list of expected source schemas and stable pipeline phases.
+The same endpoint supports idempotent runtime extension: identical declarations
+are no-ops, while new sources/phases are appended atomically. The server derives the
 attempt exclusively from the job token and persists declarations separately
 from samples. `GET /api/v1/jobs/{jobId}/observability/catalog` returns the
 attempt-scoped union of declared metrics and richer sources with their observed
 state. A declaration therefore never creates a fake point, cursor, or
 timestamp. Version 1 accepts 1–256 unique type/name pairs in at most 256 KiB;
 each source may carry a unit, semantic tags, bounded metadata, and either a
-phase or milestone scope. Jobs that never declare a manifest retain dynamic
+phase or milestone scope. A phase has a stable ID plus optional display name,
+order and bounded metadata. Material changes emit one attempt-aware
+`observability_manifest_updated` event; retries of an identical request emit
+nothing. Incompatible changes to an existing source type/unit/tags or phase
+definition return `409` rather than rewriting meaning. Jobs that never declare a manifest retain dynamic
 source discovery exactly as before.
 
 `POST /api/v1/jobs/{jobId}/dashboard/templates/resolve` evaluates a versioned
