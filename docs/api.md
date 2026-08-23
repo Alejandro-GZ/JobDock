@@ -58,6 +58,14 @@ for example `?tag=metric:loss&tag=phase:validation` returns only series carrying
 both dimensions. Legacy untagged metrics remain visible in the unfiltered
 catalog and simply do not match a tag filter.
 
+`POST /api/v1/jobs/{jobId}/dashboard/templates/resolve` evaluates a versioned
+dashboard template against that same bounded catalog. The response reports each
+slot as `resolved`, `missing`, `ambiguous`, or `incompatible` and returns only
+fully materializable widgets in the regular dashboard widget schema. Resolution
+is read-only, attempt-scoped, deterministic, and never reads metric samples.
+See [Dashboard templates](dashboard-templates.md) for the schema and matching
+rules.
+
 Jobs without inputs use the regular JSON create request. To attach reproducible
 inputs, `POST /api/v1/jobs` accepts `multipart/form-data` with one `spec` JSON
 field and file fields named `input:<relative-path>`. The server stores every

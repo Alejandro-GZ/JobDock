@@ -362,6 +362,17 @@ paths:
         '200': {description: Attempt metric descriptors, content: {application/json: {schema: {$ref: '#/components/schemas/MetricDescriptorList'}}}}
         '404': {$ref: '#/components/responses/Problem'}
         '422': {$ref: '#/components/responses/Problem'}
+  /jobs/{jobId}/dashboard/templates/resolve:
+    post:
+      operationId: resolveJobDashboardTemplate
+      description: Resolve a versioned declarative template against one attempt's bounded observable-source catalog without reading samples or changing telemetry.
+      parameters: [{$ref: '#/components/parameters/JobID'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardTemplateResolveRequest'}}}}
+      responses:
+        '200': {description: Deterministic slot diagnostics and materialized dashboard widgets, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardTemplateResolution'}}}}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
   /jobs/{jobId}/dashboard:
     get:
       operationId: getJobDashboard
@@ -1203,6 +1214,92 @@ components:
         time_range: {type: string, enum: [1h, 6h, 24h, 7d, all]}
         gauge_max_mode: {type: string, enum: [historical, fixed]}
         gauge_max_value: {type: number, exclusiveMinimum: 0}
+    DashboardTemplateCardinality:
+      type: object
+      additionalProperties: false
+      required: [min, max]
+      properties:
+        min: {type: integer, minimum: 0, maximum: 64}
+        max: {type: integer, minimum: 1, maximum: 64}
+    DashboardTemplateSlot:
+      type: object
+      additionalProperties: false
+      required: [id, source_types, cardinality]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 128}
+        required_tags: {$ref: '#/components/schemas/SemanticMetricTags'}
+        optional_tags: {$ref: '#/components/schemas/SemanticMetricTags'}
+        source_types: {type: array, minItems: 1, maxItems: 5, uniqueItems: true, items: {type: string, enum: [metric, resource, matrix, progress, log]}}
+        cardinality: {$ref: '#/components/schemas/DashboardTemplateCardinality'}
+        role: {type: string, enum: [x, y]}
+        on_missing: {type: string, enum: [error, omit_slot, omit_widget]}
+        on_ambiguous: {type: string, enum: [error, omit_slot, omit_widget]}
+    DashboardTemplateWidget:
+      type: object
+      additionalProperties: false
+      required: [id, type, size, position, slots]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 128}
+        type: {type: string, enum: [lineplot, barplot, scatterplot, confusion_matrix, progress, logs, gauge]}
+        title: {type: string, maxLength: 120}
+        size:
+          type: object
+          additionalProperties: false
+          required: [columns, rows]
+          properties: {columns: {type: integer, minimum: 1, maximum: 12}, rows: {type: integer, minimum: 1, maximum: 12}}
+        position:
+          type: object
+          additionalProperties: false
+          required: [x, y]
+          properties: {x: {type: integer, minimum: 0, maximum: 11}, y: {type: integer, minimum: 0, maximum: 4096}}
+        slots: {type: array, minItems: 1, maxItems: 64, items: {$ref: '#/components/schemas/DashboardTemplateSlot'}}
+        grid_columns: {type: integer, enum: [4, 12]}
+        x_axis: {type: string, enum: [time, step]}
+        time_range: {type: string, enum: [1h, 6h, 24h, 7d, all]}
+        gauge_max_mode: {type: string, enum: [historical, fixed]}
+        gauge_max_value: {type: number, exclusiveMinimum: 0}
+    DashboardTemplate:
+      type: object
+      additionalProperties: false
+      required: [id, schema_version, widgets]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 128}
+        schema_version: {type: integer, const: 1}
+        widgets: {type: array, minItems: 1, maxItems: 64, items: {$ref: '#/components/schemas/DashboardTemplateWidget'}}
+    DashboardTemplateResolveRequest:
+      type: object
+      additionalProperties: false
+      required: [template]
+      properties:
+        attempt_id: {type: string, format: uuid}
+        template: {$ref: '#/components/schemas/DashboardTemplate'}
+    DashboardTemplateSlotResolution:
+      type: object
+      required: [widget_id, slot_id, status, candidates, selected]
+      properties:
+        widget_id: {type: string}
+        slot_id: {type: string}
+        status: {type: string, enum: [resolved, missing, ambiguous, incompatible]}
+        candidates: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/DashboardWidgetSource'}}
+        selected: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/DashboardWidgetSource'}}
+    DashboardTemplateResolution:
+      type: object
+      required: [template_id, schema_version, attempt_id, widgets, widget_results, slot_results]
+      properties:
+        template_id: {type: string}
+        schema_version: {type: integer, const: 1}
+        attempt_id: {type: string}
+        widgets: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/DashboardWidget'}}
+        widget_results:
+          type: array
+          maxItems: 64
+          items:
+            type: object
+            required: [widget_id, status]
+            properties:
+              widget_id: {type: string}
+              status: {type: string, enum: [resolved, partial, omitted, unresolved]}
+        slot_results: {type: array, maxItems: 4096, items: {$ref: '#/components/schemas/DashboardTemplateSlotResolution'}}
     DashboardPreferenceWrite:
       type: object
       additionalProperties: false

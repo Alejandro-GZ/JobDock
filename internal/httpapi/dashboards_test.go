@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jobdock/jobdock/internal/auth"
 	"github.com/jobdock/jobdock/internal/config"
 	"github.com/jobdock/jobdock/internal/domain"
 	"github.com/jobdock/jobdock/internal/filestore"
@@ -108,5 +109,76 @@ func TestDashboardValidationRequiresFixedGaugeMaximum(t *testing.T) {
 	config.Widgets[0].GaugeMaxValue = &maximum
 	if err := validateDashboardConfig(config); err != nil {
 		t.Fatalf("valid fixed gauge was rejected: %v", err)
+	}
+}
+
+func TestDashboardTemplateResolutionUsesAttemptDescriptorCatalog(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	repository, err := store.Open(root + "/jobdock.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	owner := createSeriesUser(t, repository, "template-owner")
+	job := domain.Job{ID: ids.New(), OwnerID: owner.ID, Spec: domain.JobSpec{Name: "template", Image: "alpine", Command: []string{"true"}, Resources: domain.Resources{CPUMillis: 100, MemoryBytes: 1024}}, Status: domain.JobRunning, DesiredStatus: domain.JobRunning, ObservedStatus: domain.JobRunning, CreatedAt: time.Now().UTC()}
+	if err = repository.CreateJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	node := domain.Node{ID: ids.New(), Name: "template-node", Status: domain.NodeOnline, ProtocolVersion: 1, CPUTotalMillis: 1000, MemoryTotalBytes: 1 << 30, WorkspaceFreeBytes: 10 << 30, Labels: map[string]string{}, LastHeartbeat: time.Now().UTC(), CreatedAt: time.Now().UTC()}
+	if err = repository.UpsertNode(ctx, node, auth.TokenHash("template-node-token")); err != nil {
+		t.Fatal(err)
+	}
+	attemptID := ids.New()
+	if _, err = repository.DB().ExecContext(ctx, `INSERT INTO job_attempts(id,job_id,attempt_number,node_id,assignment_id,status,job_token_hash,created_at) VALUES(?,?,1,?,?,?,?,?)`, attemptID, job.ID, node.ID, ids.New(), "RUNNING", auth.TokenHash("template-token"), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repository.DB().ExecContext(ctx, `UPDATE jobs SET attempt_id=? WHERE id=?`, attemptID, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.AppendMetricSamples(ctx, []domain.MetricSample{
+		{JobID: job.ID, AttemptID: attemptID, Name: "custom_training_objective", Value: .5, CapturedAt: time.Now().UTC(), Tags: []string{"metric:loss", "phase:train"}},
+		{JobID: job.ID, AttemptID: attemptID, Name: "custom_validation_objective", Value: .4, CapturedAt: time.Now().UTC(), Tags: []string{"metric:loss", "phase:validation"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	otherAttemptID := ids.New()
+	if _, err = repository.DB().ExecContext(ctx, `INSERT INTO job_attempts(id,job_id,attempt_number,node_id,assignment_id,status,job_token_hash,created_at) VALUES(?,?,2,?,?,?,?,?)`, otherAttemptID, job.ID, node.ID, ids.New(), "SUCCEEDED", auth.TokenHash("other-template-token"), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.AppendMetricSamples(ctx, []domain.MetricSample{{JobID: job.ID, AttemptID: otherAttemptID, Name: "other_attempt_loss", Value: .1, CapturedAt: time.Now().UTC(), Tags: []string{"metric:loss", "phase:train"}}}); err != nil {
+		t.Fatal(err)
+	}
+	files, _ := filestore.New(root, 1<<20, 1<<20, 1<<20)
+	box, _ := secretbox.New(bytes.Repeat([]byte{9}, 32))
+	server := httptest.NewServer(New(config.Server{AllowInsecureHTTP: true, SessionTTL: time.Hour}, repository, files, box, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
+	defer server.Close()
+	client := loginSeriesUser(t, server.URL, owner.Username)
+	template := semanticTemplate(
+		templateSlot("train", []string{"metric:loss", "phase:train"}, 1, 1),
+		templateSlot("validation", []string{"metric:loss", "phase:validation"}, 1, 1),
+	)
+	payload, _ := json.Marshal(map[string]any{"attempt_id": attemptID, "template": template})
+	request, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard/templates/resolve", bytes.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("template resolution status=%d body=%s", response.StatusCode, body)
+	}
+	var result dashboardTemplateResolution
+	if err = json.NewDecoder(response.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.AttemptID != attemptID || len(result.Widgets) != 1 || len(result.Widgets[0].Sources) != 2 || result.Widgets[0].Sources[0].Name != "custom_training_objective" || result.Widgets[0].Sources[1].Name != "custom_validation_objective" {
+		t.Fatalf("resolved template: %#v", result)
+	}
+	items, err := repository.MetricDescriptors(ctx, job.ID, attemptID, nil)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("template resolution changed telemetry descriptors: %#v %v", items, err)
 	}
 }

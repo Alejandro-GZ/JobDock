@@ -19,6 +19,37 @@ export type DashboardWidget = {
   gauge_max_value?: number;
 };
 
+export type DashboardTemplateCardinality = { min: number; max: number };
+export type DashboardTemplateSlot = {
+  id: string;
+  required_tags?: string[];
+  optional_tags?: string[];
+  source_types: DashboardSourceKind[];
+  cardinality: DashboardTemplateCardinality;
+  role?: DashboardSourceRole;
+  on_missing?: "error" | "omit_slot" | "omit_widget";
+  on_ambiguous?: "error" | "omit_slot" | "omit_widget";
+};
+export type DashboardTemplateWidget = Omit<DashboardWidget, "sources"> & { slots: DashboardTemplateSlot[] };
+export type DashboardTemplate = { id: string; schema_version: 1; widgets: DashboardTemplateWidget[] };
+export type DashboardTemplateSlotResolution = {
+  widget_id: string;
+  slot_id: string;
+  status: "resolved" | "missing" | "ambiguous" | "incompatible";
+  candidates: DashboardWidgetSource[];
+  selected: DashboardWidgetSource[];
+};
+export type DashboardTemplateResolution = {
+  template_id: string;
+  schema_version: 1;
+  attempt_id: string;
+  widgets: DashboardWidget[];
+  widget_results: Array<{ widget_id: string; status: "resolved" | "partial" | "omitted" | "unresolved" }>;
+  slot_results: DashboardTemplateSlotResolution[];
+};
+
+export const dashboardTemplateSchemaVersion=1;
+
 export type DashboardSources = {
   metrics: string[];
   resources: string[];

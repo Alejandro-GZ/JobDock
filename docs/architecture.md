@@ -103,6 +103,9 @@ duplicated across samples. Tags omitted from later samples inherit that
 descriptor, while an incompatible redefinition rejects the complete batch.
 Metric discovery and semantic AND filters query only this bounded descriptor
 catalog, so their cost is independent of the number of historical samples.
+Dashboard templates are a declarative layer over that catalog. Their resolver
+produces ordinary dashboard widgets plus explicit slot diagnostics; it neither
+creates a second persisted dashboard model nor mutates observable definitions.
 Both streams share a persisted monotonic cursor. Historical queries read at a
 cursor-consistent snapshot, while a resumable SSE tail carries only newly
 committed batches to the browser. This keeps live refresh work proportional to

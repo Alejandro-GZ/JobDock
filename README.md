@@ -41,6 +41,9 @@ Production deployments must terminate TLS and set
 
 See [Architecture](docs/architecture.md), [Security](SECURITY.md), and [Operations](docs/operations.md) before deploying JobDock.
 
+The semantic source-resolution contract is documented in
+[Dashboard templates](docs/dashboard-templates.md).
+
 ## Development
 
 Requirements: Go 1.26+, Node.js 24+, Python 3.10+, and Docker Engine 29+.
