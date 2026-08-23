@@ -58,7 +58,7 @@ export function JobDetail({ user }: { user: User }) {
     </div>
 
     <TabsContent value="overview" className="min-h-0 flex-1 overflow-auto"><AttemptOverview job={current} selected={selectedAttempt} node={assignedNode} buildID={build.data?buildID:undefined} buildName={build.data?.name} onStop={()=>stop.mutate()} onRerun={()=>rerun.mutate()} stopping={stop.isPending} rerunning={rerun.isPending}/></TabsContent>
-    <TabsContent value="metrics" className="mt-0 min-h-0 flex-1">{attemptJob&&selectedAttempt&&<MetricsPanel job={attemptJob} editMode={editingDashboard} templateOpen={templateOpen} onTemplateOpenChange={setTemplateOpen}/>}</TabsContent>
+    <TabsContent value="metrics" className="mt-0 min-h-0 flex-1 lg:-ml-10">{attemptJob&&selectedAttempt&&<MetricsPanel job={attemptJob} editMode={editingDashboard} templateOpen={templateOpen} onTemplateOpenChange={setTemplateOpen}/>}</TabsContent>
     <TabsContent value="misc" className="min-h-0 flex-1 overflow-auto"><MiscPanel job={current} attempt={selectedAttempt} query={exportQuery} onDelete={()=>remove.mutate()} deleting={remove.isPending}/></TabsContent>
     <AttemptHistoryDialog attempts={attempts.data??[]} open={historyOpen} onOpenChange={setHistoryOpen} onSelect={attempt=>{setSelectedAttemptID(attempt.id);setHistoryOpen(false)}}/>
   </Tabs>;
