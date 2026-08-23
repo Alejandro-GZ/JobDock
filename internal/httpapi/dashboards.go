@@ -177,6 +177,11 @@ func (a *API) metricCatalog(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"attempt_id": "", "items": []store.MetricDescriptor{}})
 		return
 	}
+	requiredTags, err := normalizeMetricTags(r.URL.Query()["tag"])
+	if err != nil {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_metric_tags", err.Error())
+		return
+	}
 	belongs, err := a.store.AttemptBelongsToJob(r.Context(), job.ID, attemptID)
 	if err != nil {
 		writeStoreError(w, err)
@@ -186,7 +191,7 @@ func (a *API) metricCatalog(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "attempt_not_found", "The requested attempt does not belong to this job")
 		return
 	}
-	items, err := a.store.MetricDescriptors(r.Context(), job.ID, attemptID)
+	items, err := a.store.MetricDescriptors(r.Context(), job.ID, attemptID, requiredTags)
 	if err != nil {
 		writeStoreError(w, err)
 		return

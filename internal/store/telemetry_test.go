@@ -111,6 +111,20 @@ func TestMetricSeriesAreAttemptAwareBoundedAndAggregated(t *testing.T) {
 	if series[0].Unit != "ratio" || series[0].Metadata["split"] != "train" || !reflect.DeepEqual(series[0].Tags, []string{"metric:loss", "phase:train"}) {
 		t.Fatalf("metric descriptor was not preserved: %#v", series[0])
 	}
+	descriptors, err := repository.MetricDescriptors(ctx, job.ID, attemptID, nil)
+	if err != nil || len(descriptors) != 2 || descriptors[0].Type != "metric" || descriptors[0].Name != "accuracy" || descriptors[0].Tags != nil {
+		t.Fatalf("legacy-safe descriptor catalog: %#v err=%v", descriptors, err)
+	}
+	for _, filter := range [][]string{{"metric:loss"}, {"metric:loss", "phase:train"}} {
+		filtered, filterErr := repository.MetricDescriptors(ctx, job.ID, attemptID, filter)
+		if filterErr != nil || len(filtered) != 1 || filtered[0].Name != "loss" {
+			t.Fatalf("AND descriptor filter %v: %#v err=%v", filter, filtered, filterErr)
+		}
+	}
+	filtered, err := repository.MetricDescriptors(ctx, job.ID, attemptID, []string{"metric:loss", "phase:validation"})
+	if err != nil || len(filtered) != 0 {
+		t.Fatalf("non-matching descriptor filter: %#v err=%v", filtered, err)
+	}
 	if err = repository.AppendMetricSamples(ctx, []domain.MetricSample{{JobID: job.ID, AttemptID: attemptID, Name: "loss", Value: 99, CapturedAt: base.Add(15 * time.Second), Unit: "seconds"}}); !errors.Is(err, store.ErrMetricDescriptorConflict) {
 		t.Fatalf("descriptor conflict: %v", err)
 	}
@@ -158,8 +172,12 @@ func TestMetricSeriesAreAttemptAwareBoundedAndAggregated(t *testing.T) {
 	if _, err = repository.DB().ExecContext(ctx, `INSERT INTO job_attempts(id,job_id,attempt_number,node_id,assignment_id,status,job_token_hash,created_at) VALUES(?,?,2,?,?,?,?,?)`, secondAttempt, job.ID, node.ID, ids.New(), "RUNNING", ids.New(), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
-	if err = repository.AppendMetricSamples(ctx, []domain.MetricSample{{JobID: job.ID, AttemptID: secondAttempt, Name: "loss", Value: 9, CapturedAt: base, Unit: "seconds"}}); err != nil {
+	if err = repository.AppendMetricSamples(ctx, []domain.MetricSample{{JobID: job.ID, AttemptID: secondAttempt, Name: "loss", Value: 9, CapturedAt: base, Unit: "seconds", Tags: []string{"metric:loss", "phase:validation"}}}); err != nil {
 		t.Fatalf("descriptor leaked between attempts: %v", err)
+	}
+	filtered, err = repository.MetricDescriptors(ctx, job.ID, secondAttempt, []string{"phase:validation"})
+	if err != nil || len(filtered) != 1 || filtered[0].Unit != "seconds" {
+		t.Fatalf("attempt-scoped descriptor filter: %#v err=%v", filtered, err)
 	}
 }
 

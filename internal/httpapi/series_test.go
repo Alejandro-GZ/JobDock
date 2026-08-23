@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -89,8 +90,20 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 		Items     []store.MetricDescriptor `json:"items"`
 	}
 	getSeriesJSON(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/metrics/catalog?attempt_id="+attemptID, &catalog)
-	if catalog.AttemptID != attemptID || len(catalog.Items) != 2 || strings.Join(catalog.Items[1].Tags, ",") != "metric:loss,phase:train" {
+	if catalog.AttemptID != attemptID || len(catalog.Items) != 2 || catalog.Items[1].Type != "metric" || strings.Join(catalog.Items[1].Tags, ",") != "metric:loss,phase:train" {
 		t.Fatalf("semantic metric catalog: %#v", catalog)
+	}
+	var filteredCatalog struct {
+		AttemptID string                   `json:"attempt_id"`
+		Items     []store.MetricDescriptor `json:"items"`
+	}
+	getSeriesJSON(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/metrics/catalog?attempt_id="+attemptID+"&tag=phase:TRAIN&tag=metric:loss", &filteredCatalog)
+	if filteredCatalog.AttemptID != attemptID || len(filteredCatalog.Items) != 1 || filteredCatalog.Items[0].Name != "loss" {
+		t.Fatalf("AND-filtered semantic catalog: %#v", filteredCatalog)
+	}
+	getSeriesJSON(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/metrics/catalog?attempt_id="+attemptID+"&tag=phase:validation&tag=metric:loss", &filteredCatalog)
+	if len(filteredCatalog.Items) != 0 {
+		t.Fatalf("non-matching semantic catalog: %#v", filteredCatalog)
 	}
 	from, to := url.QueryEscape(base.Add(-time.Second).Format(time.RFC3339)), url.QueryEscape(base.Add(2*time.Minute).Format(time.RFC3339))
 	metricURL := server.URL + "/api/v1/jobs/" + job.ID + "/metrics?attempt_id=" + attemptID + "&from=" + from + "&to=" + to + "&resolution=raw"
@@ -161,6 +174,12 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 			t.Fatalf("invalid metric status=%d problem=%#v", response.StatusCode, problem)
 		}
 	}
+	invalidCatalog, _ := ownerClient.Get(server.URL + "/api/v1/jobs/" + job.ID + "/metrics/catalog?attempt_id=" + attemptID + "&tag=train")
+	if invalidCatalog.StatusCode != http.StatusUnprocessableEntity {
+		invalidCatalog.Body.Close()
+		t.Fatalf("invalid catalog tag status: %d", invalidCatalog.StatusCode)
+	}
+	invalidCatalog.Body.Close()
 	if err = repository.AppendResourceSample(ctx, domain.ResourceSample{JobID: job.ID, AttemptID: attemptID, CapturedAt: base.Add(25 * time.Second), CPUMillis: 900, MemoryBytes: 256 << 20}); err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +202,7 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 		}
 	}
 	otherClient := loginSeriesUser(t, server.URL, other.Username)
-	for _, endpoint := range []string{metricURL, resourceURL} {
+	for _, endpoint := range []string{metricURL, resourceURL, server.URL + "/api/v1/jobs/" + job.ID + "/metrics/catalog?attempt_id=" + attemptID} {
 		response, requestErr := otherClient.Get(endpoint)
 		if requestErr != nil {
 			t.Fatal(requestErr)
@@ -192,6 +211,20 @@ func TestAuthorizedMetricAndResourceSeriesJSONAndCSV(t *testing.T) {
 		if response.StatusCode != http.StatusForbidden {
 			t.Fatalf("cross-owner series status: %d", response.StatusCode)
 		}
+	}
+}
+
+func TestNormalizeMetricTagsForCatalog(t *testing.T) {
+	normalized, err := normalizeMetricTags([]string{" phase:TRAIN ", "metric:loss", "phase:train"})
+	if err != nil || strings.Join(normalized, ",") != "metric:loss,phase:train" {
+		t.Fatalf("normalized tags: %v err=%v", normalized, err)
+	}
+	tooMany := make([]string, 33)
+	for index := range tooMany {
+		tooMany[index] = fmt.Sprintf("custom:value-%d", index)
+	}
+	if _, err = normalizeMetricTags(tooMany); err == nil {
+		t.Fatal("expected a bounded catalog tag filter")
 	}
 }
 

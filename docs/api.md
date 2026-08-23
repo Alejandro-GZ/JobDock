@@ -51,6 +51,13 @@ Metric queries accept repeated `name` filters and
 validated against the job, which prevents series from different reruns being
 combined.
 
+`GET /api/v1/jobs/{jobId}/metrics/catalog` discovers attempt-scoped metric
+sources from descriptors only. It returns `name`, `type`, `unit`, `tags`, and
+bounded metadata without loading samples. Repeating `tag` applies AND semantics;
+for example `?tag=metric:loss&tag=phase:validation` returns only series carrying
+both dimensions. Legacy untagged metrics remain visible in the unfiltered
+catalog and simply do not match a tag filter.
+
 Jobs without inputs use the regular JSON create request. To attach reproducible
 inputs, `POST /api/v1/jobs` accepts `multipart/form-data` with one `spec` JSON
 field and file fields named `input:<relative-path>`. The server stores every

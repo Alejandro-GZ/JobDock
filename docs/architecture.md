@@ -101,7 +101,9 @@ bounded queries. Normalized resource telemetry uses the same attempt identity;
 metric semantics are stored once in the stable series descriptor and are not
 duplicated across samples. Tags omitted from later samples inherit that
 descriptor, while an incompatible redefinition rejects the complete batch.
-both streams share a persisted monotonic cursor. Historical queries read at a
+Metric discovery and semantic AND filters query only this bounded descriptor
+catalog, so their cost is independent of the number of historical samples.
+Both streams share a persisted monotonic cursor. Historical queries read at a
 cursor-consistent snapshot, while a resumable SSE tail carries only newly
 committed batches to the browser. This keeps live refresh work proportional to
 new telemetry rather than total job history.

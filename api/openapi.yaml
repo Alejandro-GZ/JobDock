@@ -353,11 +353,15 @@ paths:
   /jobs/{jobId}/metrics/catalog:
     get:
       operationId: getJobMetricCatalog
-      description: List bounded metric descriptors for configuring a dashboard without downloading sample history.
-      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDQuery'}]
+      description: List bounded attempt-scoped metric descriptors without downloading sample history. Repeated tag filters use AND semantics.
+      parameters:
+        - {$ref: '#/components/parameters/JobID'}
+        - {$ref: '#/components/parameters/AttemptIDQuery'}
+        - {name: tag, in: query, description: Repeat up to 32 canonical semantic tags; every tag must match., style: form, explode: true, schema: {$ref: '#/components/schemas/SemanticMetricTags'}}
       responses:
         '200': {description: Attempt metric descriptors, content: {application/json: {schema: {$ref: '#/components/schemas/MetricDescriptorList'}}}}
         '404': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
   /jobs/{jobId}/dashboard:
     get:
       operationId: getJobDashboard
@@ -1154,9 +1158,10 @@ components:
     MetricDescriptor:
       type: object
       additionalProperties: false
-      required: [name]
+      required: [name, type]
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
+        type: {type: string, enum: [metric]}
         unit: {type: string, maxLength: 64}
         tags: {$ref: '#/components/schemas/SemanticMetricTags'}
         metadata: {$ref: '#/components/schemas/ObservationMetadata'}

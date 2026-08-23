@@ -19,7 +19,7 @@ export const api={
   eventsDownload:(id:string,attemptId:string)=>`/api/v1/jobs/${encodeURIComponent(id)}/events?attempt_id=${encodeURIComponent(attemptId)}&download=true`,
   attemptOutput:(id:string,attemptId:string,path:string)=>`/api/v1/jobs/${encodeURIComponent(id)}/attempts/${encodeURIComponent(attemptId)}/outputs/${path.split("/").map(encodeURIComponent).join("/")}`,
   metrics:(id:string,query:string)=>request<MetricSeriesResponse>(`/jobs/${id}/metrics?${query}`),
-  metricCatalog:async(id:string,attemptId?:string)=>(await request<{attempt_id:string;items:import("./types").MetricDescriptor[]}>(`/jobs/${id}/metrics/catalog${attemptId?`?attempt_id=${encodeURIComponent(attemptId)}`:""}`)).items,
+  metricCatalog:async(id:string,attemptId?:string,tags:string[]=[])=>{const query=new URLSearchParams();if(attemptId)query.set("attempt_id",attemptId);for(const tag of tags)query.append("tag",tag);return(await request<{attempt_id:string;items:import("./types").MetricDescriptor[]}>(`/jobs/${id}/metrics/catalog${query.size?`?${query}`:""}`)).items},
   dashboard:(id:string)=>request<{schema_version:number;widgets:DashboardWidget[]|null;updated_at?:string;fallback_reason?:string}>(`/jobs/${id}/dashboard`),
   saveDashboard:(id:string,widgets:DashboardWidget[])=>request(`/jobs/${id}/dashboard`,{method:"PUT",body:JSON.stringify({schema_version:dashboardSchemaVersion,widgets})}),
   resources:(id:string,query:string)=>request<ResourceSeriesResponse>(`/jobs/${id}/resources?${query}`),

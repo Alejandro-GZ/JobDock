@@ -15,20 +15,26 @@ import (
 
 type MetricDescriptor struct {
 	Name     string         `json:"name"`
+	Type     string         `json:"type"`
 	Unit     string         `json:"unit,omitempty"`
 	Metadata map[string]any `json:"metadata,omitempty"`
 	Tags     []string       `json:"tags,omitempty"`
 }
 
-func (s *Store) MetricDescriptors(ctx context.Context, jobID, attemptID string) ([]MetricDescriptor, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name,COALESCE(unit,''),COALESCE(metadata_json,''),COALESCE(tags_json,'') FROM job_metric_descriptors WHERE job_id=? AND attempt_id=? ORDER BY name LIMIT 256`, jobID, attemptID)
+func (s *Store) MetricDescriptors(ctx context.Context, jobID, attemptID string, requiredTags []string) ([]MetricDescriptor, error) {
+	query := metricDescriptorQuery(len(requiredTags))
+	arguments := []any{jobID, attemptID}
+	for _, tag := range requiredTags {
+		arguments = append(arguments, tag)
+	}
+	rows, err := s.db.QueryContext(ctx, query, arguments...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	result := make([]MetricDescriptor, 0)
 	for rows.Next() {
-		var item MetricDescriptor
+		item := MetricDescriptor{Type: "metric"}
 		var metadata string
 		var tags string
 		if err = rows.Scan(&item.Name, &item.Unit, &metadata, &tags); err != nil {
@@ -43,6 +49,14 @@ func (s *Store) MetricDescriptors(ctx context.Context, jobID, attemptID string) 
 		result = append(result, item)
 	}
 	return result, rows.Err()
+}
+
+func metricDescriptorQuery(tagCount int) string {
+	query := `SELECT d.name,COALESCE(d.unit,''),COALESCE(d.metadata_json,''),COALESCE(d.tags_json,'') FROM job_metric_descriptors d WHERE d.job_id=? AND d.attempt_id=?`
+	for range tagCount {
+		query += ` AND EXISTS (SELECT 1 FROM json_each(COALESCE(d.tags_json,'[]')) WHERE json_each.value=?)`
+	}
+	return query + ` ORDER BY d.name LIMIT 256`
 }
 
 func (s *Store) AppendMetricSamples(ctx context.Context, samples []domain.MetricSample) error {
