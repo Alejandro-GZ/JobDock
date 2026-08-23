@@ -63,6 +63,10 @@ dashboard template against that same bounded catalog. The response reports each
 slot as `resolved`, `missing`, `ambiguous`, or `incompatible` and returns only
 fully materializable widgets in the regular dashboard widget schema. Resolution
 is read-only, attempt-scoped, deterministic, and never reads metric samples.
+An optional `overrides` array can select sources from an ambiguous slot's
+reported candidates. Each entry is keyed by `widget_id` and `slot_id`; invalid,
+duplicate, incompatible, or cardinality-breaking selections reject the request
+with `invalid_dashboard_template_override`.
 See [Dashboard templates](dashboard-templates.md) for the schema and matching
 rules.
 

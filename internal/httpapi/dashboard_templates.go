@@ -49,6 +49,12 @@ type dashboardTemplateCardinality struct {
 	Max int `json:"max"`
 }
 
+type dashboardTemplateOverride struct {
+	WidgetID string                  `json:"widget_id"`
+	SlotID   string                  `json:"slot_id"`
+	Sources  []dashboardWidgetSource `json:"sources"`
+}
+
 type observableSource struct {
 	Kind string   `json:"kind"`
 	Name string   `json:"name"`
@@ -84,8 +90,9 @@ func (a *API) resolveDashboardTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		AttemptID string            `json:"attempt_id,omitempty"`
-		Template  dashboardTemplate `json:"template"`
+		AttemptID string                      `json:"attempt_id,omitempty"`
+		Template  dashboardTemplate           `json:"template"`
+		Overrides []dashboardTemplateOverride `json:"overrides,omitempty"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10))
 	decoder.DisallowUnknownFields()
@@ -105,12 +112,20 @@ func (a *API) resolveDashboardTemplate(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard_template", err.Error())
 		return
 	}
+	if len(body.Overrides) > 4096 {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard_template_override", "A template resolution may contain at most 4096 slot overrides")
+		return
+	}
 	attemptID := strings.TrimSpace(body.AttemptID)
 	if attemptID == "" {
 		attemptID = job.AttemptID
 	}
 	if attemptID == "" {
-		result := resolveDashboardTemplate(body.Template, nil)
+		result, resolveErr := resolveDashboardTemplateWithOverrides(body.Template, nil, body.Overrides)
+		if resolveErr != nil {
+			writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard_template_override", resolveErr.Error())
+			return
+		}
 		result.AttemptID = ""
 		writeJSON(w, http.StatusOK, result)
 		return
@@ -133,7 +148,11 @@ func (a *API) resolveDashboardTemplate(w http.ResponseWriter, r *http.Request) {
 	for _, descriptor := range descriptors {
 		sources = append(sources, observableSource{Kind: descriptor.Type, Name: descriptor.Name, Unit: descriptor.Unit, Tags: descriptor.Tags})
 	}
-	result := resolveDashboardTemplate(body.Template, sources)
+	result, err := resolveDashboardTemplateWithOverrides(body.Template, sources, body.Overrides)
+	if err != nil {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard_template_override", err.Error())
+		return
+	}
 	result.AttemptID = attemptID
 	writeJSON(w, http.StatusOK, result)
 }
@@ -210,6 +229,11 @@ func validateDashboardTemplate(template dashboardTemplate) error {
 }
 
 func resolveDashboardTemplate(template dashboardTemplate, catalog []observableSource) dashboardTemplateResolution {
+	result, _ := resolveDashboardTemplateWithOverrides(template, catalog, nil)
+	return result
+}
+
+func resolveDashboardTemplateWithOverrides(template dashboardTemplate, catalog []observableSource, overrides []dashboardTemplateOverride) (dashboardTemplateResolution, error) {
 	ordered := append([]observableSource(nil), catalog...)
 	for index := range ordered {
 		ordered[index].Tags, _ = normalizeMetricTags(ordered[index].Tags)
@@ -220,6 +244,15 @@ func resolveDashboardTemplate(template dashboardTemplate, catalog []observableSo
 		}
 		return ordered[i].Name < ordered[j].Name
 	})
+	overrideBySlot := make(map[string]dashboardTemplateOverride, len(overrides))
+	for _, override := range overrides {
+		key := override.WidgetID + "\x00" + override.SlotID
+		if strings.TrimSpace(override.WidgetID) == "" || strings.TrimSpace(override.SlotID) == "" || len(override.Sources) == 0 || overrideBySlot[key].WidgetID != "" {
+			return dashboardTemplateResolution{}, errors.New("Template overrides must uniquely identify a widget slot and select at least one source")
+		}
+		overrideBySlot[key] = override
+	}
+	usedOverrides := map[string]bool{}
 	result := dashboardTemplateResolution{TemplateID: template.ID, SchemaVersion: template.SchemaVersion, Widgets: []dashboardWidget{}, WidgetResults: []dashboardTemplateWidgetResult{}, SlotResults: []dashboardTemplateSlotResolution{}}
 	for _, definition := range template.Widgets {
 		widget := templateWidget(definition, []dashboardWidgetSource{})
@@ -227,6 +260,15 @@ func resolveDashboardTemplate(template dashboardTemplate, catalog []observableSo
 		omitWidget := false
 		for _, slot := range definition.Slots {
 			resolution := resolveDashboardTemplateSlot(definition.ID, slot, ordered)
+			overrideKey := definition.ID + "\x00" + slot.ID
+			if override, exists := overrideBySlot[overrideKey]; exists {
+				selected, overrideErr := validateDashboardTemplateOverride(slot, resolution.Candidates, override.Sources)
+				if overrideErr != nil {
+					return dashboardTemplateResolution{}, overrideErr
+				}
+				resolution.Status, resolution.Selected = "resolved", selected
+				usedOverrides[overrideKey] = true
+			}
 			result.SlotResults = append(result.SlotResults, resolution)
 			if resolution.Status == "resolved" {
 				widget.Sources = append(widget.Sources, resolution.Selected...)
@@ -265,8 +307,38 @@ func resolveDashboardTemplate(template dashboardTemplate, catalog []observableSo
 			result.Widgets = append(result.Widgets, widget)
 		}
 	}
+	if len(usedOverrides) != len(overrideBySlot) {
+		return dashboardTemplateResolution{}, errors.New("Template override references an unknown widget slot")
+	}
 	result.Widgets = compactDashboardWidgets(result.Widgets)
-	return result
+	return result, nil
+}
+
+func validateDashboardTemplateOverride(slot dashboardTemplateSlot, candidates, requested []dashboardWidgetSource) ([]dashboardWidgetSource, error) {
+	if len(requested) < slot.Cardinality.Min || len(requested) > slot.Cardinality.Max {
+		return nil, errors.New("Template override does not satisfy slot cardinality")
+	}
+	available := map[string]bool{}
+	for _, candidate := range candidates {
+		available[candidate.Kind+"\x00"+candidate.Name] = true
+	}
+	selected := make([]dashboardWidgetSource, 0, len(requested))
+	seen := map[string]bool{}
+	for _, source := range requested {
+		key := source.Kind + "\x00" + source.Name
+		if !available[key] || seen[key] {
+			return nil, errors.New("Template override source is not a unique candidate for its slot")
+		}
+		seen[key] = true
+		selected = append(selected, dashboardWidgetSource{Kind: source.Kind, Name: source.Name, Role: slot.Role})
+	}
+	sort.SliceStable(selected, func(i, j int) bool {
+		if selected[i].Kind != selected[j].Kind {
+			return selected[i].Kind < selected[j].Kind
+		}
+		return selected[i].Name < selected[j].Name
+	})
+	return selected, nil
 }
 
 func resolveDashboardTemplateSlot(widgetID string, slot dashboardTemplateSlot, catalog []observableSource) dashboardTemplateSlotResolution {

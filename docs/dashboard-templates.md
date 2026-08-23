@@ -63,6 +63,30 @@ Use `POST /api/v1/jobs/{jobId}/dashboard/templates/resolve` with an optional
 `attempt_id` and a `template` object. The response contains slot and widget
 diagnostics plus `widgets`, which uses the normal dashboard schema.
 
+The request may also include explicit `overrides` for ambiguous slots. Each
+override identifies a template widget and slot and selects one or more sources
+from that slot's reported candidates. The server validates source membership,
+cardinality, and widget compatibility; it never accepts an arbitrary metric
+name as a shortcut around semantic resolution.
+
+## Applying a template in the UI
+
+Open a job's Metrics view and choose **Templates**. The selector shows each
+template's description and layout before it changes the dashboard. Its source
+diagnostics distinguish resolved, missing, incompatible, and ambiguous slots.
+Ambiguous slots must be resolved explicitly from their matching candidates.
+
+Applying a template materializes regular dashboard widgets. The resulting
+layout has no persistent link to the template and can immediately be moved,
+resized, edited, or deleted with the existing dashboard editor. Replacing a
+non-empty dashboard requires confirmation. JobDock retains the prior layout for
+one-click restoration during that picker session, including through the toast
+action after applying.
+
+Templates are optional. Jobs with legacy or untagged telemetry continue to use
+their existing manual or default dashboard even when no official template can
+be resolved.
+
 ## Official catalog
 
 `GET /api/v1/dashboard/templates` returns three product-maintained templates.

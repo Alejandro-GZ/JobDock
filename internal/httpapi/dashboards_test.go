@@ -184,6 +184,53 @@ func TestDashboardTemplateResolutionUsesAttemptDescriptorCatalog(t *testing.T) {
 	if result.AttemptID != attemptID || len(result.Widgets) != 1 || len(result.Widgets[0].Sources) != 2 || result.Widgets[0].Sources[0].Name != "custom_training_objective" || result.Widgets[0].Sources[1].Name != "custom_validation_objective" {
 		t.Fatalf("resolved template: %#v", result)
 	}
+	ambiguous := semanticTemplate(templateSlot("loss", []string{"metric:loss"}, 1, 1))
+	payload, _ = json.Marshal(map[string]any{
+		"attempt_id": attemptID,
+		"template":   ambiguous,
+		"overrides": []dashboardTemplateOverride{{
+			WidgetID: "loss",
+			SlotID:   "loss",
+			Sources:  []dashboardWidgetSource{{Kind: "metric", Name: "custom_validation_objective"}},
+		}},
+	})
+	request, _ = http.NewRequest(http.MethodPost, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard/templates/resolve", bytes.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	overriddenResponse, requestErr := client.Do(request)
+	if requestErr != nil {
+		t.Fatal(requestErr)
+	}
+	defer overriddenResponse.Body.Close()
+	if overriddenResponse.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(overriddenResponse.Body)
+		t.Fatalf("manual template resolution status=%d body=%s", overriddenResponse.StatusCode, body)
+	}
+	if err = json.NewDecoder(overriddenResponse.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Widgets) != 1 || len(result.Widgets[0].Sources) != 1 || result.Widgets[0].Sources[0].Name != "custom_validation_objective" {
+		t.Fatalf("manual template resolution: %#v", result)
+	}
+	payload, _ = json.Marshal(map[string]any{
+		"attempt_id": attemptID,
+		"template":   ambiguous,
+		"overrides": []dashboardTemplateOverride{{
+			WidgetID: "loss",
+			SlotID:   "loss",
+			Sources:  []dashboardWidgetSource{{Kind: "metric", Name: "not-a-candidate"}},
+		}},
+	})
+	request, _ = http.NewRequest(http.MethodPost, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard/templates/resolve", bytes.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	invalidResponse, requestErr := client.Do(request)
+	if requestErr != nil {
+		t.Fatal(requestErr)
+	}
+	defer invalidResponse.Body.Close()
+	if invalidResponse.StatusCode != http.StatusUnprocessableEntity {
+		body, _ := io.ReadAll(invalidResponse.Body)
+		t.Fatalf("invalid manual template resolution status=%d body=%s", invalidResponse.StatusCode, body)
+	}
 	items, err := repository.MetricDescriptors(ctx, job.ID, attemptID, nil)
 	if err != nil || len(items) != 2 {
 		t.Fatalf("template resolution changed telemetry descriptors: %#v %v", items, err)

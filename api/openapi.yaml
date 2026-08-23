@@ -1286,6 +1286,17 @@ components:
       properties:
         attempt_id: {type: string, format: uuid}
         template: {$ref: '#/components/schemas/DashboardTemplate'}
+        overrides:
+          type: array
+          maxItems: 4096
+          items:
+            type: object
+            additionalProperties: false
+            required: [widget_id, slot_id, sources]
+            properties:
+              widget_id: {type: string, minLength: 1, maxLength: 128}
+              slot_id: {type: string, minLength: 1, maxLength: 128}
+              sources: {type: array, minItems: 1, maxItems: 64, uniqueItems: true, items: {$ref: '#/components/schemas/DashboardWidgetSource'}}
     DashboardTemplateSlotResolution:
       type: object
       required: [widget_id, slot_id, status, candidates, selected]

@@ -20,6 +20,16 @@ describe("ObservabilityDashboard",()=>{
     const {rerender}=render(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready numericSources={[source]} matrices={[]} markers={[]} initialWidgets={saved}/>));expect(await screen.findByRole("img",{name:/Line plot lineplot/})).toBeTruthy();
     rerender(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready editMode numericSources={[source]} matrices={[]} markers={[]} initialWidgets={saved}/>));expect(screen.queryByRole("img",{name:/Line plot lineplot/})).toBeNull();expect(screen.getByText("metric / loss")).toBeTruthy();
   });
+  it("materializes a template replacement as an ordinary editable dashboard",async()=>{
+    const source={kind:"metric" as const,name:"loss",title:"loss",unit:"ratio",points:[]},saved=[{id:"logs",type:"logs" as const,size:{columns:4,rows:2},position:{x:0,y:0},sources:[{kind:"log" as const,name:"stdout"}],grid_columns:4 as const}],replacement=[{id:"loss",type:"lineplot" as const,size:{columns:2,rows:1},position:{x:0,y:0},sources:[{kind:"metric" as const,name:"loss"}],grid_columns:4 as const}],changed=vi.fn();
+    const {rerender}=render(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready editMode numericSources={[source]} matrices={[]} markers={[]} initialWidgets={saved} onWidgetsChange={changed}/>));
+    expect((await screen.findAllByText("log / stdout")).length).toBeGreaterThan(0);
+    rerender(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready editMode numericSources={[source]} matrices={[]} markers={[]} initialWidgets={saved} replacement={{key:"template-1",widgets:replacement}} onWidgetsChange={changed}/>));
+    expect(await screen.findByText("metric / loss")).toBeTruthy();
+    expect(screen.getByRole("button",{name:"Configure widget"})).toBeTruthy();
+    expect(screen.getByRole("button",{name:"Remove widget"})).toBeTruthy();
+    expect(changed).not.toHaveBeenCalled();
+  });
   it("previews tile reflow during drag and commits it only on drop",async()=>{
     const source={kind:"metric" as const,name:"loss",title:"loss",unit:"ratio",points:[]},saved=["first","second"].map((id,index)=>({id,type:"lineplot" as const,size:{columns:2,rows:1},position:{x:index*2,y:0},sources:[{kind:"metric" as const,name:"loss"}],grid_columns:4 as const}));
     render(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready editMode numericSources={[source]} matrices={[]} markers={[]} initialWidgets={saved}/>));await waitFor(()=>expect(document.querySelectorAll("[data-widget-id]")).toHaveLength(2));const transfer=dataTransfer(),tiles=()=>[...document.querySelectorAll<HTMLElement>("[data-widget-id]")];fireEvent.dragStart(tiles()[1].querySelector("section")!,{dataTransfer:transfer});fireEvent.dragOver(tiles()[0],{dataTransfer:transfer});await waitFor(()=>expect(tiles().map(tile=>tile.dataset.widgetId)).toEqual(["second","first"]));fireEvent.drop(tiles()[0],{dataTransfer:transfer});expect(tiles().map(tile=>tile.dataset.widgetId)).toEqual(["second","first"]);

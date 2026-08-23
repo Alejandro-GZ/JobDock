@@ -47,6 +47,7 @@ export type DashboardTemplateResolution = {
   widget_results: Array<{ widget_id: string; status: "resolved" | "partial" | "omitted" | "unresolved" }>;
   slot_results: DashboardTemplateSlotResolution[];
 };
+export type DashboardTemplateOverride = { widget_id: string; slot_id: string; sources: DashboardWidgetSource[] };
 
 export const dashboardTemplateSchemaVersion=1;
 

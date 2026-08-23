@@ -16,13 +16,15 @@ import type { SeriesPoint } from "@/lib/series";
 import type { MatrixObservation, ProgressState } from "@/types";
 
 export type NumericWidgetSource={kind:"metric"|"resource";name:string;title:string;unit:string;points:SeriesPoint[];color?:string;format?:(value:number)=>string;summary?:{last:number;min:number;max:number}};
-type Props={jobID:string;attemptID:string;ready:boolean;numericSources:NumericWidgetSource[];progress?:ProgressState;matrices:MatrixObservation[];markers:ChartMarker[];initialWidgets?:DashboardWidget[]|null;onWidgetsChange?:(widgets:DashboardWidget[])=>void;editMode?:boolean};
+type Props={jobID:string;attemptID:string;ready:boolean;numericSources:NumericWidgetSource[];progress?:ProgressState;matrices:MatrixObservation[];markers:ChartMarker[];initialWidgets?:DashboardWidget[]|null;onWidgetsChange?:(widgets:DashboardWidget[])=>void;onWidgetsReady?:(widgets:DashboardWidget[])=>void;replacement?:{key:string;widgets:DashboardWidget[]};editMode?:boolean};
 
-export function ObservabilityDashboard({jobID,attemptID,ready,numericSources,progress,matrices,markers,initialWidgets=null,onWidgetsChange,editMode=false}:Props){
-  const [widgets,setWidgets]=useState<DashboardWidget[]>([]),[preview,setPreview]=useState<DashboardWidget[]|null>(null),[dragging,setDragging]=useState(""),[panelOpen,setPanelOpen]=useState(true),initialized=useRef(""),hydrating=useRef(false),observedWidgets=useRef(widgets),palette=useRef<DashboardWidget|undefined>(undefined);
+export function ObservabilityDashboard({jobID,attemptID,ready,numericSources,progress,matrices,markers,initialWidgets=null,onWidgetsChange,onWidgetsReady,replacement,editMode=false}:Props){
+  const [widgets,setWidgets]=useState<DashboardWidget[]>([]),[preview,setPreview]=useState<DashboardWidget[]|null>(null),[dragging,setDragging]=useState(""),[panelOpen,setPanelOpen]=useState(true),initialized=useRef(""),appliedReplacement=useRef(""),hydrating=useRef(false),observedWidgets=useRef(widgets),palette=useRef<DashboardWidget|undefined>(undefined);
   const sources=useMemo<DashboardSources>(()=>({metrics:numericSources.filter(item=>item.kind==="metric").map(item=>item.name),resources:numericSources.filter(item=>item.kind==="resource").map(item=>item.name),matrices:matrices.map(item=>item.name),progress:hasProgress(progress),logs:true}),[numericSources,matrices,progress]);
   useEffect(()=>{if(!ready||initialized.current===attemptID)return;initialized.current=attemptID;hydrating.current=true;setWidgets(restoreDashboardWidgets(initialWidgets)??defaultDashboardWidgets(sources))},[attemptID,ready,sources,initialWidgets]);
+  useEffect(()=>{if(!replacement||replacement.key===appliedReplacement.current)return;appliedReplacement.current=replacement.key;hydrating.current=true;setWidgets(restoreDashboardWidgets(replacement.widgets)??[])},[replacement]);
   useEffect(()=>{if(observedWidgets.current===widgets)return;observedWidgets.current=widgets;if(hydrating.current){hydrating.current=false;return}if(initialized.current===attemptID&&ready)onWidgetsChange?.(widgets)},[widgets,attemptID,ready,onWidgetsChange]);
+  useEffect(()=>{if(initialized.current===attemptID&&ready)onWidgetsReady?.(widgets)},[widgets,attemptID,ready,onWidgetsReady]);
   useEffect(()=>{if(!editMode){setPreview(null);setDragging("")}},[editMode]);
   const displayed=preview??widgets,ordered=[...displayed].sort((a,b)=>a.position.y-b.position.y||a.position.x-b.position.x);
   const update=(next:DashboardWidget)=>setWidgets(current=>current.map(item=>item.id===next.id?next:item));

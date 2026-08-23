@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Cpu, Download, FileDown, HardDrive, History, Package, PencilRuler, RotateCcw, Server, Square, Trash2 } from "lucide-react";
+import { ArrowLeft, Cpu, Download, FileDown, HardDrive, History, LayoutTemplate, Package, PencilRuler, RotateCcw, Server, Square, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { MetricsPanel } from "@/components/metrics-panel";
@@ -24,7 +24,7 @@ const rerunnable = new Set(["SUCCEEDED", "FAILED", "CANCELLED"]);
 
 export function JobDetail({ user }: { user: User }) {
   const { id = "" } = useParams(), navigate = useNavigate(), queryClient = useQueryClient();
-  const [selectedAttemptID, setSelectedAttemptID] = useState(""),[historyOpen,setHistoryOpen]=useState(false),[activeTab,setActiveTab]=useState("overview"),[editingDashboard,setEditingDashboard]=useState(false);
+  const [selectedAttemptID, setSelectedAttemptID] = useState(""),[historyOpen,setHistoryOpen]=useState(false),[activeTab,setActiveTab]=useState("overview"),[editingDashboard,setEditingDashboard]=useState(false),[templateOpen,setTemplateOpen]=useState(false);
   const previousCurrentAttempt = useRef("");
   const job = useQuery({ queryKey: ["job", id], queryFn: () => api.job(id), refetchInterval: 3000 });
   const attempts = useQuery({ queryKey: ["job-attempts", id], queryFn: () => api.attempts(id), refetchInterval: 3000 });
@@ -47,18 +47,18 @@ export function JobDetail({ user }: { user: User }) {
 
   if (!job.data) return <p className="text-sm text-muted-foreground">Loading job…</p>;
   const current = job.data, assignedNode=nodes.data?.find(node=>node.id===(selectedAttempt?.node_id||current.assigned_node_id));
-  return <Tabs value={activeTab} onValueChange={value=>{setActiveTab(value);if(value!=="metrics")setEditingDashboard(false)}} className="relative flex h-full min-h-0 flex-col gap-5 lg:pl-10">
+  return <Tabs value={activeTab} onValueChange={value=>{setActiveTab(value);if(value!=="metrics"){setEditingDashboard(false);setTemplateOpen(false)}}} className="relative flex h-full min-h-0 flex-col gap-5 lg:pl-10">
     <Tooltip><TooltipTrigger asChild><Button asChild variant="ghost" size="icon" className="fixed top-6 z-20 hidden size-8 -translate-x-11 lg:inline-flex"><Link to="/jobs" aria-label="Back to jobs"><ArrowLeft className="size-4"/></Link></Button></TooltipTrigger><TooltipContent side="right">Back to jobs</TooltipContent></Tooltip>
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
         <div className="flex items-center gap-3"><Button asChild variant="ghost" size="icon" className="-ml-2 size-8 lg:hidden"><Link to="/jobs" aria-label="Back to jobs"><ArrowLeft className="size-4"/></Link></Button><h1 className="truncate text-xl font-semibold">{current.spec.name}</h1><StatusBadge status={current.status}/></div>
         <div className="mt-1 flex min-w-0 items-center gap-2 font-mono text-xs text-muted-foreground"><span className="truncate">{current.id}</span><span aria-hidden className="text-border">/</span>{attempts.data?.length?<Select value={selectedAttemptID} onValueChange={setSelectedAttemptID}><SelectTrigger aria-label="Select attempt" className="h-auto w-auto shrink-0 gap-1 border-0 bg-transparent p-0 font-mono text-xs text-muted-foreground shadow-none hover:text-foreground focus:ring-0 [&>svg]:size-3"><SelectValue/></SelectTrigger><SelectContent align="start">{attempts.data.map(item=><SelectItem key={item.id} value={item.id}>Attempt {item.attempt_number}</SelectItem>)}</SelectContent></Select>:<span>No attempts yet</span>}{attempts.data?.length?<Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="size-6" aria-label="Open attempt history" onClick={()=>setHistoryOpen(true)}><History className="size-3.5"/></Button></TooltipTrigger><TooltipContent>Attempt history</TooltipContent></Tooltip>:null}</div>
       </div>
-      <div className="flex items-center gap-2"><TabsList><TabsTrigger value="overview">Overview</TabsTrigger><TabsTrigger value="metrics" disabled={!selectedAttempt}>Metrics</TabsTrigger><TabsTrigger value="misc">Misc</TabsTrigger></TabsList>{activeTab==="metrics"&&<Button variant={editingDashboard?"secondary":"outline"} size="sm" className="h-9" onClick={()=>setEditingDashboard(value=>!value)}><PencilRuler className="size-4"/>{editingDashboard?"Done":"Edit dashboard"}</Button>}</div>
+      <div className="flex items-center gap-2"><TabsList><TabsTrigger value="overview">Overview</TabsTrigger><TabsTrigger value="metrics" disabled={!selectedAttempt}>Metrics</TabsTrigger><TabsTrigger value="misc">Misc</TabsTrigger></TabsList>{activeTab==="metrics"&&<><Button variant="outline" size="sm" className="h-9" onClick={()=>setTemplateOpen(true)}><LayoutTemplate className="size-4"/>Templates</Button><Button variant={editingDashboard?"secondary":"outline"} size="sm" className="h-9" onClick={()=>setEditingDashboard(value=>!value)}><PencilRuler className="size-4"/>{editingDashboard?"Done":"Edit dashboard"}</Button></>}</div>
     </div>
 
     <TabsContent value="overview" className="min-h-0 flex-1 overflow-auto"><AttemptOverview job={current} selected={selectedAttempt} node={assignedNode} buildID={build.data?buildID:undefined} buildName={build.data?.name} onStop={()=>stop.mutate()} onRerun={()=>rerun.mutate()} stopping={stop.isPending} rerunning={rerun.isPending}/></TabsContent>
-    <TabsContent value="metrics" className="mt-0 min-h-0 flex-1">{attemptJob&&selectedAttempt&&<MetricsPanel job={attemptJob} editMode={editingDashboard}/>}</TabsContent>
+    <TabsContent value="metrics" className="mt-0 min-h-0 flex-1">{attemptJob&&selectedAttempt&&<MetricsPanel job={attemptJob} editMode={editingDashboard} templateOpen={templateOpen} onTemplateOpenChange={setTemplateOpen}/>}</TabsContent>
     <TabsContent value="misc" className="min-h-0 flex-1 overflow-auto"><MiscPanel job={current} attempt={selectedAttempt} query={exportQuery} onDelete={()=>remove.mutate()} deleting={remove.isPending}/></TabsContent>
     <AttemptHistoryDialog attempts={attempts.data??[]} open={historyOpen} onOpenChange={setHistoryOpen} onSelect={attempt=>{setSelectedAttemptID(attempt.id);setHistoryOpen(false)}}/>
   </Tabs>;

@@ -49,6 +49,18 @@ func TestDashboardTemplateResolverReportsMissingAmbiguousAndIncompatibleSlots(t 
 	}
 }
 
+func TestDashboardTemplateResolverAppliesValidatedManualAmbiguityOverride(t *testing.T) {
+	template := semanticTemplate(templateSlot("loss", []string{"metric:loss"}, 1, 1))
+	catalog := []observableSource{{Kind: "metric", Name: "objective_a", Tags: []string{"metric:loss"}}, {Kind: "metric", Name: "objective_b", Tags: []string{"metric:loss"}}}
+	resolved, err := resolveDashboardTemplateWithOverrides(template, catalog, []dashboardTemplateOverride{{WidgetID: "loss", SlotID: "loss", Sources: []dashboardWidgetSource{{Kind: "metric", Name: "objective_b"}}}})
+	if err != nil || len(resolved.Widgets) != 1 || resolved.SlotResults[0].Status != "resolved" || resolved.Widgets[0].Sources[0].Name != "objective_b" {
+		t.Fatalf("manual ambiguity resolution: %#v %v", resolved, err)
+	}
+	if _, err = resolveDashboardTemplateWithOverrides(template, catalog, []dashboardTemplateOverride{{WidgetID: "loss", SlotID: "loss", Sources: []dashboardWidgetSource{{Kind: "metric", Name: "not-a-candidate"}}}}); err == nil {
+		t.Fatal("non-candidate override was accepted")
+	}
+}
+
 func TestDashboardTemplateResolverHandlesOptionalSlotsAndTagPreferences(t *testing.T) {
 	preferred := templateSlot("loss", []string{"metric:loss"}, 1, 1)
 	preferred.OptionalTags = []string{"phase:validation"}
