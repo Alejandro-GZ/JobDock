@@ -87,12 +87,21 @@ func officialDashboardTemplates() []dashboardTemplate {
 		tabularTemplate("classification-evaluation-curves", "Classification evaluation curves", "Compare reported ROC curves without requiring raw labels or predictions.", "classification", "roc_curve", "table:roc", 12, 7),
 		tabularTemplate("precision-recall-curves", "Precision–Recall curves", "Compare reported precision and recall operating points for one or more models.", "classification", "precision_recall_curve", "table:precision_recall", 12, 7),
 		tabularTemplate("calibration-curves", "Calibration curves", "Compare reported probability calibration against the perfect-calibration reference.", "classification", "calibration_curve", "table:calibration", 12, 7),
+		regressionDiagnosticsTemplate(),
 		multivariateTemplate(),
 		categoricalSnapshotTemplate(),
 		tabularTemplate("hierarchical-composition", "Hierarchical composition", "Inspect an explicit non-negative parent-child snapshot.", "general", "treemap", "table:hierarchy", 12, 7),
 		tabularTemplate("ordered-contributions", "Ordered contributions", "Inspect explicitly identified initial, contribution, subtotal, and final records.", "general", "waterfall", "table:waterfall", 12, 7),
 	)
 	return result
+}
+
+func regressionDiagnosticsTemplate() dashboardTemplate {
+	slot := dashboardTemplateSlot{ID: "diagnostics", RequiredTags: []string{"table:regression_diagnostics"}, SourceTypes: []string{"table"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 1}, OnMissing: "error", OnAmbiguous: "error"}
+	return dashboardTemplate{ID: "regression-diagnostics", Name: "Regression diagnostics", Description: "Compare reported predictions with targets and inspect explicitly defined residuals.", Category: "regression", SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{
+		officialWidget("prediction-vs-actual", "prediction_vs_actual", 6, 7, 0, 0, slot),
+		officialWidget("residuals", "residual_plot", 6, 7, 6, 0, slot),
+	}}
 }
 
 func multivariateTemplate() dashboardTemplate {

@@ -17,6 +17,7 @@ type TableQuery struct {
 	Limit         int
 	SortBy, Order string
 	Filters       map[string]string
+	AbsoluteSort  bool
 }
 
 func (s *Store) AppendTable(ctx context.Context, item domain.TableObservation) error {
@@ -47,7 +48,7 @@ func (s *Store) AppendTable(ctx context.Context, item domain.TableObservation) e
 	if _, err = tx.ExecContext(ctx, `INSERT INTO job_table_descriptors(job_id,attempt_id,name,subtype,columns_json,tags_json,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(attempt_id,name) DO UPDATE SET updated_at=excluded.updated_at`, item.JobID, item.AttemptID, item.Name, item.Subtype, columns, nullableJSON(tags, len(item.Tags)), nullableJSON(metadata, len(item.Metadata)), now, now); err != nil {
 		return mapConstraint(err)
 	}
-	if item.Subtype == "categorical" || item.Subtype == "hierarchy" || item.Subtype == "waterfall" {
+	if item.Replace || item.Subtype == "categorical" || item.Subtype == "hierarchy" || item.Subtype == "waterfall" {
 		if _, err = tx.ExecContext(ctx, `DELETE FROM job_table_rows WHERE job_id=? AND attempt_id=? AND name=?`, item.JobID, item.AttemptID, item.Name); err != nil {
 			return err
 		}
@@ -97,6 +98,9 @@ func (s *Store) Table(ctx context.Context, jobID, attemptID, name string, query 
 	if query.SortBy != "" && !columnSet[query.SortBy] {
 		return page, fmt.Errorf("unknown table sort column")
 	}
+	if query.AbsoluteSort && (query.SortBy == "" || columnTypes[query.SortBy] != "number" && columnTypes[query.SortBy] != "integer") {
+		return page, fmt.Errorf("absolute table sorting requires a numeric sort column")
+	}
 	for column := range query.Filters {
 		if !columnSet[column] {
 			return page, fmt.Errorf("unknown table filter column")
@@ -129,6 +133,13 @@ func (s *Store) Table(ctx context.Context, jobID, attemptID, name string, query 
 			direction = `DESC`
 		}
 		order = `json_extract(record_json, '$."` + strings.ReplaceAll(query.SortBy, `"`, `\"`) + `"') ` + direction + `,id ` + direction
+	}
+	if query.AbsoluteSort {
+		direction := `ASC`
+		if query.Order == "desc" {
+			direction = `DESC`
+		}
+		order = `ABS(CAST(json_extract(record_json, '$."` + strings.ReplaceAll(query.SortBy, `"`, `\"`) + `"') AS REAL)) ` + direction + `,id ` + direction
 	}
 	rowArgs := append(append([]any{}, args...), query.Limit, query.Offset)
 	rows, err := s.db.QueryContext(ctx, `SELECT id,step,captured_at,record_json FROM job_table_rows WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, rowArgs...)

@@ -107,13 +107,15 @@ func validSpecialTable(body domain.TableObservation) bool {
 		names[column.Name] = column.Type
 	}
 	required := map[string]map[string]string{
-		"roc":              {"fpr": "number", "tpr": "number"},
-		"precision_recall": {"recall": "number", "precision": "number"},
-		"calibration":      {"predicted_probability": "number", "observed_fraction": "number"},
-		"bubble":           {"x": "number", "y": "number", "size": "number"},
-		"categorical":      {"category": "string", "value": "number"},
-		"hierarchy":        {"id": "string", "parent": "string", "value": "number"},
-		"waterfall":        {"label": "string", "value": "number", "kind": "string"},
+		"roc":                    {"fpr": "number", "tpr": "number"},
+		"precision_recall":       {"recall": "number", "precision": "number"},
+		"calibration":            {"predicted_probability": "number", "observed_fraction": "number"},
+		"bubble":                 {"x": "number", "y": "number", "size": "number"},
+		"categorical":            {"category": "string", "value": "number"},
+		"hierarchy":              {"id": "string", "parent": "string", "value": "number"},
+		"waterfall":              {"label": "string", "value": "number", "kind": "string"},
+		"regression_diagnostics": {"actual": "number", "prediction": "number"},
+		"feature_importance":     {"feature": "string", "value": "number", "method": "string"},
 	}
 	typed := required[body.Subtype]
 	if typed == nil && body.Subtype != "multivariate" {
@@ -148,6 +150,15 @@ func validSpecialTable(body domain.TableObservation) bool {
 	}
 	if body.Subtype == "calibration" {
 		if value, exists := names["bin_size"]; exists && value != "integer" {
+			return false
+		}
+	}
+	if body.Subtype == "regression_diagnostics" {
+		if group, exists := names["group"]; exists && group != "string" {
+			return false
+		}
+		definition, ok := body.Metadata["residual_definition"].(string)
+		if !ok || definition != "actual_minus_prediction" && definition != "prediction_minus_actual" {
 			return false
 		}
 	}
@@ -192,6 +203,18 @@ func validSpecialTable(body domain.TableObservation) bool {
 				return false
 			}
 			hasAccountingMarker = hasAccountingMarker || kind != "contribution"
+		case "regression_diagnostics":
+			if group, exists := row["group"]; exists {
+				if value, ok := group.(string); !ok || strings.TrimSpace(value) == "" {
+					return false
+				}
+			}
+		case "feature_importance":
+			feature, featureOK := row["feature"].(string)
+			method, methodOK := row["method"].(string)
+			if !featureOK || strings.TrimSpace(feature) == "" || !methodOK || strings.TrimSpace(method) == "" {
+				return false
+			}
 		}
 	}
 	if body.Subtype == "hierarchy" {
@@ -309,7 +332,16 @@ func (a *API) jobTable(w http.ResponseWriter, r *http.Request) {
 		}
 		filters[parts[0]] = parts[1]
 	}
-	page, err := a.store.Table(r.Context(), job.ID, attempt, name, store.TableQuery{After: after, Offset: offset, Limit: limit, SortBy: r.URL.Query().Get("sort"), Order: order, Filters: filters})
+	absolute := false
+	if value := r.URL.Query().Get("absolute"); value != "" {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			writeProblem(w, 422, "invalid_table_absolute_sort", "absolute must be true or false")
+			return
+		}
+		absolute = parsed
+	}
+	page, err := a.store.Table(r.Context(), job.ID, attempt, name, store.TableQuery{After: after, Offset: offset, Limit: limit, SortBy: r.URL.Query().Get("sort"), Order: order, Filters: filters, AbsoluteSort: absolute})
 	if err != nil {
 		if strings.Contains(err.Error(), "unknown table") {
 			writeProblem(w, 422, "invalid_table_query", err.Error())

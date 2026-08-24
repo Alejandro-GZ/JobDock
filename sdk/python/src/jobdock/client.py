@@ -16,7 +16,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
-from .observability import CheckpointObservation, DistributionObservation, EvaluationCurve, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ObservabilityPhase, ProgressObservation, TableColumn, TableObservation
+from .observability import CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ObservabilityPhase, ProgressObservation, RegressionDiagnostics, TableColumn, TableObservation
 from . import __version__
 
 logger = logging.getLogger("jobdock")
@@ -44,6 +44,8 @@ class NoopJob:
     def distribution(self, observation: DistributionObservation) -> None: pass
     def table(self, observation: TableObservation) -> None: pass
     def evaluation_curve(self, observation: EvaluationCurve) -> None: pass
+    def regression_diagnostics(self, observation: RegressionDiagnostics) -> None: pass
+    def feature_importance(self, observation: FeatureImportance) -> None: pass
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None: pass
     def metrics(self, items: Iterable[Metric]) -> None: pass
     def declare_observability(self, manifest: ObservabilityManifest) -> None: pass
@@ -182,7 +184,7 @@ class Job:
                     raise ValueError("table cell does not match its declared type")
         tags = set(_validated_semantic_tags(observation.tags) or ())
         tags.add(f"table:{subtype}")
-        payload = _observation_payload(observation, name=name, subtype=subtype, columns=columns, rows=rows, tags=sorted(tags))
+        payload = _observation_payload(observation, name=name, subtype=subtype, columns=columns, rows=rows, tags=sorted(tags), replace=observation.replace)
         if len(json.dumps(payload, separators=(",", ":")).encode()) > 1 << 20:
             raise ValueError("table payload must not exceed 1 MiB")
         self._enqueue("tables", payload)
@@ -214,6 +216,34 @@ class Job:
         normalized = [{column.name: row.get(column.name) for column in columns} for row in rows]
         for start in range(0, len(normalized), 256):
             self.table(TableObservation(observation.name, columns, normalized[start:start + 256], kind, observation.step, observation.timestamp, (f"curve:{kind}",), metadata or None))
+
+    def regression_diagnostics(self, observation: RegressionDiagnostics) -> None:
+        actual = [float(value) for value in observation.actual]
+        prediction = [float(value) for value in observation.prediction]
+        if not actual or len(actual) != len(prediction) or len(actual) > 4096 or any(not math.isfinite(value) for value in actual + prediction):
+            raise ValueError("regression diagnostics require 1-4096 finite prediction/actual pairs")
+        groups = None if observation.group is None else [str(value).strip() for value in observation.group]
+        if groups is not None and (len(groups) != len(actual) or any(not value or len(value) > 128 for value in groups)):
+            raise ValueError("regression diagnostic groups must match every observation and contain 1-128 characters")
+        residual = observation.residual_definition.strip().lower()
+        if residual not in {"actual_minus_prediction", "prediction_minus_actual"}:
+            raise ValueError("residual_definition must be actual_minus_prediction or prediction_minus_actual")
+        unit = observation.unit.strip() if observation.unit is not None else None
+        if unit is not None and (not unit or len(unit) > 64):
+            raise ValueError("regression diagnostic unit must contain 1-64 characters")
+        summary = {str(key).strip(): float(value) for key, value in (observation.summary or {}).items()}
+        if len(summary) > 16 or any(not key or len(key) > 128 or not math.isfinite(value) for key, value in summary.items()):
+            raise ValueError("regression diagnostic summary must contain at most 16 named finite reported values")
+        metadata = dict(observation.metadata or {})
+        metadata["residual_definition"] = residual
+        if summary:
+            metadata["summary"] = summary
+        columns = [TableColumn("actual", "number", unit), TableColumn("prediction", "number", unit)]
+        if groups is not None:
+            columns.append(TableColumn("group", "string"))
+        rows = [{"actual": actual[index], "prediction": prediction[index], **({"group": groups[index]} if groups is not None else {})} for index in range(len(actual))]
+        for start in range(0, len(rows), 256):
+            self.table(TableObservation(observation.name, columns, rows[start:start + 256], "regression_diagnostics", observation.step, observation.timestamp, ("diagnostic:regression",), metadata, start == 0))
 
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None:
         """Report one scalar metric while preserving the original call shape."""

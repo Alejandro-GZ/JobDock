@@ -132,6 +132,7 @@ class TableObservation:
     timestamp: datetime | None = None
     tags: SemanticTags | None = None
     metadata: Metadata | None = None
+    replace: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +142,36 @@ class EvaluationCurve:
     points: Sequence[Mapping[str, JSONValue]]
     summary: Mapping[str, float] | None = None
     model: str | None = None
+    step: int | None = None
+    timestamp: datetime | None = None
+    metadata: Metadata | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RegressionDiagnostics:
+    """Reported prediction/target pairs for regression diagnostics."""
+
+    name: str
+    actual: Sequence[float]
+    prediction: Sequence[float]
+    group: Sequence[str] | None = None
+    residual_definition: str = "actual_minus_prediction"
+    unit: str | None = None
+    summary: Mapping[str, float] | None = None
+    step: int | None = None
+    timestamp: datetime | None = None
+    metadata: Metadata | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FeatureImportance:
+    """Global feature contributions reported by user code."""
+
+    name: str
+    values: Mapping[str, float]
+    method: str
+    model: str | None = None
+    unit: str | None = None
     step: int | None = None
     timestamp: datetime | None = None
     metadata: Metadata | None = None

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from jobdock import CheckpointObservation, DistributionObservation, EvaluationCurve, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, ObservabilityPhase, Phase, ProgressObservation, SEMANTIC_CATALOG_VERSION, TableColumn, TableObservation, current_job
+from jobdock import CheckpointObservation, DistributionObservation, EvaluationCurve, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, ObservabilityPhase, Phase, ProgressObservation, RegressionDiagnostics, SEMANTIC_CATALOG_VERSION, TableColumn, TableObservation, current_job
 
 
 def test_current_job_is_noop_without_environment(monkeypatch):
@@ -66,6 +66,21 @@ def test_typed_tables_and_evaluation_curves_are_bounded_and_ordered(tmp_path: Pa
         job.evaluation_curve(EvaluationCurve("large", "roc", [{"fpr": 0.0, "tpr": 0.0}] * 501))
     with pytest.raises(ValueError, match="match"):
         job.table(TableObservation("broken", [TableColumn("value", "number")], [{"other": 1.0}]))
+    job.close()
+
+
+def test_regression_diagnostics_preserve_pairs_groups_and_reported_summary(tmp_path: Path, monkeypatch):
+    job = Job("id", "http://jobdock.test", "token", tmp_path)
+    queued = []
+    monkeypatch.setattr(job, "_enqueue", lambda endpoint, payload: queued.append((endpoint, payload)))
+    job.regression_diagnostics(RegressionDiagnostics("validation", [1, 2], [.8, 2.2], ["train", "validation"], unit="ms", summary={"mae": .2}))
+    assert queued[0][0] == "tables"
+    assert queued[0][1]["subtype"] == "regression_diagnostics"
+    assert queued[0][1]["replace"] is True
+    assert queued[0][1]["rows"] == [{"actual": 1.0, "prediction": .8, "group": "train"}, {"actual": 2.0, "prediction": 2.2, "group": "validation"}]
+    assert queued[0][1]["metadata"] == {"residual_definition": "actual_minus_prediction", "summary": {"mae": .2}}
+    with pytest.raises(ValueError, match="pairs"):
+        job.regression_diagnostics(RegressionDiagnostics("broken", [1], [1, 2]))
     job.close()
 
 

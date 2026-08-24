@@ -456,6 +456,7 @@ type TableObservation struct {
 	Columns   []TableColumn    `json:"columns"`
 	Rows      []map[string]any `json:"rows"`
 	Tags      []string         `json:"tags,omitempty"`
+	Replace   bool             `json:"replace,omitempty"`
 	ObservationContext
 }
 

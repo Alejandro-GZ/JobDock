@@ -516,6 +516,7 @@ paths:
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 100}}
         - {name: sort, in: query, schema: {type: string, minLength: 1, maxLength: 128}}
         - {name: order, in: query, schema: {type: string, enum: [asc, desc], default: asc}}
+        - {name: absolute, in: query, description: Sort a numeric column by absolute magnitude., schema: {type: boolean, default: false}}
         - {name: filter, in: query, description: Repeatable exact-match column=value filter., schema: {type: array, items: {type: string}}}
       responses:
         '200': {description: Bounded table page, content: {application/json: {schema: {$ref: '#/components/schemas/TablePage'}}}}
@@ -1414,7 +1415,7 @@ components:
       required: [id, type, size, position, sources]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
-        type: {type: string, enum: [lineplot, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, heatmap, correlation_heatmap, progress, logs, kpi, gauge, data_grid, roc_curve, precision_recall_curve, calibration_curve, bubble_chart, parallel_coordinates, pie_chart, donut_chart, treemap, waterfall]}
+        type: {type: string, enum: [lineplot, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, heatmap, correlation_heatmap, progress, logs, kpi, gauge, data_grid, roc_curve, precision_recall_curve, calibration_curve, prediction_vs_actual, residual_plot, bubble_chart, parallel_coordinates, pie_chart, donut_chart, treemap, waterfall]}
         title: {type: string, maxLength: 120, description: Optional compact overlay title. An omitted or empty title reserves no plot space.}
         size:
           type: object
@@ -1476,7 +1477,7 @@ components:
       required: [id, type, size, position, slots]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
-        type: {type: string, enum: [lineplot, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, heatmap, correlation_heatmap, progress, logs, kpi, gauge, data_grid, roc_curve, precision_recall_curve, calibration_curve, bubble_chart, parallel_coordinates, pie_chart, donut_chart, treemap, waterfall]}
+        type: {type: string, enum: [lineplot, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, heatmap, correlation_heatmap, progress, logs, kpi, gauge, data_grid, roc_curve, precision_recall_curve, calibration_curve, prediction_vs_actual, residual_plot, bubble_chart, parallel_coordinates, pie_chart, donut_chart, treemap, waterfall]}
         title: {type: string, maxLength: 120}
         size:
           type: object
@@ -1996,6 +1997,7 @@ components:
             column_labels: {type: array, minItems: 1, maxItems: 128, items: {type: string, minLength: 1, maxLength: 128}}
             unit: {type: string, maxLength: 64}
             tags: {$ref: '#/components/schemas/SemanticMetricTags'}
+            replace: {type: boolean, default: false, description: Atomically replace existing rows before appending this chunk.}
             resolution: {$ref: '#/components/schemas/MatrixResolution'}
     MatrixResolution:
       type: object

@@ -58,6 +58,7 @@ type dashboardWidget struct {
 	NormalizeAxes      *bool                      `json:"normalize_axes,omitempty"`
 	CategoryLimit      int                        `json:"category_limit,omitempty"`
 	GroupSmall         *bool                      `json:"group_small_categories,omitempty"`
+	ResidualXAxis      string                     `json:"residual_x_axis,omitempty"`
 	Appearance         *dashboardWidgetAppearance `json:"appearance,omitempty"`
 }
 type dashboardWidgetAppearance struct {
@@ -476,7 +477,7 @@ func validateDashboardConfig(config dashboardConfig) error {
 		if len(widget.TableColumns) > 64 || widget.TablePageSize != 0 && (widget.TablePageSize < 1 || widget.TablePageSize > 500) || widget.TableSortOrder != "" && widget.TableSortOrder != "asc" && widget.TableSortOrder != "desc" || widget.CategoryLimit != 0 && (widget.CategoryLimit < 2 || widget.CategoryLimit > 64) {
 			return dashboardError("Widget tabular configuration is invalid")
 		}
-		tabular := map[string]bool{"data_grid": true, "roc_curve": true, "precision_recall_curve": true, "calibration_curve": true, "bubble_chart": true, "parallel_coordinates": true, "pie_chart": true, "donut_chart": true, "treemap": true, "waterfall": true}[widget.Type]
+		tabular := map[string]bool{"data_grid": true, "roc_curve": true, "precision_recall_curve": true, "calibration_curve": true, "prediction_vs_actual": true, "residual_plot": true, "bubble_chart": true, "parallel_coordinates": true, "pie_chart": true, "donut_chart": true, "treemap": true, "waterfall": true}[widget.Type]
 		if !tabular && (len(widget.TableColumns) > 0 || widget.TableSortBy != "" || widget.TableSortOrder != "" || widget.TablePageSize != 0 || widget.NormalizeAxes != nil || widget.CategoryLimit != 0 || widget.GroupSmall != nil) {
 			return dashboardError("Tabular configuration is only valid for table-backed widgets")
 		}
@@ -485,6 +486,9 @@ func validateDashboardConfig(config dashboardConfig) error {
 		}
 		if (widget.CategoryLimit != 0 || widget.GroupSmall != nil) && widget.Type != "pie_chart" && widget.Type != "donut_chart" {
 			return dashboardError("Category grouping is only valid for pie and donut widgets")
+		}
+		if widget.ResidualXAxis != "" && (widget.Type != "residual_plot" || widget.ResidualXAxis != "prediction" && widget.ResidualXAxis != "actual") {
+			return dashboardError("Residual plots support prediction or actual on the horizontal axis")
 		}
 		for _, column := range widget.TableColumns {
 			if !tableIdentifierPattern.MatchString(column) {
@@ -684,7 +688,7 @@ func validDashboardColor(value string) bool {
 }
 
 func supportedDashboardWidgetTypes() map[string]bool {
-	return map[string]bool{"lineplot": true, "barplot": true, "area_chart": true, "stacked_bar": true, "scatterplot": true, "starplot": true, "histogram": true, "boxplot": true, "violin": true, "heatmap": true, "correlation_heatmap": true, "confusion_matrix": true, "data_grid": true, "roc_curve": true, "precision_recall_curve": true, "calibration_curve": true, "bubble_chart": true, "parallel_coordinates": true, "pie_chart": true, "donut_chart": true, "treemap": true, "waterfall": true, "progress": true, "logs": true, "kpi": true, "gauge": true}
+	return map[string]bool{"lineplot": true, "barplot": true, "area_chart": true, "stacked_bar": true, "scatterplot": true, "starplot": true, "histogram": true, "boxplot": true, "violin": true, "heatmap": true, "correlation_heatmap": true, "confusion_matrix": true, "data_grid": true, "roc_curve": true, "precision_recall_curve": true, "calibration_curve": true, "prediction_vs_actual": true, "residual_plot": true, "bubble_chart": true, "parallel_coordinates": true, "pie_chart": true, "donut_chart": true, "treemap": true, "waterfall": true, "progress": true, "logs": true, "kpi": true, "gauge": true}
 }
 
 func supportedDashboardSourceKinds() map[string]bool {
