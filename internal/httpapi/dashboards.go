@@ -67,9 +67,12 @@ type dashboardAxisAppearance struct {
 	Max   *float64 `json:"max,omitempty"`
 }
 type dashboardSeriesAppearance struct {
-	Label string `json:"label,omitempty"`
-	Unit  string `json:"unit,omitempty"`
-	Color string `json:"color,omitempty"`
+	Label         string   `json:"label,omitempty"`
+	Unit          string   `json:"unit,omitempty"`
+	Color         string   `json:"color,omitempty"`
+	Normalization string   `json:"normalization,omitempty"`
+	Min           *float64 `json:"min,omitempty"`
+	Max           *float64 `json:"max,omitempty"`
 }
 
 // UnmarshalJSON deliberately owns forward-compatible appearance decoding. The
@@ -459,6 +462,9 @@ func validateDashboardConfig(config dashboardConfig) error {
 		if len(widget.Sources) > 64 {
 			return dashboardError("A widget may contain at most 64 sources")
 		}
+		if widget.Type == "starplot" && len(widget.Sources) > 16 {
+			return dashboardError("A STAR plot may contain at most 16 radial axes")
+		}
 		for _, source := range widget.Sources {
 			if !validKinds[source.Kind] || len(strings.TrimSpace(source.Name)) < 1 || len(source.Name) > 128 {
 				return dashboardError("Widget source is invalid")
@@ -485,7 +491,7 @@ func validateDashboardWidgetAppearance(widget dashboardWidget) error {
 	if appearance.Legend != "" && appearance.Legend != "auto" && appearance.Legend != "hidden" && appearance.Legend != "open" {
 		return dashboardError("Widget appearance legend is invalid")
 	}
-	plot := widget.Type == "lineplot" || widget.Type == "barplot" || widget.Type == "scatterplot"
+	plot := widget.Type == "lineplot" || widget.Type == "barplot" || widget.Type == "scatterplot" || widget.Type == "starplot"
 	if len(appearance.Subtitle) > 160 {
 		return dashboardError("Widget appearance subtitle may contain at most 160 characters")
 	}
@@ -495,6 +501,21 @@ func validateDashboardWidgetAppearance(widget dashboardWidget) error {
 	for key, series := range appearance.Series {
 		if len(strings.TrimSpace(key)) < 1 || len(key) > 260 || len(series.Label) > 120 || len(series.Unit) > 64 || series.Color != "" && !validDashboardColor(series.Color) {
 			return dashboardError("Widget appearance series customization is invalid")
+		}
+		if widget.Type != "starplot" && (series.Normalization != "" || series.Min != nil || series.Max != nil) {
+			return dashboardError("Radial axis normalization is only valid for STAR plots")
+		}
+		if widget.Type == "starplot" {
+			if series.Normalization != "" && series.Normalization != "historical" && series.Normalization != "manual" && series.Normalization != "zero_to_one" {
+				return dashboardError("STAR plot axis normalization is invalid")
+			}
+			if series.Normalization == "manual" {
+				if series.Min == nil || series.Max == nil || *series.Min >= *series.Max {
+					return dashboardError("Manual STAR plot axes require increasing minimum and maximum limits")
+				}
+			} else if series.Min != nil || series.Max != nil {
+				return dashboardError("STAR plot axis limits require manual normalization")
+			}
 		}
 	}
 	if err := validateDashboardAxisAppearance(appearance.XAxis); err != nil {
@@ -563,7 +584,7 @@ func validDashboardColor(value string) bool {
 }
 
 func supportedDashboardWidgetTypes() map[string]bool {
-	return map[string]bool{"lineplot": true, "barplot": true, "scatterplot": true, "confusion_matrix": true, "progress": true, "logs": true, "gauge": true}
+	return map[string]bool{"lineplot": true, "barplot": true, "scatterplot": true, "starplot": true, "confusion_matrix": true, "progress": true, "logs": true, "gauge": true}
 }
 
 func supportedDashboardSourceKinds() map[string]bool {

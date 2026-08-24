@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -127,7 +128,7 @@ func TestDashboardConfigurationPersistsAndFallsBackSafely(t *testing.T) {
 	if versioned.MaterializedFrom != nil {
 		t.Fatalf("explicit provenance detach failed: %#v", versioned)
 	}
-	partialConfig := `{"widgets":[{"id":"loss","type":"lineplot","future_property":true,"size":{"columns":6,"rows":3},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}]},{"id":"future","type":"starplot","size":{"columns":6,"rows":3},"position":{"x":6,"y":0},"sources":[]}]}`
+	partialConfig := `{"widgets":[{"id":"loss","type":"lineplot","future_property":true,"size":{"columns":6,"rows":3},"position":{"x":0,"y":0},"sources":[{"kind":"metric","name":"loss"}]},{"id":"future","type":"future-widget","size":{"columns":6,"rows":3},"position":{"x":6,"y":0},"sources":[]}]}`
 	if _, err = repository.DB().ExecContext(ctx, `UPDATE job_dashboards SET config_json=? WHERE user_id=? AND job_id=?`, partialConfig, owner.ID, job.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -325,6 +326,28 @@ func TestDashboardValidationRequiresFixedGaugeMaximum(t *testing.T) {
 	config.Widgets[0].GaugeMaxValue = &maximum
 	if err := validateDashboardConfig(config); err != nil {
 		t.Fatalf("valid fixed gauge was rejected: %v", err)
+	}
+}
+
+func TestDashboardValidationSupportsBoundedStarPlotAxes(t *testing.T) {
+	minimum, maximum := 0.0, 100.0
+	config := dashboardConfig{Widgets: []dashboardWidget{{ID: "star", Type: "starplot", Size: dashboardWidgetSize{Columns: 6, Rows: 4}, Sources: []dashboardWidgetSource{{Kind: "metric", Name: "accuracy"}, {Kind: "metric", Name: "latency"}, {Kind: "resource", Name: "gpu"}}, Appearance: &dashboardWidgetAppearance{SchemaVersion: 1, ColorScheme: "cool", Series: map[string]dashboardSeriesAppearance{"metric:accuracy": {Label: "Quality", Unit: "%", Normalization: "manual", Min: &minimum, Max: &maximum}}}}}}
+	if err := validateDashboardConfig(config); err != nil {
+		t.Fatalf("valid STAR plot was rejected: %v", err)
+	}
+	invalid := config
+	invalid.Widgets = append([]dashboardWidget(nil), config.Widgets...)
+	invalid.Widgets[0].Appearance = &dashboardWidgetAppearance{SchemaVersion: 1, Series: map[string]dashboardSeriesAppearance{"metric:accuracy": {Normalization: "manual", Min: &maximum, Max: &minimum}}}
+	if err := validateDashboardConfig(invalid); err == nil {
+		t.Fatal("decreasing STAR plot limits were accepted")
+	}
+	invalid.Widgets[0].Appearance = nil
+	invalid.Widgets[0].Sources = make([]dashboardWidgetSource, 17)
+	for index := range invalid.Widgets[0].Sources {
+		invalid.Widgets[0].Sources[index] = dashboardWidgetSource{Kind: "metric", Name: fmt.Sprintf("axis-%d", index)}
+	}
+	if err := validateDashboardConfig(invalid); err == nil {
+		t.Fatal("more than 16 STAR plot axes were accepted")
 	}
 }
 

@@ -1358,13 +1358,16 @@ components:
         label: {type: string, maxLength: 120}
         unit: {type: string, maxLength: 64}
         color: {type: string, pattern: '^#[0-9A-Fa-f]{6}$'}
+        normalization: {type: string, enum: [historical, manual, zero_to_one], description: STAR plot radial-axis normalization.}
+        min: {type: number, description: Manual STAR plot axis minimum.}
+        max: {type: number, description: Manual STAR plot axis maximum.}
     DashboardWidget:
       type: object
       additionalProperties: false
       required: [id, type, size, position, sources]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
-        type: {type: string, enum: [lineplot, barplot, scatterplot, confusion_matrix, progress, logs, gauge]}
+        type: {type: string, enum: [lineplot, barplot, scatterplot, starplot, confusion_matrix, progress, logs, gauge]}
         title: {type: string, maxLength: 120, description: Optional compact overlay title. An omitted or empty title reserves no plot space.}
         size:
           type: object
@@ -1409,7 +1412,7 @@ components:
       required: [id, type, size, position, slots]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
-        type: {type: string, enum: [lineplot, barplot, scatterplot, confusion_matrix, progress, logs, gauge]}
+        type: {type: string, enum: [lineplot, barplot, scatterplot, starplot, confusion_matrix, progress, logs, gauge]}
         title: {type: string, maxLength: 120}
         size:
           type: object

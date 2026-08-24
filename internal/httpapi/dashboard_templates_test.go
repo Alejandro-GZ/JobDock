@@ -90,10 +90,24 @@ func TestDashboardTemplateResolverClassifiesOverallCompatibilityAndFallsBack(t *
 	if fallback.Compatibility != "incompatible" || fallback.FallbackReason != "unsupported_schema_version" || len(fallback.Widgets) != 0 {
 		t.Fatalf("future schema fallback: %#v", fallback)
 	}
-	future.SchemaVersion, future.Widgets[0].Type = dashboardTemplateSchemaVersion, "starplot"
+	future.SchemaVersion, future.Widgets[0].Type = dashboardTemplateSchemaVersion, "future-widget"
 	fallback = resolveDashboardTemplate(future, nil)
 	if fallback.Compatibility != "incompatible" || fallback.FallbackReason != "unsupported_widget_type" {
 		t.Fatalf("future widget fallback: %#v", fallback)
+	}
+}
+
+func TestDashboardTemplateResolverMaterializesStarPlotSources(t *testing.T) {
+	template := semanticTemplate(templateSlot("profile", []string{"metric:model_score"}, 3, 4))
+	template.Widgets[0].Type = "starplot"
+	template.Widgets[0].Appearance = &dashboardWidgetAppearance{SchemaVersion: 1, ColorScheme: "cool"}
+	result := resolveDashboardTemplate(template, []observableSource{
+		{Kind: "metric", Name: "accuracy", Tags: []string{"metric:model_score"}},
+		{Kind: "metric", Name: "latency", Tags: []string{"metric:model_score"}},
+		{Kind: "metric", Name: "throughput", Tags: []string{"metric:model_score"}},
+	})
+	if result.Compatibility != "compatible" || len(result.Widgets) != 1 || result.Widgets[0].Type != "starplot" || len(result.Widgets[0].Sources) != 3 {
+		t.Fatalf("STAR plot template resolution: %#v", result)
 	}
 }
 

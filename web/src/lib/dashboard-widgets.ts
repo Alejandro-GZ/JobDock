@@ -1,4 +1,4 @@
-export type DashboardWidgetType = "lineplot" | "barplot" | "scatterplot" | "confusion_matrix" | "progress" | "logs" | "gauge";
+export type DashboardWidgetType = "lineplot" | "barplot" | "scatterplot" | "starplot" | "confusion_matrix" | "progress" | "logs" | "gauge";
 export type DashboardSourceKind = "metric" | "resource" | "matrix" | "progress" | "log";
 export type DashboardSourceRole = "x" | "y";
 export type DashboardWidgetSource = { kind: DashboardSourceKind; name: string; role?: DashboardSourceRole };
@@ -12,7 +12,7 @@ export type DashboardAxisAppearance = {
   min?: number;
   max?: number;
 };
-export type DashboardSeriesAppearance = { label?: string; unit?: string; color?: string };
+export type DashboardSeriesAppearance = { label?: string; unit?: string; color?: string; normalization?: "historical"|"manual"|"zero_to_one"; min?:number;max?:number };
 export type DashboardWidgetAppearance = {
   schema_version: 1;
   subtitle?: string;
@@ -102,6 +102,7 @@ export const widgetCatalog: ReadonlyArray<{ type: DashboardWidgetType; label: st
   { type: "lineplot", label: "Line plot", description: "A time series rendered as a continuous line.",category:"trends" },
   { type: "barplot", label: "Bar plot", description: "Recent observations rendered as discrete bars.",category:"trends" },
   { type: "scatterplot", label: "Scatter plot", description: "Observations plotted by step or capture time.",category:"relationships" },
+  { type: "starplot", label: "STAR plot", description: "Latest values compared across normalized radial axes.",category:"relationships" },
   { type: "confusion_matrix", label: "Confusion matrix", description: "Absolute or normalized classification outcomes.",category:"diagnostics" },
   { type: "progress", label: "Progress", description: "Global progress, current stage and upcoming milestones.",category:"summaries" },
   { type: "logs", label: "Logs", description: "Live stdout, stderr, or both streams.",category:"operational" },
@@ -150,7 +151,7 @@ export function createDashboardWidget(type: DashboardWidgetType, sources: Dashbo
     type,
     size: { columns: type === "progress" || type === "logs" ? 12 : 6, rows: type === "logs" ? 6 : 3 },
     position: { x: 0, y: Number.MAX_SAFE_INTEGER },
-    sources: type==="logs"?[{kind:"log",name:"stdout"}]:type==="scatterplot"&&numeric.length?[{...numeric[0],role:"x"},{...(numeric[1]??numeric[0]),role:"y"}]:source ? [source] : [],
+    sources: type==="logs"?[{kind:"log",name:"stdout"}]:type==="scatterplot"&&numeric.length?[{...numeric[0],role:"x"},{...(numeric[1]??numeric[0]),role:"y"}]:type==="starplot"?numeric.slice(0,Math.min(5,numeric.length)):source ? [source] : [],
     x_axis: "time",
     grid_columns:12,time_range:"all",gauge_max_mode:"historical",
   };
@@ -214,12 +215,12 @@ function restoreAppearance(type:DashboardWidgetType,value:unknown):DashboardWidg
   if(!value||typeof value!=="object")return undefined;
   const item=value as Partial<DashboardWidgetAppearance>;
   if(item.schema_version!==1)return undefined;
-  const plot=type==="lineplot"||type==="barplot"||type==="scatterplot",appearance:DashboardWidgetAppearance={schema_version:1};
+  const plot=type==="lineplot"||type==="barplot"||type==="scatterplot"||type==="starplot",appearance:DashboardWidgetAppearance={schema_version:1};
   if(plot&&typeof item.subtitle==="string"&&item.subtitle.trim())appearance.subtitle=item.subtitle.trim().slice(0,160);
   if(plot&&["default","cool","warm","monochrome"].includes(String(item.color_scheme)))appearance.color_scheme=item.color_scheme;
   if(plot&&["auto","hidden","open"].includes(String(item.legend)))appearance.legend=item.legend;
   if(plot&&typeof item.show_grid==="boolean")appearance.show_grid=item.show_grid;
-  if(plot){const x=restoreAxis(item.x_axis),y=restoreAxis(item.y_axis),series=restoreSeries(item.series);if(x)appearance.x_axis=x;if(y)appearance.y_axis=y;if(series)appearance.series=series}
+  if(plot){const x=restoreAxis(item.x_axis),y=restoreAxis(item.y_axis),series=restoreSeries(item.series,type==="starplot");if(x&&type!=="starplot")appearance.x_axis=x;if(y&&type!=="starplot")appearance.y_axis=y;if(series)appearance.series=series}
   if(type==="lineplot"&&["solid","dashed","dotted"].includes(String(item.line_style)))appearance.line_style=item.line_style;
   if(type==="lineplot"&&finiteBetween(item.line_width,.5,12))appearance.line_width=item.line_width;
   if((type==="lineplot"||type==="scatterplot")&&typeof item.show_points==="boolean")appearance.show_points=item.show_points;
@@ -229,7 +230,7 @@ function restoreAppearance(type:DashboardWidgetType,value:unknown):DashboardWidg
   return appearance;
 }
 function restoreAxis(value:unknown):DashboardAxisAppearance|undefined{if(!value||typeof value!=="object")return undefined;const item=value as DashboardAxisAppearance,result:DashboardAxisAppearance={};if(typeof item.label==="string"&&item.label.trim())result.label=item.label.trim().slice(0,80);if(typeof item.unit==="string"&&item.unit.trim())result.unit=item.unit.trim().slice(0,64);if(item.scale==="linear"||item.scale==="log")result.scale=item.scale;if(item.range==="auto")result.range="auto";if(item.range==="manual"&&Number.isFinite(item.min)&&Number.isFinite(item.max)&&item.min!<item.max!){result.range="manual";result.min=item.min;result.max=item.max}return Object.keys(result).length?result:undefined}
-function restoreSeries(value:unknown):Record<string,DashboardSeriesAppearance>|undefined{if(!value||typeof value!=="object"||Array.isArray(value))return undefined;const entries=Object.entries(value).slice(0,64),result:Record<string,DashboardSeriesAppearance>={};for(const [key,raw] of entries){if(!key||key.length>260||!raw||typeof raw!=="object")continue;const item=raw as DashboardSeriesAppearance,next:DashboardSeriesAppearance={};if(typeof item.label==="string"&&item.label.trim())next.label=item.label.trim().slice(0,120);if(typeof item.unit==="string"&&item.unit.trim())next.unit=item.unit.trim().slice(0,64);if(typeof item.color==="string"&&/^#[0-9a-f]{6}$/i.test(item.color))next.color=item.color.toLowerCase();if(Object.keys(next).length)result[key]=next}return Object.keys(result).length?result:undefined}
+function restoreSeries(value:unknown,star=false):Record<string,DashboardSeriesAppearance>|undefined{if(!value||typeof value!=="object"||Array.isArray(value))return undefined;const entries=Object.entries(value).slice(0,64),result:Record<string,DashboardSeriesAppearance>={};for(const [key,raw] of entries){if(!key||key.length>260||!raw||typeof raw!=="object")continue;const item=raw as DashboardSeriesAppearance,next:DashboardSeriesAppearance={};if(typeof item.label==="string"&&item.label.trim())next.label=item.label.trim().slice(0,120);if(typeof item.unit==="string"&&item.unit.trim())next.unit=item.unit.trim().slice(0,64);if(typeof item.color==="string"&&/^#[0-9a-f]{6}$/i.test(item.color))next.color=item.color.toLowerCase();if(star&&["historical","manual","zero_to_one"].includes(String(item.normalization)))next.normalization=item.normalization;if(star&&item.normalization==="manual"&&Number.isFinite(item.min)&&Number.isFinite(item.max)&&item.min!<item.max!){next.min=item.min;next.max=item.max}if(Object.keys(next).length)result[key]=next}return Object.keys(result).length?result:undefined}
 function finiteBetween(value:unknown,min:number,max:number):value is number{return typeof value==="number"&&Number.isFinite(value)&&value>=min&&value<=max}
 function fits(occupied:Set<string>,x:number,y:number,columns:number,rows:number){for(let row=y;row<y+rows;row++)for(let column=x;column<x+columns;column++)if(occupied.has(`${column}:${row}`))return false;return true}
 function occupy(occupied:Set<string>,x:number,y:number,columns:number,rows:number){for(let row=y;row<y+rows;row++)for(let column=x;column<x+columns;column++)occupied.add(`${column}:${row}`)}

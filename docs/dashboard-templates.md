@@ -62,6 +62,13 @@ stroke width and markers; compatible plots also support marker size and
 opacity. Confusion matrices retain an initial `absolute` or `normalized` mode.
 Settings are accepted only by compatible widget types.
 
+Complete STAR plots use three to sixteen numeric metric or resource sources. Each
+source becomes a radial axis and retains its own display label, unit, color and
+range. Axes default to the bounded historical range already loaded for the
+dashboard; templates and users may instead select a fixed `zero_to_one` range
+or `manual` finite increasing limits. Missing observations are reported as
+partial axes and never synthesized as zero-valued telemetry.
+
 Manual ranges require finite increasing bounds. Logarithmic ranges must be
 positive, and logarithmic X axes are valid only for scatter plots or series
 using step as their horizontal axis. The dashboard editor enforces stable
