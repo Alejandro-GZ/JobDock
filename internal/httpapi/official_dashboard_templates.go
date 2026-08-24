@@ -83,8 +83,37 @@ func officialDashboardTemplates() []dashboardTemplate {
 		compositionTemplate("classification-rate-composition", "Classification rate composition", "Inspect deterministic true and false outcome-rate components across evaluation steps.", "classification", "stacked_bar", "evaluation", []string{"true_positive_rate", "true_negative_rate", "false_positive_rate", "false_negative_rate"}, ""),
 		matrixTemplate("generic-heatmap", "Generic heatmap", "Inspect a typed rectangular matrix without assigning classification semantics.", "general", "heatmap", "matrix:heatmap"),
 		matrixTemplate("correlation-heatmap", "Correlation heatmap", "Inspect a reported symmetric correlation matrix without deriving or synthesizing correlations.", "clustering-representation", "correlation_heatmap", "matrix:correlation"),
+		tabularTemplate("structured-records", "Structured records", "Inspect bounded typed observations, predictions, and structured records with server-side paging.", "general", "data_grid", "table:table", 12, 8),
+		tabularTemplate("classification-evaluation-curves", "Classification evaluation curves", "Compare reported ROC curves without requiring raw labels or predictions.", "classification", "roc_curve", "table:roc", 12, 7),
+		tabularTemplate("precision-recall-curves", "Precision–Recall curves", "Compare reported precision and recall operating points for one or more models.", "classification", "precision_recall_curve", "table:precision_recall", 12, 7),
+		tabularTemplate("calibration-curves", "Calibration curves", "Compare reported probability calibration against the perfect-calibration reference.", "classification", "calibration_curve", "table:calibration", 12, 7),
+		multivariateTemplate(),
+		categoricalSnapshotTemplate(),
+		tabularTemplate("hierarchical-composition", "Hierarchical composition", "Inspect an explicit non-negative parent-child snapshot.", "general", "treemap", "table:hierarchy", 12, 7),
+		tabularTemplate("ordered-contributions", "Ordered contributions", "Inspect explicitly identified initial, contribution, subtotal, and final records.", "general", "waterfall", "table:waterfall", 12, 7),
 	)
 	return result
+}
+
+func multivariateTemplate() dashboardTemplate {
+	slot := dashboardTemplateSlot{ID: "table", RequiredTags: []string{"table:multivariate"}, SourceTypes: []string{"table"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 1}, OnMissing: "error", OnAmbiguous: "error"}
+	return dashboardTemplate{ID: "multivariate-exploration", Name: "Multivariate exploration", Description: "Explore bounded multivariate records across bubble and parallel-coordinate views.", Category: "clustering-representation", SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{
+		officialWidget("bubble", "bubble_chart", 6, 6, 0, 0, slot),
+		officialWidget("parallel", "parallel_coordinates", 6, 6, 6, 0, slot),
+	}}
+}
+
+func categoricalSnapshotTemplate() dashboardTemplate {
+	slot := dashboardTemplateSlot{ID: "table", RequiredTags: []string{"table:categorical"}, SourceTypes: []string{"table"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 1}, OnMissing: "error", OnAmbiguous: "error"}
+	return dashboardTemplate{ID: "categorical-composition", Name: "Categorical composition", Description: "Inspect a bounded categorical snapshot with explicit grouping of small categories.", Category: "general", SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{
+		officialWidget("pie", "pie_chart", 6, 6, 0, 0, slot),
+		officialWidget("donut", "donut_chart", 6, 6, 6, 0, slot),
+	}}
+}
+
+func tabularTemplate(id, name, description, category, widgetType, tag string, columns, rows int) dashboardTemplate {
+	slot := dashboardTemplateSlot{ID: "table", RequiredTags: []string{tag}, SourceTypes: []string{"table"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: map[bool]int{true: 8, false: 1}[widgetType == "roc_curve" || widgetType == "precision_recall_curve" || widgetType == "calibration_curve"]}, OnMissing: "error", OnAmbiguous: "error"}
+	return dashboardTemplate{ID: id, Name: name, Description: description, Category: category, SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{officialWidget("table", widgetType, columns, rows, 0, 0, slot)}}
 }
 
 func matrixTemplate(id, name, description, category, widgetType, tag string) dashboardTemplate {

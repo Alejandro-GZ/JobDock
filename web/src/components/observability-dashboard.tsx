@@ -2,12 +2,15 @@
 import { Activity, BarChart3, ChartArea, ChartBarStacked, ChevronLeft, ChevronRight, Gauge, Grid3X3, GripVertical, LineChart, Maximize2, Radar, ScatterChart, Settings2, Target, Terminal, Trash2 } from "lucide-react";
 import { ConfusionMatrixWidget } from "@/components/confusion-matrix-widget";
 import { DistributionWidget } from "@/components/distribution-widget";
+import { DataGridWidget } from "@/components/data-grid-widget";
+import { EvaluationCurveWidget } from "@/components/evaluation-curve-widget";
 import { LiveLogs, type StreamName } from "@/components/live-logs";
 import { HeatmapWidget } from "@/components/heatmap-widget";
 import { ObservationPlot } from "@/components/observation-plot";
 import { ProgressWidget } from "@/components/progress-widget";
 import { ScalarSummaryWidget } from "@/components/scalar-summary-widget";
 import { StarPlot } from "@/components/star-plot";
+import { TabularChartWidget } from "@/components/tabular-chart-widget";
 import { type ChartMarker } from "@/components/time-series-chart";
 import { WidgetAppearanceEditor } from "@/components/widget-appearance-editor";
 import { Button } from "@/components/ui/button";
@@ -29,15 +32,15 @@ export function ObservabilityDashboard({jobID,attemptID,ready,numericSources,obs
     const options:WidgetSourceOption[]=[...numericSources];
     for(const descriptor of observableSources){
       const kind=descriptor.type as DashboardSourceKind;
-      if((kind!=="matrix"&&kind!=="progress"&&kind!=="distribution")||options.some(item=>item.kind===kind&&item.name===descriptor.name))continue;
-      options.push({kind,name:descriptor.name,title:descriptor.name,subtype:matrixSubtype(descriptor.subtype,descriptor.tags),tags:descriptor.tags,unit:descriptor.unit,phase:descriptor.phase,declared:descriptor.declared,observed:descriptor.observed});
+      if((kind!=="matrix"&&kind!=="progress"&&kind!=="distribution"&&kind!=="table")||options.some(item=>item.kind===kind&&item.name===descriptor.name))continue;
+      options.push({kind,name:descriptor.name,title:descriptor.name,subtype:kind==="matrix"?matrixSubtype(descriptor.subtype,descriptor.tags):descriptor.subtype,tags:descriptor.tags,unit:descriptor.unit,phase:descriptor.phase,declared:descriptor.declared,observed:descriptor.observed});
     }
     for(const matrix of matrices)if(!options.some(item=>item.kind==="matrix"&&item.name===matrix.name))options.push({kind:"matrix",name:matrix.name,title:matrix.name,subtype:matrix.matrix_type,tags:matrix.tags,unit:matrix.unit,observed:true});
     for(const item of distributions)if(!options.some(option=>option.kind==="distribution"&&option.name===item.name))options.push({kind:"distribution",name:item.name,title:item.name,unit:item.unit,observed:true});
     if(hasProgress(progress)&&!options.some(item=>item.kind==="progress"))options.push({kind:"progress",name:"progress",title:"Progress",observed:true});
     return options;
   },[numericSources,observableSources,matrices,distributions,progress]);
-  const sources=useMemo<DashboardSources>(()=>({metrics:numericSources.filter(item=>item.kind==="metric").map(item=>item.name),resources:numericSources.filter(item=>item.kind==="resource").map(item=>item.name),matrices:sourceOptions.filter(item=>item.kind==="matrix").map(item=>item.name),matrix_types:Object.fromEntries(sourceOptions.filter(item=>item.kind==="matrix").map(item=>[item.name,item.subtype??"confusion_matrix"])),distributions:sourceOptions.filter(item=>item.kind==="distribution").map(item=>item.name),progress:sourceOptions.some(item=>item.kind==="progress"),logs:true}),[numericSources,sourceOptions]);
+  const sources=useMemo<DashboardSources>(()=>({metrics:numericSources.filter(item=>item.kind==="metric").map(item=>item.name),resources:numericSources.filter(item=>item.kind==="resource").map(item=>item.name),matrices:sourceOptions.filter(item=>item.kind==="matrix").map(item=>item.name),matrix_types:Object.fromEntries(sourceOptions.filter(item=>item.kind==="matrix").map(item=>[item.name,item.subtype??"confusion_matrix"])),distributions:sourceOptions.filter(item=>item.kind==="distribution").map(item=>item.name),tables:sourceOptions.filter(item=>item.kind==="table").map(item=>item.name),table_types:Object.fromEntries(sourceOptions.filter(item=>item.kind==="table").map(item=>[item.name,item.subtype??"table"])),progress:sourceOptions.some(item=>item.kind==="progress"),logs:true}),[numericSources,sourceOptions]);
   useEffect(()=>{if(!ready||initialized.current===attemptID)return;initialized.current=attemptID;hydrating.current=true;setWidgets(restoreDashboardWidgets(initialWidgets)??defaultDashboardWidgets(sources))},[attemptID,ready,sources,initialWidgets]);
   useEffect(()=>{if(!replacement||replacement.key===appliedReplacement.current)return;appliedReplacement.current=replacement.key;hydrating.current=true;setWidgets(restoreDashboardWidgets(replacement.widgets)??[])},[replacement]);
   useEffect(()=>{if(observedWidgets.current===widgets)return;observedWidgets.current=widgets;if(hydrating.current){hydrating.current=false;return}if(initialized.current===attemptID&&ready)onWidgetsChange?.(widgets)},[widgets,attemptID,ready,onWidgetsChange]);
@@ -62,6 +65,9 @@ export function ObservabilityDashboard({jobID,attemptID,ready,numericSources,obs
 function DashboardWidgetView({jobID,attemptID,widget,numericSources,sourceOptions,progress,matrices,distributions,markers,onUpdate}:{jobID:string;attemptID:string;widget:DashboardWidget;numericSources:NumericWidgetSource[];sourceOptions:WidgetSourceOption[];progress?:ProgressState;matrices:MatrixObservation[];distributions:DistributionObservation[];markers:ChartMarker[];onUpdate:(widget:DashboardWidget)=>void}){
   const source=widget.sources[0];
   if(widget.type==="logs"){const streams=widget.sources.filter(item=>item.kind==="log"&&(item.name==="stdout"||item.name==="stderr")).map(item=>item.name as StreamName);return <LiveLogs jobId={jobID} attemptId={attemptID} streams={streams.length?streams:["stdout"]} embedded actions={<ConfigureWidget widget={widget} sources={sourceOptions} onUpdate={onUpdate}/>}/>}
+  if(widget.type==="data_grid"&&source?.kind==="table")return <DataGridWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
+  if((widget.type==="roc_curve"||widget.type==="precision_recall_curve"||widget.type==="calibration_curve")&&source?.kind==="table")return <EvaluationCurveWidget jobID={jobID} attemptID={attemptID} widget={widget}/>;
+  if((widget.type==="bubble_chart"||widget.type==="parallel_coordinates"||widget.type==="pie_chart"||widget.type==="donut_chart"||widget.type==="treemap"||widget.type==="waterfall")&&source?.kind==="table")return <TabularChartWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
   if(widget.type==="progress"&&progress&&hasProgress(progress))return <ProgressWidget state={progress}/>;
   if(widget.type==="confusion_matrix"&&source){const matrix=matrices.find(item=>item.name===source.name);if(matrix)return <ConfusionMatrixWidget matrix={matrix} initialMode={widget.appearance?.matrix_mode}/>}
   if((widget.type==="heatmap"||widget.type==="correlation_heatmap")&&source){const matrix=matrices.find(item=>item.name===source.name);if(matrix&&(widget.type==="heatmap"&&matrix.matrix_type==="heatmap"||widget.type==="correlation_heatmap"&&matrix.matrix_type==="correlation"))return <HeatmapWidget matrix={matrix} correlation={widget.type==="correlation_heatmap"} appearance={widget.appearance}/>}

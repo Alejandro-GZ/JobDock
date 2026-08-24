@@ -35,7 +35,7 @@ func TestOfficialObservabilityCatalogIsCompleteAndCanonical(t *testing.T) {
 
 func TestOfficialDashboardTemplateCatalogIsDiverseValidAndFrameworkNeutral(t *testing.T) {
 	templates, ids, categories, signatures, layouts := officialDashboardTemplates(), map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
-	if len(templates) < 45 || len(templates) > 60 {
+	if len(templates) < 45 || len(templates) > 70 {
 		t.Fatalf("official template count: %d", len(templates))
 	}
 	standard := map[string]bool{}
@@ -49,6 +49,9 @@ func TestOfficialDashboardTemplateCatalogIsDiverseValidAndFrameworkNeutral(t *te
 	}
 	standard["matrix:heatmap"] = true
 	standard["matrix:correlation"] = true
+	for _, subtype := range []string{"table", "roc", "precision_recall", "calibration", "multivariate", "categorical", "hierarchy", "waterfall"} {
+		standard["table:"+subtype] = true
+	}
 	for _, template := range templates {
 		if ids[template.ID] || template.Name == "" || template.Description == "" || !dashboardTemplateCategories[template.Category] {
 			t.Fatalf("invalid template metadata: %#v", template)

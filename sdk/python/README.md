@@ -199,7 +199,60 @@ Each snapshot accepts at most 4096 finite samples. JobDock returns at most 512
 samples, 256 bins, and 128 outliers to a renderer and never requires uploading
 or persisting the original dataset.
 
-The SDK exports presentation-independent `CheckpointObservation`, `ProgressObservation`, `Milestone`, `MatrixObservation`, and `DistributionObservation` contracts. These types contain no chart or React concepts.
+Typed tables carry structured observations without overloading events or image
+artifacts. Their stable schema is scoped to an attempt; uploads append rows in
+order and the dashboard queries bounded, server-filtered pages:
+
+```python
+from jobdock import TableColumn, TableObservation
+
+job.table(TableObservation(
+    "predictions",
+    [
+        TableColumn("sample_id", "string"),
+        TableColumn("confidence", "number", unit="ratio"),
+        TableColumn("accepted", "boolean"),
+    ],
+    [
+        {"sample_id": "a-17", "confidence": 0.91, "accepted": True},
+        {"sample_id": "b-04", "confidence": 0.42, "accepted": False},
+    ],
+))
+```
+
+Evaluation curves report already calculated points, so JobDock never needs raw
+labels or predictions. ROC and Precision–Recall points may include a threshold;
+calibration points may include a bin size. Summary values such as AUC, average
+precision, Brier score, or ECE are displayed only when explicitly reported:
+
+```python
+from jobdock import EvaluationCurve
+
+job.evaluation_curve(EvaluationCurve(
+    "validation_roc",
+    "roc",
+    [
+        {"fpr": 0.0, "tpr": 0.0, "threshold": 1.0},
+        {"fpr": 0.08, "tpr": 0.87, "threshold": 0.61},
+        {"fpr": 1.0, "tpr": 1.0, "threshold": 0.0},
+    ],
+    summary={"auc": 0.94},
+    model="candidate",
+))
+```
+
+Use the table subtypes `bubble`, `multivariate`, `categorical`,
+`hierarchy`, and `waterfall` for their corresponding widgets. Typed
+subtypes add semantic validation: bubble sizes and hierarchical/category values
+are non-negative, hierarchy records declare `id` and `parent`, and waterfall
+records explicitly mark `initial`, `contribution`, `subtotal`, `total`,
+or `final`. Categorical, hierarchy, and waterfall reports are snapshots: a new
+report atomically replaces the prior snapshot with the same attempt and name.
+
+The SDK exports presentation-independent `CheckpointObservation`,
+`ProgressObservation`, `Milestone`, `MatrixObservation`,
+`DistributionObservation`, `TableObservation`, and `EvaluationCurve`
+contracts. These types contain no chart or React concepts.
 
 Outside JobDock, `current_job()` returns a no-op object. Use `current_job(required=True)` when missing execution context should be an error.
 

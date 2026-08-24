@@ -116,6 +116,23 @@ func TestRichObservationsAreAttemptAwareIncrementalAndBounded(t *testing.T) {
 		t.Fatalf("distribution populations lost: %#v", groups)
 	}
 
+	postJobContext(t, server.URL, token, "tables", `{"name":"predictions","subtype":"table","columns":[{"name":"sample","type":"string"},{"name":"score","type":"number","unit":"ratio"},{"name":"accepted","type":"boolean"}],"rows":[{"sample":"a","score":0.3,"accepted":false},{"sample":"b","score":0.9,"accepted":true}],"step":6}`, http.StatusAccepted)
+	postJobContext(t, server.URL, token, "tables", `{"name":"predictions","subtype":"table","columns":[{"name":"sample","type":"string"},{"name":"score","type":"number","unit":"ratio"},{"name":"accepted","type":"boolean"}],"rows":[{"sample":"c","score":0.6,"accepted":true}],"step":7}`, http.StatusAccepted)
+	postJobContext(t, server.URL, token, "tables", `{"name":"predictions","columns":[{"name":"sample","type":"string"},{"name":"score","type":"integer"},{"name":"accepted","type":"boolean"}],"rows":[{"sample":"d","score":1,"accepted":true}]}`, http.StatusConflict)
+	postJobContext(t, server.URL, token, "tables", `{"name":"roc","subtype":"roc","columns":[{"name":"fpr","type":"number"},{"name":"tpr","type":"number"},{"name":"threshold","type":"number","nullable":true}],"rows":[{"fpr":0,"tpr":0,"threshold":1},{"fpr":0.2,"tpr":0.8,"threshold":0.6},{"fpr":1,"tpr":1,"threshold":0}]}`, http.StatusAccepted)
+	postJobContext(t, server.URL, token, "tables", `{"name":"classes","subtype":"categorical","columns":[{"name":"category","type":"string"},{"name":"value","type":"number"}],"rows":[{"category":"a","value":2}]}`, http.StatusAccepted)
+	postJobContext(t, server.URL, token, "tables", `{"name":"classes","subtype":"categorical","columns":[{"name":"category","type":"string"},{"name":"value","type":"number"}],"rows":[{"category":"b","value":3}]}`, http.StatusAccepted)
+	postJobContext(t, server.URL, token, "tables", `{"name":"bad-waterfall","subtype":"waterfall","columns":[{"name":"label","type":"string"},{"name":"value","type":"number"},{"name":"kind","type":"string"}],"rows":[{"label":"revenue","value":2,"kind":"contribution"}]}`, http.StatusUnprocessableEntity)
+	var table domain.TablePage
+	getSeriesJSON(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/tables?attempt_id="+attemptID+"&name=predictions&limit=1&offset=0&sort=score&order=desc&filter=accepted=true", &table)
+	if table.AttemptID != attemptID || table.Total != 2 || len(table.Items) != 1 || table.Items[0].Values["sample"] != "b" || table.Columns[1].Unit != "ratio" || !containsString(table.Tags, "table:table") {
+		t.Fatalf("typed table page: %#v", table)
+	}
+	getSeriesJSON(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/tables?attempt_id="+attemptID+"&name=classes", &table)
+	if table.Total != 1 || len(table.Items) != 1 || table.Items[0].Values["category"] != "b" {
+		t.Fatalf("categorical snapshots must replace prior records: %#v", table)
+	}
+
 	checkpointResponse := postJobContext(t, server.URL, token, "checkpoints", `{"label":"best model","step":6,"metadata":{"score":0.9}}`, http.StatusAccepted)
 	var checkpoint domain.CheckpointSync
 	if err = json.Unmarshal(checkpointResponse, &checkpoint); err != nil {
