@@ -578,7 +578,7 @@ func validateDashboardWidgetAppearance(widget dashboardWidget) error {
 	if appearance.Legend != "" && appearance.Legend != "auto" && appearance.Legend != "hidden" && appearance.Legend != "open" {
 		return dashboardError("Widget appearance legend is invalid")
 	}
-	plot := widget.Type == "lineplot" || widget.Type == "barplot" || widget.Type == "area_chart" || widget.Type == "stacked_bar" || widget.Type == "scatterplot" || widget.Type == "starplot" || widget.Type == "histogram" || widget.Type == "boxplot" || widget.Type == "violin"
+	plot := widget.Type == "lineplot" || widget.Type == "loss_curve" || widget.Type == "learning_curve" || widget.Type == "barplot" || widget.Type == "area_chart" || widget.Type == "stacked_bar" || widget.Type == "scatterplot" || widget.Type == "starplot" || widget.Type == "histogram" || widget.Type == "boxplot" || widget.Type == "violin"
 	if len(appearance.Subtitle) > 160 {
 		return dashboardError("Widget appearance subtitle may contain at most 160 characters")
 	}
@@ -614,16 +614,17 @@ func validateDashboardWidgetAppearance(widget dashboardWidget) error {
 	if !plot && (appearance.Subtitle != "" || appearance.ColorScheme != "" || len(appearance.Series) > 0 || appearance.Legend != "" || appearance.ShowGrid != nil || appearance.XAxis != nil || appearance.YAxis != nil || appearance.LineWidth != nil || appearance.PointSize != nil || appearance.Opacity != nil) {
 		return dashboardError("Widget appearance contains plot-only properties")
 	}
-	if appearance.LineStyle != "" && (widget.Type != "lineplot" || appearance.LineStyle != "solid" && appearance.LineStyle != "dashed" && appearance.LineStyle != "dotted") {
+	line := widget.Type == "lineplot" || widget.Type == "loss_curve" || widget.Type == "learning_curve"
+	if appearance.LineStyle != "" && (!line || appearance.LineStyle != "solid" && appearance.LineStyle != "dashed" && appearance.LineStyle != "dotted") {
 		return dashboardError("Widget appearance line_style is invalid for this widget")
 	}
-	if appearance.LineWidth != nil && (widget.Type != "lineplot" || *appearance.LineWidth < .5 || *appearance.LineWidth > 12) {
+	if appearance.LineWidth != nil && (!line || *appearance.LineWidth < .5 || *appearance.LineWidth > 12) {
 		return dashboardError("Widget appearance line_width is invalid for this widget")
 	}
-	if appearance.ShowPoints != nil && widget.Type != "lineplot" && widget.Type != "scatterplot" {
+	if appearance.ShowPoints != nil && !line && widget.Type != "scatterplot" {
 		return dashboardError("Widget appearance show_points is invalid for this widget")
 	}
-	if appearance.PointSize != nil && (widget.Type != "lineplot" && widget.Type != "scatterplot" || *appearance.PointSize < 1 || *appearance.PointSize > 16) {
+	if appearance.PointSize != nil && (!line && widget.Type != "scatterplot" || *appearance.PointSize < 1 || *appearance.PointSize > 16) {
 		return dashboardError("Widget appearance point_size is invalid for this widget")
 	}
 	if appearance.Opacity != nil && (*appearance.Opacity < .05 || *appearance.Opacity > 1) {
@@ -688,7 +689,7 @@ func validDashboardColor(value string) bool {
 }
 
 func supportedDashboardWidgetTypes() map[string]bool {
-	return map[string]bool{"lineplot": true, "barplot": true, "area_chart": true, "stacked_bar": true, "scatterplot": true, "starplot": true, "histogram": true, "boxplot": true, "violin": true, "heatmap": true, "correlation_heatmap": true, "confusion_matrix": true, "data_grid": true, "roc_curve": true, "precision_recall_curve": true, "calibration_curve": true, "prediction_vs_actual": true, "residual_plot": true, "bubble_chart": true, "parallel_coordinates": true, "pie_chart": true, "donut_chart": true, "treemap": true, "waterfall": true, "progress": true, "logs": true, "kpi": true, "gauge": true}
+	return map[string]bool{"lineplot": true, "loss_curve": true, "learning_curve": true, "barplot": true, "area_chart": true, "stacked_bar": true, "scatterplot": true, "starplot": true, "histogram": true, "boxplot": true, "violin": true, "heatmap": true, "correlation_heatmap": true, "confusion_matrix": true, "data_grid": true, "roc_curve": true, "precision_recall_curve": true, "calibration_curve": true, "prediction_vs_actual": true, "residual_plot": true, "bubble_chart": true, "parallel_coordinates": true, "pie_chart": true, "donut_chart": true, "treemap": true, "waterfall": true, "progress": true, "logs": true, "kpi": true, "gauge": true}
 }
 
 func supportedDashboardSourceKinds() map[string]bool {

@@ -1,4 +1,4 @@
-export type DashboardWidgetType = "lineplot" | "barplot" | "area_chart" | "stacked_bar" | "scatterplot" | "starplot" | "histogram" | "boxplot" | "violin" | "heatmap" | "correlation_heatmap" | "confusion_matrix" | "data_grid" | "roc_curve" | "precision_recall_curve" | "calibration_curve" | "prediction_vs_actual" | "residual_plot" | "bubble_chart" | "parallel_coordinates" | "pie_chart" | "donut_chart" | "treemap" | "waterfall" | "progress" | "logs" | "kpi" | "gauge";
+export type DashboardWidgetType = "lineplot" | "loss_curve" | "learning_curve" | "barplot" | "area_chart" | "stacked_bar" | "scatterplot" | "starplot" | "histogram" | "boxplot" | "violin" | "heatmap" | "correlation_heatmap" | "confusion_matrix" | "data_grid" | "roc_curve" | "precision_recall_curve" | "calibration_curve" | "prediction_vs_actual" | "residual_plot" | "bubble_chart" | "parallel_coordinates" | "pie_chart" | "donut_chart" | "treemap" | "waterfall" | "progress" | "logs" | "kpi" | "gauge";
 export type ScalarAggregation = "last" | "min" | "max" | "avg";
 export type DashboardSourceKind = "metric" | "resource" | "distribution" | "matrix" | "table" | "progress" | "log";
 export type DashboardSourceRole = "x" | "y" | "size" | "color" | "category" | "value" | "id" | "parent" | "kind";
@@ -128,6 +128,8 @@ export type WidgetCatalogCategory="trends"|"relationships"|"summaries"|"diagnost
 export const widgetCategoryLabels:Readonly<Record<WidgetCatalogCategory,string>>={trends:"Trends",relationships:"Relationships",summaries:"Summaries",diagnostics:"Diagnostics",operational:"Operational"};
 export const widgetCatalog: ReadonlyArray<{ type: DashboardWidgetType; label: string; description: string;category:WidgetCatalogCategory }> = [
   { type: "lineplot", label: "Line plot", description: "A time series rendered as a continuous line.",category:"trends" },
+  { type: "loss_curve", label: "Loss curve", description: "Semantically tagged train and validation loss over step, epoch, or time.",category:"trends" },
+  { type: "learning_curve", label: "Learning curve", description: "Train and validation score or error over declared training progress.",category:"trends" },
   { type: "barplot", label: "Bar plot", description: "Recent observations rendered as discrete bars.",category:"trends" },
   { type: "area_chart", label: "Area chart", description: "One or more compatible series rendered as overlapping or stacked areas.",category:"trends" },
   { type: "stacked_bar", label: "Stacked bar chart", description: "Shared categories composed from multiple ordered series.",category:"trends" },
@@ -240,6 +242,7 @@ export function resizeDashboardWidget(widgets: DashboardWidget[], id: string, si
 }
 
 export function compatibleSourceKinds(type: DashboardWidgetType): DashboardSourceKind[] {
+	if(type==="loss_curve"||type==="learning_curve")return ["metric"];
   if (type === "confusion_matrix" || type === "heatmap" || type === "correlation_heatmap") return ["matrix"];
   if (type === "progress") return ["progress"];
   if(type === "logs") return ["log"];
@@ -270,16 +273,16 @@ function restoreAppearance(type:DashboardWidgetType,value:unknown):DashboardWidg
   if(!value||typeof value!=="object")return undefined;
   const item=value as Partial<DashboardWidgetAppearance>;
   if(item.schema_version!==1)return undefined;
-  const plot=type==="lineplot"||type==="barplot"||type==="area_chart"||type==="stacked_bar"||type==="scatterplot"||type==="starplot"||type==="histogram"||type==="boxplot"||type==="violin",appearance:DashboardWidgetAppearance={schema_version:1};
+  const plot=type==="lineplot"||type==="loss_curve"||type==="learning_curve"||type==="barplot"||type==="area_chart"||type==="stacked_bar"||type==="scatterplot"||type==="starplot"||type==="histogram"||type==="boxplot"||type==="violin",appearance:DashboardWidgetAppearance={schema_version:1};
   if(plot&&typeof item.subtitle==="string"&&item.subtitle.trim())appearance.subtitle=item.subtitle.trim().slice(0,160);
   if(plot&&["default","cool","warm","monochrome"].includes(String(item.color_scheme)))appearance.color_scheme=item.color_scheme;
   if(plot&&["auto","hidden","open"].includes(String(item.legend)))appearance.legend=item.legend;
   if(plot&&typeof item.show_grid==="boolean")appearance.show_grid=item.show_grid;
   if(plot){const x=restoreAxis(item.x_axis),y=restoreAxis(item.y_axis),series=restoreSeries(item.series,type==="starplot");if(x&&type!=="starplot")appearance.x_axis=x;if(y&&type!=="starplot")appearance.y_axis=y;if(series)appearance.series=series}
-  if(type==="lineplot"&&["solid","dashed","dotted"].includes(String(item.line_style)))appearance.line_style=item.line_style;
-  if(type==="lineplot"&&finiteBetween(item.line_width,.5,12))appearance.line_width=item.line_width;
-  if((type==="lineplot"||type==="scatterplot")&&typeof item.show_points==="boolean")appearance.show_points=item.show_points;
-  if((type==="lineplot"||type==="scatterplot")&&finiteBetween(item.point_size,1,16))appearance.point_size=item.point_size;
+  if((type==="lineplot"||type==="loss_curve"||type==="learning_curve")&&["solid","dashed","dotted"].includes(String(item.line_style)))appearance.line_style=item.line_style;
+  if((type==="lineplot"||type==="loss_curve"||type==="learning_curve")&&finiteBetween(item.line_width,.5,12))appearance.line_width=item.line_width;
+  if((type==="lineplot"||type==="loss_curve"||type==="learning_curve"||type==="scatterplot")&&typeof item.show_points==="boolean")appearance.show_points=item.show_points;
+  if((type==="lineplot"||type==="loss_curve"||type==="learning_curve"||type==="scatterplot")&&finiteBetween(item.point_size,1,16))appearance.point_size=item.point_size;
   if(plot&&finiteBetween(item.opacity,.05,1))appearance.opacity=item.opacity;
   if(type==="confusion_matrix"&&(item.matrix_mode==="absolute"||item.matrix_mode==="normalized"))appearance.matrix_mode=item.matrix_mode;
   if(type==="area_chart"&&(item.stack_mode==="overlap"||item.stack_mode==="stacked"))appearance.stack_mode=item.stack_mode;

@@ -88,6 +88,8 @@ func officialDashboardTemplates() []dashboardTemplate {
 		tabularTemplate("precision-recall-curves", "Precision–Recall curves", "Compare reported precision and recall operating points for one or more models.", "classification", "precision_recall_curve", "table:precision_recall", 12, 7),
 		tabularTemplate("calibration-curves", "Calibration curves", "Compare reported probability calibration against the perfect-calibration reference.", "classification", "calibration_curve", "table:calibration", 12, 7),
 		regressionDiagnosticsTemplate(),
+		semanticLossTemplate(),
+		learningCurveTemplate(),
 		multivariateTemplate(),
 		categoricalSnapshotTemplate(),
 		tabularTemplate("hierarchical-composition", "Hierarchical composition", "Inspect an explicit non-negative parent-child snapshot.", "general", "treemap", "table:hierarchy", 12, 7),
@@ -102,6 +104,17 @@ func regressionDiagnosticsTemplate() dashboardTemplate {
 		officialWidget("prediction-vs-actual", "prediction_vs_actual", 6, 7, 0, 0, slot),
 		officialWidget("residuals", "residual_plot", 6, 7, 6, 0, slot),
 	}}
+}
+
+func semanticLossTemplate() dashboardTemplate {
+	slot := dashboardTemplateSlot{ID: "loss", RequiredTags: []string{"metric:loss"}, SourceTypes: []string{"metric"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 8}, OnMissing: "error", OnAmbiguous: "error"}
+	return dashboardTemplate{ID: "semantic-loss-curves", Name: "Semantic loss curves", Description: "Compare loss series across declared training and validation phases.", Category: "general", SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{{ID: "loss", Type: "loss_curve", Size: dashboardWidgetSize{Columns: 12, Rows: 7}, Position: dashboardWidgetPosition{}, Slots: []dashboardTemplateSlot{slot}, GridColumns: 12, XAxis: "step", TimeRange: "all"}}}
+}
+
+func learningCurveTemplate() dashboardTemplate {
+	train := dashboardTemplateSlot{ID: "train", RequiredTags: []string{"phase:train"}, SourceTypes: []string{"metric"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 1}, OnMissing: "error", OnAmbiguous: "error"}
+	validation := dashboardTemplateSlot{ID: "validation", RequiredTags: []string{"phase:validation"}, SourceTypes: []string{"metric"}, Cardinality: dashboardTemplateCardinality{Min: 0, Max: 1}, OnMissing: "omit_slot", OnAmbiguous: "error"}
+	return dashboardTemplate{ID: "semantic-learning-curves", Name: "Semantic learning curves", Description: "Compare a selected train score or error with an optional validation counterpart over declared progress.", Category: "general", SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{{ID: "learning", Type: "learning_curve", Size: dashboardWidgetSize{Columns: 12, Rows: 7}, Position: dashboardWidgetPosition{}, Slots: []dashboardTemplateSlot{train, validation}, GridColumns: 12, XAxis: "step", TimeRange: "all"}}}
 }
 
 func multivariateTemplate() dashboardTemplate {

@@ -1415,7 +1415,7 @@ components:
       required: [id, type, size, position, sources]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
-        type: {type: string, enum: [lineplot, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, heatmap, correlation_heatmap, progress, logs, kpi, gauge, data_grid, roc_curve, precision_recall_curve, calibration_curve, prediction_vs_actual, residual_plot, bubble_chart, parallel_coordinates, pie_chart, donut_chart, treemap, waterfall]}
+        type: {type: string, enum: [lineplot, loss_curve, learning_curve, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, heatmap, correlation_heatmap, progress, logs, kpi, gauge, data_grid, roc_curve, precision_recall_curve, calibration_curve, prediction_vs_actual, residual_plot, bubble_chart, parallel_coordinates, pie_chart, donut_chart, treemap, waterfall]}
         title: {type: string, maxLength: 120, description: Optional compact overlay title. An omitted or empty title reserves no plot space.}
         size:
           type: object
@@ -1477,7 +1477,7 @@ components:
       required: [id, type, size, position, slots]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
-        type: {type: string, enum: [lineplot, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, heatmap, correlation_heatmap, progress, logs, kpi, gauge, data_grid, roc_curve, precision_recall_curve, calibration_curve, prediction_vs_actual, residual_plot, bubble_chart, parallel_coordinates, pie_chart, donut_chart, treemap, waterfall]}
+        type: {type: string, enum: [lineplot, loss_curve, learning_curve, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, heatmap, correlation_heatmap, progress, logs, kpi, gauge, data_grid, roc_curve, precision_recall_curve, calibration_curve, prediction_vs_actual, residual_plot, bubble_chart, parallel_coordinates, pie_chart, donut_chart, treemap, waterfall]}
         title: {type: string, maxLength: 120}
         size:
           type: object

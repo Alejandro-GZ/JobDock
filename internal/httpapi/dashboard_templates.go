@@ -530,6 +530,8 @@ func compatibleDashboardSourceKinds(widgetType string) map[string]bool {
 		return map[string]bool{"log": true}
 	case "histogram", "boxplot", "violin":
 		return map[string]bool{"distribution": true}
+	case "loss_curve", "learning_curve":
+		return map[string]bool{"metric": true}
 	default:
 		return map[string]bool{"metric": true, "resource": true}
 	}
