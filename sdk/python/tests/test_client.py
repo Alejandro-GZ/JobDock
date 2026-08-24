@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from jobdock import CheckpointObservation, DistributionObservation, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, ObservabilityPhase, Phase, ProgressObservation, SEMANTIC_CATALOG_VERSION, current_job
+from jobdock import CheckpointObservation, DistributionObservation, EvaluationCurve, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, ObservabilityPhase, Phase, ProgressObservation, SEMANTIC_CATALOG_VERSION, TableColumn, TableObservation, current_job
 
 
 def test_current_job_is_noop_without_environment(monkeypatch):
@@ -33,6 +33,39 @@ def test_distribution_contract_is_bounded_grouped_and_semantic(tmp_path: Path, m
         job.distribution(DistributionObservation("too-large", range(4097)))
     with pytest.raises(ValueError, match="finite"):
         job.distribution(DistributionObservation("invalid", [float("nan")]))
+    job.close()
+
+
+def test_typed_tables_and_evaluation_curves_are_bounded_and_ordered(tmp_path: Path, monkeypatch):
+    job = Job("id", "http://jobdock.test", "token", tmp_path)
+    queued = []
+    monkeypatch.setattr(job, "_enqueue", lambda endpoint, payload: queued.append((endpoint, payload)))
+    observed = datetime(2026, 8, 24, 12, tzinfo=timezone.utc)
+    job.table(TableObservation(
+        "predictions",
+        [TableColumn("sample", "string"), TableColumn("score", "number", "ratio")],
+        [{"sample": "a", "score": .3}, {"sample": "b", "score": .9}],
+        timestamp=observed,
+    ))
+    assert queued[0][0] == "tables"
+    assert queued[0][1]["tags"] == ["table:table"]
+    assert queued[0][1]["rows"][1]["sample"] == "b"
+    assert queued[0][1]["timestamp"] == "2026-08-24T12:00:00Z"
+    job.evaluation_curve(EvaluationCurve(
+        "validation_roc",
+        "roc",
+        [{"fpr": 0.0, "tpr": 0.0, "threshold": 1.0}, {"fpr": .2, "tpr": .8, "threshold": .6}],
+        summary={"auc": .91},
+        model="candidate",
+    ))
+    assert queued[1][0] == "tables"
+    assert queued[1][1]["subtype"] == "roc"
+    assert queued[1][1]["metadata"]["summary"] == {"auc": .91}
+    assert queued[1][1]["metadata"]["model"] == "candidate"
+    with pytest.raises(ValueError, match="1-500"):
+        job.evaluation_curve(EvaluationCurve("large", "roc", [{"fpr": 0.0, "tpr": 0.0}] * 501))
+    with pytest.raises(ValueError, match="match"):
+        job.table(TableObservation("broken", [TableColumn("value", "number")], [{"other": 1.0}]))
     job.close()
 
 
