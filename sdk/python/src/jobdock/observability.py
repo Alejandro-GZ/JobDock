@@ -210,3 +210,17 @@ class ProjectionObservation:
     step: int | None = None
     timestamp: datetime | None = None
     metadata: Metadata | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AnomalyObservation:
+    """One precomputed anomaly score and optional reported decision facts."""
+
+    name: str
+    score: float
+    step: int | None = None
+    timestamp: datetime | None = None
+    threshold: float | None = None
+    detected: bool | None = None
+    unit: str | None = None
+    metadata: Metadata | None = None

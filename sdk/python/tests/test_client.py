@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from jobdock import CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, ObservabilityPhase, Phase, ProgressObservation, ProjectionObservation, RegressionDiagnostics, SEMANTIC_CATALOG_VERSION, ShapAttribution, TableColumn, TableObservation, current_job
+from jobdock import AnomalyObservation, CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, ObservabilityPhase, Phase, ProgressObservation, ProjectionObservation, RegressionDiagnostics, SEMANTIC_CATALOG_VERSION, ShapAttribution, TableColumn, TableObservation, current_job
 
 
 def test_current_job_is_noop_without_environment(monkeypatch):
@@ -127,6 +127,23 @@ def test_projection_preserves_declared_method_groups_and_bounded_points(tmp_path
     assert payload["step"] == 10
     with pytest.raises(ValueError, match="1-10000"):
         job.projection(ProjectionObservation("broken", [0], [], "PCA"))
+    job.close()
+
+
+def test_anomaly_reports_score_threshold_and_flag_without_inventing_values(tmp_path: Path, monkeypatch):
+    job = Job("id", "http://jobdock.test", "token", tmp_path)
+    queued = []
+    monkeypatch.setattr(job, "_enqueue", lambda endpoint, payload: queued.append((endpoint, payload)))
+    observed = datetime(2026, 8, 24, 12, tzinfo=timezone.utc)
+    job.anomaly(AnomalyObservation("reconstruction_error", .82, 12, observed, threshold=.7, detected=True, unit="score"))
+    items = queued[0][1]["items"]
+    assert [item["name"] for item in items] == ["reconstruction_error", "reconstruction_error.threshold", "reconstruction_error.detection"]
+    assert [item["value"] for item in items] == [.82, .7, 1.0]
+    assert [item["tags"] for item in items] == [["metric:anomaly_score"], ["metric:anomaly_threshold"], ["metric:anomaly_detection"]]
+    job.anomaly(AnomalyObservation("score_only", .2))
+    assert len(queued[1][1]["items"]) == 1
+    with pytest.raises(ValueError, match="finite"):
+        job.anomaly(AnomalyObservation("broken", float("nan")))
     job.close()
 
 

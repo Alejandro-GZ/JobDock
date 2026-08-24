@@ -16,7 +16,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
-from .observability import CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ObservabilityPhase, ProgressObservation, ProjectionObservation, RegressionDiagnostics, ShapAttribution, TableColumn, TableObservation
+from .observability import AnomalyObservation, CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ObservabilityPhase, ProgressObservation, ProjectionObservation, RegressionDiagnostics, ShapAttribution, TableColumn, TableObservation
 from . import __version__
 
 logger = logging.getLogger("jobdock")
@@ -48,6 +48,7 @@ class NoopJob:
     def feature_importance(self, observation: FeatureImportance) -> None: pass
     def shap(self, observation: ShapAttribution) -> None: pass
     def projection(self, observation: ProjectionObservation) -> None: pass
+    def anomaly(self, observation: AnomalyObservation) -> None: pass
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None: pass
     def metrics(self, items: Iterable[Metric]) -> None: pass
     def declare_observability(self, manifest: ObservabilityManifest) -> None: pass
@@ -330,6 +331,25 @@ class Job:
         rows = [{"sample_id": sample_ids[index], "x": x[index], "y": y[index], "z": z[index] if z is not None else None, "label": labels[index], "cluster": clusters[index], "color": colors[index]} for index in range(count)]
         for start in range(0, len(rows), 256):
             self.table(TableObservation(observation.name, columns, rows[start:start + 256], "projection", observation.step, observation.timestamp, ("embedding:projection", f"projection:{method_tag[:64]}"), metadata, start == 0))
+
+    def anomaly(self, observation: AnomalyObservation) -> None:
+        name = observation.name.strip()
+        score = float(observation.score)
+        threshold = None if observation.threshold is None else float(observation.threshold)
+        if not name or len(name) > 128:
+            raise ValueError("anomaly name must contain 1-128 characters")
+        if not math.isfinite(score) or threshold is not None and not math.isfinite(threshold):
+            raise ValueError("anomaly score and threshold must be finite")
+        if observation.detected is not None and not isinstance(observation.detected, bool):
+            raise ValueError("anomaly detected must be a boolean")
+        captured_at = observation.timestamp or datetime.now(timezone.utc)
+        metadata = dict(observation.metadata or {})
+        items = [Metric(name, score, observation.step, captured_at, observation.unit, {**metadata, "anomaly_role": "score"}, ("metric:anomaly_score",))]
+        if threshold is not None:
+            items.append(Metric(f"{name}.threshold", threshold, observation.step, captured_at, observation.unit, {**metadata, "anomaly_role": "threshold", "score_series": name}, ("metric:anomaly_threshold",)))
+        if observation.detected is not None:
+            items.append(Metric(f"{name}.detection", 1.0 if observation.detected else 0.0, observation.step, captured_at, "flag", {**metadata, "anomaly_role": "detection", "score_series": name}, ("metric:anomaly_detection",)))
+        self.metrics(items)
 
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None:
         """Report one scalar metric while preserving the original call shape."""

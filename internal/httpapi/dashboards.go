@@ -702,7 +702,7 @@ func validDashboardColor(value string) bool {
 }
 
 func supportedDashboardWidgetTypes() map[string]bool {
-	return map[string]bool{"lineplot": true, "loss_curve": true, "learning_curve": true, "feature_importance": true, "shap_summary": true, "embedding_scatter": true, "cluster_scatter": true, "barplot": true, "area_chart": true, "stacked_bar": true, "scatterplot": true, "starplot": true, "histogram": true, "boxplot": true, "violin": true, "heatmap": true, "correlation_heatmap": true, "confusion_matrix": true, "data_grid": true, "roc_curve": true, "precision_recall_curve": true, "calibration_curve": true, "prediction_vs_actual": true, "residual_plot": true, "bubble_chart": true, "parallel_coordinates": true, "pie_chart": true, "donut_chart": true, "treemap": true, "waterfall": true, "progress": true, "logs": true, "kpi": true, "gauge": true}
+	return map[string]bool{"lineplot": true, "loss_curve": true, "learning_curve": true, "anomaly_timeline": true, "feature_importance": true, "shap_summary": true, "embedding_scatter": true, "cluster_scatter": true, "barplot": true, "area_chart": true, "stacked_bar": true, "scatterplot": true, "starplot": true, "histogram": true, "boxplot": true, "violin": true, "heatmap": true, "correlation_heatmap": true, "confusion_matrix": true, "data_grid": true, "roc_curve": true, "precision_recall_curve": true, "calibration_curve": true, "prediction_vs_actual": true, "residual_plot": true, "bubble_chart": true, "parallel_coordinates": true, "pie_chart": true, "donut_chart": true, "treemap": true, "waterfall": true, "progress": true, "logs": true, "kpi": true, "gauge": true}
 }
 
 func supportedDashboardSourceKinds() map[string]bool {

@@ -1,4 +1,4 @@
-export type DashboardWidgetType = "lineplot" | "loss_curve" | "learning_curve" | "feature_importance" | "shap_summary" | "embedding_scatter" | "cluster_scatter" | "barplot" | "area_chart" | "stacked_bar" | "scatterplot" | "starplot" | "histogram" | "boxplot" | "violin" | "heatmap" | "correlation_heatmap" | "confusion_matrix" | "data_grid" | "roc_curve" | "precision_recall_curve" | "calibration_curve" | "prediction_vs_actual" | "residual_plot" | "bubble_chart" | "parallel_coordinates" | "pie_chart" | "donut_chart" | "treemap" | "waterfall" | "progress" | "logs" | "kpi" | "gauge";
+export type DashboardWidgetType = "lineplot" | "loss_curve" | "learning_curve" | "anomaly_timeline" | "feature_importance" | "shap_summary" | "embedding_scatter" | "cluster_scatter" | "barplot" | "area_chart" | "stacked_bar" | "scatterplot" | "starplot" | "histogram" | "boxplot" | "violin" | "heatmap" | "correlation_heatmap" | "confusion_matrix" | "data_grid" | "roc_curve" | "precision_recall_curve" | "calibration_curve" | "prediction_vs_actual" | "residual_plot" | "bubble_chart" | "parallel_coordinates" | "pie_chart" | "donut_chart" | "treemap" | "waterfall" | "progress" | "logs" | "kpi" | "gauge";
 export type ScalarAggregation = "last" | "min" | "max" | "avg";
 export type DashboardSourceKind = "metric" | "resource" | "distribution" | "matrix" | "table" | "progress" | "log";
 export type DashboardSourceRole = "x" | "y" | "size" | "color" | "category" | "value" | "id" | "parent" | "kind";
@@ -134,6 +134,7 @@ export const widgetCatalog: ReadonlyArray<{ type: DashboardWidgetType; label: st
   { type: "lineplot", label: "Line plot", description: "A time series rendered as a continuous line.",category:"trends" },
   { type: "loss_curve", label: "Loss curve", description: "Semantically tagged train and validation loss over step, epoch, or time.",category:"trends" },
   { type: "learning_curve", label: "Learning curve", description: "Train and validation score or error over declared training progress.",category:"trends" },
+  { type: "anomaly_timeline", label: "Anomaly score", description: "Reported anomaly scores, thresholds, and detection markers over time or step.",category:"trends" },
   { type: "barplot", label: "Bar plot", description: "Recent observations rendered as discrete bars.",category:"trends" },
   { type: "area_chart", label: "Area chart", description: "One or more compatible series rendered as overlapping or stacked areas.",category:"trends" },
   { type: "stacked_bar", label: "Stacked bar chart", description: "Shared categories composed from multiple ordered series.",category:"trends" },
@@ -250,7 +251,7 @@ export function resizeDashboardWidget(widgets: DashboardWidget[], id: string, si
 }
 
 export function compatibleSourceKinds(type: DashboardWidgetType): DashboardSourceKind[] {
-	if(type==="loss_curve"||type==="learning_curve")return ["metric"];
+	if(type==="loss_curve"||type==="learning_curve"||type==="anomaly_timeline")return ["metric"];
   if (type === "confusion_matrix" || type === "heatmap" || type === "correlation_heatmap") return ["matrix"];
   if (type === "progress") return ["progress"];
   if(type === "logs") return ["log"];
@@ -284,7 +285,7 @@ function restoreAppearance(type:DashboardWidgetType,value:unknown):DashboardWidg
   if(!value||typeof value!=="object")return undefined;
   const item=value as Partial<DashboardWidgetAppearance>;
   if(item.schema_version!==1)return undefined;
-  const plot=type==="lineplot"||type==="loss_curve"||type==="learning_curve"||type==="barplot"||type==="area_chart"||type==="stacked_bar"||type==="scatterplot"||type==="starplot"||type==="histogram"||type==="boxplot"||type==="violin",appearance:DashboardWidgetAppearance={schema_version:1};
+  const plot=type==="lineplot"||type==="loss_curve"||type==="learning_curve"||type==="anomaly_timeline"||type==="barplot"||type==="area_chart"||type==="stacked_bar"||type==="scatterplot"||type==="starplot"||type==="histogram"||type==="boxplot"||type==="violin",appearance:DashboardWidgetAppearance={schema_version:1};
   if(plot&&typeof item.subtitle==="string"&&item.subtitle.trim())appearance.subtitle=item.subtitle.trim().slice(0,160);
   if(plot&&["default","cool","warm","monochrome"].includes(String(item.color_scheme)))appearance.color_scheme=item.color_scheme;
   if(plot&&["auto","hidden","open"].includes(String(item.legend)))appearance.legend=item.legend;
