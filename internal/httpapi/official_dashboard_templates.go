@@ -90,6 +90,7 @@ func officialDashboardTemplates() []dashboardTemplate {
 		regressionDiagnosticsTemplate(),
 		semanticLossTemplate(),
 		learningCurveTemplate(),
+		featureImportanceTemplate(),
 		multivariateTemplate(),
 		categoricalSnapshotTemplate(),
 		tabularTemplate("hierarchical-composition", "Hierarchical composition", "Inspect an explicit non-negative parent-child snapshot.", "general", "treemap", "table:hierarchy", 12, 7),
@@ -115,6 +116,11 @@ func learningCurveTemplate() dashboardTemplate {
 	train := dashboardTemplateSlot{ID: "train", RequiredTags: []string{"phase:train"}, SourceTypes: []string{"metric"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 1}, OnMissing: "error", OnAmbiguous: "error"}
 	validation := dashboardTemplateSlot{ID: "validation", RequiredTags: []string{"phase:validation"}, SourceTypes: []string{"metric"}, Cardinality: dashboardTemplateCardinality{Min: 0, Max: 1}, OnMissing: "omit_slot", OnAmbiguous: "error"}
 	return dashboardTemplate{ID: "semantic-learning-curves", Name: "Semantic learning curves", Description: "Compare a selected train score or error with an optional validation counterpart over declared progress.", Category: "general", SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{{ID: "learning", Type: "learning_curve", Size: dashboardWidgetSize{Columns: 12, Rows: 7}, Position: dashboardWidgetPosition{}, Slots: []dashboardTemplateSlot{train, validation}, GridColumns: 12, XAxis: "step", TimeRange: "all"}}}
+}
+
+func featureImportanceTemplate() dashboardTemplate {
+	slot := dashboardTemplateSlot{ID: "importance", RequiredTags: []string{"table:feature_importance"}, SourceTypes: []string{"table"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 1}, OnMissing: "error", OnAmbiguous: "error"}
+	return dashboardTemplate{ID: "feature-importance", Name: "Feature importance", Description: "Inspect signed feature contributions reported by a model explanation method.", Category: "general", SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{officialWidget("importance", "feature_importance", 12, 8, 0, 0, slot)}}
 }
 
 func multivariateTemplate() dashboardTemplate {

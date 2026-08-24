@@ -36,12 +36,12 @@ func (s *Store) AppendTable(ctx context.Context, item domain.TableObservation) e
 	if err = ensureDeclaredSourceType(ctx, tx, item.AttemptID, item.Name, "table"); err != nil {
 		return err
 	}
-	var currentSubtype, currentColumns, currentTags sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT subtype,columns_json,tags_json FROM job_table_descriptors WHERE attempt_id=? AND name=?`, item.AttemptID, item.Name).Scan(&currentSubtype, &currentColumns, &currentTags)
+	var currentSubtype, currentColumns, currentTags, currentMetadata sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT subtype,columns_json,tags_json,metadata_json FROM job_table_descriptors WHERE attempt_id=? AND name=?`, item.AttemptID, item.Name).Scan(&currentSubtype, &currentColumns, &currentTags, &currentMetadata)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if err == nil && (currentSubtype.String != item.Subtype || currentColumns.String != string(columns) || currentTags.Valid && currentTags.String != string(tags)) {
+	if err == nil && (currentSubtype.String != item.Subtype || currentColumns.String != string(columns) || currentTags.Valid != (len(item.Tags) > 0) || currentTags.Valid && currentTags.String != string(tags) || currentMetadata.Valid != (len(item.Metadata) > 0) || currentMetadata.Valid && currentMetadata.String != string(metadata)) {
 		return ErrObservableDeclarationConflict
 	}
 	now := captured.UnixMilli()

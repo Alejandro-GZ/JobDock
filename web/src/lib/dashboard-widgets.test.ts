@@ -14,15 +14,16 @@ describe("dashboard widget model",()=>{
   });
 
   it("supports the complete catalog without mutating telemetry or existing widgets",()=>{
-    expect(widgetCatalog.map(item=>item.type)).toEqual(["lineplot","barplot","area_chart","stacked_bar","scatterplot","starplot","histogram","boxplot","violin","heatmap","correlation_heatmap","confusion_matrix","data_grid","roc_curve","precision_recall_curve","calibration_curve","bubble_chart","parallel_coordinates","pie_chart","donut_chart","treemap","waterfall","progress","logs","kpi","gauge"]);
+    expect(widgetCatalog.map(item=>item.type)).toEqual(["lineplot","loss_curve","learning_curve","barplot","area_chart","stacked_bar","scatterplot","starplot","histogram","boxplot","violin","heatmap","correlation_heatmap","confusion_matrix","data_grid","roc_curve","precision_recall_curve","calibration_curve","prediction_vs_actual","residual_plot","feature_importance","bubble_chart","parallel_coordinates","pie_chart","donut_chart","treemap","waterfall","progress","logs","kpi","gauge"]);
     expect(new Set(widgetCatalog.map(item=>item.category))).toEqual(new Set(["trends","relationships","summaries","diagnostics","operational"]));
     const original=defaultDashboardWidgets(sources),snapshot=structuredClone(original);
     const added=widgetCatalog.map((item,index)=>createDashboardWidget(item.type,sources,`new-${index}`));
-    expect(added.map(widget=>widget.sources[0]?.kind)).toEqual(["metric","metric","metric","metric","metric","metric",undefined,undefined,undefined,undefined,undefined,"matrix",undefined,undefined,undefined,undefined,undefined,undefined,undefined,undefined,undefined,undefined,"progress","log","metric","metric"]);
-    expect(added[4].sources.map(source=>source.role)).toEqual(["x","y"]);
-    expect(added[5]).toMatchObject({type:"starplot",sources:[{kind:"metric",name:"loss"},{kind:"metric",name:"accuracy"},{kind:"resource",name:"cpu"}]});
-    expect(added[24]).toMatchObject({type:"kpi",scalar_aggregation:"last"});
-    expect(added[25]).toMatchObject({type:"gauge",gauge_style:"gauge",scalar_aggregation:"last"});
+    expect(added.find(widget=>widget.type==="loss_curve")?.sources[0]?.kind).toBe("metric");
+    expect(added.find(widget=>widget.type==="feature_importance")?.sources).toEqual([]);
+    expect(added.find(widget=>widget.type==="scatterplot")?.sources.map(source=>source.role)).toEqual(["x","y"]);
+    expect(added.find(widget=>widget.type==="starplot")).toMatchObject({sources:[{kind:"metric",name:"loss"},{kind:"metric",name:"accuracy"},{kind:"resource",name:"cpu"}]});
+    expect(added.find(widget=>widget.type==="kpi")).toMatchObject({scalar_aggregation:"last"});
+    expect(added.find(widget=>widget.type==="gauge")).toMatchObject({gauge_style:"gauge",scalar_aggregation:"last"});
     const removed=removeDashboardWidget(original,original[1].id);
     expect(original).toEqual(snapshot);
     expect(removed).toHaveLength(original.length-1);

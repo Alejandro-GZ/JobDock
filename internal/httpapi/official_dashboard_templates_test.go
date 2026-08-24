@@ -49,7 +49,7 @@ func TestOfficialDashboardTemplateCatalogIsDiverseValidAndFrameworkNeutral(t *te
 	}
 	standard["matrix:heatmap"] = true
 	standard["matrix:correlation"] = true
-	for _, subtype := range []string{"table", "roc", "precision_recall", "calibration", "regression_diagnostics", "multivariate", "categorical", "hierarchy", "waterfall"} {
+	for _, subtype := range []string{"table", "roc", "precision_recall", "calibration", "regression_diagnostics", "feature_importance", "multivariate", "categorical", "hierarchy", "waterfall"} {
 		standard["table:"+subtype] = true
 	}
 	for _, template := range templates {

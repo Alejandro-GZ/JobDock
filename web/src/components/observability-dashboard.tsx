@@ -4,6 +4,7 @@ import { ConfusionMatrixWidget } from "@/components/confusion-matrix-widget";
 import { DistributionWidget } from "@/components/distribution-widget";
 import { DataGridWidget } from "@/components/data-grid-widget";
 import { EvaluationCurveWidget } from "@/components/evaluation-curve-widget";
+import { FeatureImportanceWidget } from "@/components/feature-importance-widget";
 import { LiveLogs, type StreamName } from "@/components/live-logs";
 import { HeatmapWidget } from "@/components/heatmap-widget";
 import { ObservationPlot } from "@/components/observation-plot";
@@ -69,6 +70,7 @@ function DashboardWidgetView({jobID,attemptID,widget,numericSources,sourceOption
   if(widget.type==="data_grid"&&source?.kind==="table")return <DataGridWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
   if((widget.type==="roc_curve"||widget.type==="precision_recall_curve"||widget.type==="calibration_curve")&&source?.kind==="table")return <EvaluationCurveWidget jobID={jobID} attemptID={attemptID} widget={widget}/>;
   if((widget.type==="prediction_vs_actual"||widget.type==="residual_plot")&&source?.kind==="table")return <RegressionDiagnosticsWidget jobID={jobID} attemptID={attemptID} widget={widget}/>;
+  if(widget.type==="feature_importance"&&source?.kind==="table")return <FeatureImportanceWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
   if((widget.type==="bubble_chart"||widget.type==="parallel_coordinates"||widget.type==="pie_chart"||widget.type==="donut_chart"||widget.type==="treemap"||widget.type==="waterfall")&&source?.kind==="table")return <TabularChartWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
   if(widget.type==="progress"&&progress&&hasProgress(progress))return <ProgressWidget state={progress}/>;
   if(widget.type==="confusion_matrix"&&source){const matrix=matrices.find(item=>item.name===source.name);if(matrix)return <ConfusionMatrixWidget matrix={matrix} initialMode={widget.appearance?.matrix_mode}/>}

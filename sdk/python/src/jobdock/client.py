@@ -245,6 +245,31 @@ class Job:
         for start in range(0, len(rows), 256):
             self.table(TableObservation(observation.name, columns, rows[start:start + 256], "regression_diagnostics", observation.step, observation.timestamp, ("diagnostic:regression",), metadata, start == 0))
 
+    def feature_importance(self, observation: FeatureImportance) -> None:
+        values = {str(name).strip(): float(value) for name, value in observation.values.items()}
+        if not values or len(values) > 4096 or any(not name or len(name) > 512 or not math.isfinite(value) for name, value in values.items()):
+            raise ValueError("feature importance requires 1-4096 uniquely named finite values")
+        method = observation.method.strip()
+        if not method or len(method) > 128:
+            raise ValueError("feature importance method must contain 1-128 characters")
+        method_tag = re.sub(r"[^a-z0-9_.-]+", "_", method.lower()).strip("_.-")
+        if not method_tag:
+            raise ValueError("feature importance method must contain a semantic tag value")
+        unit = observation.unit.strip() if observation.unit is not None else None
+        if unit is not None and (not unit or len(unit) > 64):
+            raise ValueError("feature importance unit must contain 1-64 characters")
+        metadata = dict(observation.metadata or {})
+        metadata["method"] = method
+        if observation.model is not None:
+            model = observation.model.strip()
+            if not model or len(model) > 128:
+                raise ValueError("feature importance model must contain 1-128 characters")
+            metadata["model"] = model
+        columns = [TableColumn("feature", "string"), TableColumn("value", "number", unit), TableColumn("method", "string")]
+        rows = [{"feature": name, "value": value, "method": method} for name, value in values.items()]
+        for start in range(0, len(rows), 256):
+            self.table(TableObservation(observation.name, columns, rows[start:start + 256], "feature_importance", observation.step, observation.timestamp, ("feature_importance:global", f"method:{method_tag[:64]}"), metadata, start == 0))
+
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None:
         """Report one scalar metric while preserving the original call shape."""
         self.metrics([Metric(name, value, step, timestamp, unit, metadata, None if tags is None else tuple(tags))])

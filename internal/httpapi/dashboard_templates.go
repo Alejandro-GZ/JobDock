@@ -522,7 +522,7 @@ func compatibleDashboardSourceKinds(widgetType string) map[string]bool {
 	switch widgetType {
 	case "confusion_matrix", "heatmap", "correlation_heatmap":
 		return map[string]bool{"matrix": true}
-	case "data_grid", "roc_curve", "precision_recall_curve", "calibration_curve", "prediction_vs_actual", "residual_plot", "bubble_chart", "parallel_coordinates", "pie_chart", "donut_chart", "treemap", "waterfall":
+	case "data_grid", "roc_curve", "precision_recall_curve", "calibration_curve", "prediction_vs_actual", "residual_plot", "feature_importance", "bubble_chart", "parallel_coordinates", "pie_chart", "donut_chart", "treemap", "waterfall":
 		return map[string]bool{"table": true}
 	case "progress":
 		return map[string]bool{"progress": true}

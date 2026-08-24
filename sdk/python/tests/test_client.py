@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from jobdock import CheckpointObservation, DistributionObservation, EvaluationCurve, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, ObservabilityPhase, Phase, ProgressObservation, RegressionDiagnostics, SEMANTIC_CATALOG_VERSION, TableColumn, TableObservation, current_job
+from jobdock import CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, ObservabilityPhase, Phase, ProgressObservation, RegressionDiagnostics, SEMANTIC_CATALOG_VERSION, TableColumn, TableObservation, current_job
 
 
 def test_current_job_is_noop_without_environment(monkeypatch):
@@ -81,6 +81,21 @@ def test_regression_diagnostics_preserve_pairs_groups_and_reported_summary(tmp_p
     assert queued[0][1]["metadata"] == {"residual_definition": "actual_minus_prediction", "summary": {"mae": .2}}
     with pytest.raises(ValueError, match="pairs"):
         job.regression_diagnostics(RegressionDiagnostics("broken", [1], [1, 2]))
+    job.close()
+
+
+def test_feature_importance_preserves_sign_method_and_bounded_chunks(tmp_path: Path, monkeypatch):
+    job = Job("id", "http://jobdock.test", "token", tmp_path)
+    queued = []
+    monkeypatch.setattr(job, "_enqueue", lambda endpoint, payload: queued.append((endpoint, payload)))
+    job.feature_importance(FeatureImportance("global", {"age": -.3, "income": .8}, "SHAP", model="candidate"))
+    payload = queued[0][1]
+    assert payload["rows"] == [{"feature": "age", "value": -.3, "method": "SHAP"}, {"feature": "income", "value": .8, "method": "SHAP"}]
+    assert payload["tags"] == ["feature_importance:global", "method:shap", "table:feature_importance"]
+    assert payload["metadata"] == {"method": "SHAP", "model": "candidate"}
+    assert payload["replace"] is True
+    with pytest.raises(ValueError, match="finite"):
+        job.feature_importance(FeatureImportance("broken", {"x": float("nan")}, "gain"))
     job.close()
 
 
