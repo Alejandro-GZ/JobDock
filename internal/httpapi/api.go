@@ -95,6 +95,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/builder/assignments/{id}/artifact", a.withBuilder(a.putBuildArtifact))
 	mux.HandleFunc("POST /api/v1/builder/assignments/{id}/complete", a.withBuilder(a.completeBuildAssignment))
 	mux.HandleFunc("GET /api/v1/jobs", a.withAccess(scopeJobsRead, false, a.listJobs))
+	mux.HandleFunc("GET /api/v1/jobs/telemetry-summaries", a.withAccess(scopeJobsRead, false, a.jobTelemetrySummaries))
 	mux.HandleFunc("POST /api/v1/jobs", a.withAccess(scopeJobsWrite, true, a.createJob))
 	mux.HandleFunc("GET /api/v1/jobs/stream", a.withSession(false, false, a.jobsStream))
 	mux.HandleFunc("GET /api/v1/jobs/{id}", a.withAccess(scopeJobsRead, false, a.getJob))

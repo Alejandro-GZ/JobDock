@@ -1,4 +1,4 @@
-import type{AuditEvent,Build,BuildPlan,Checkpoint,Job,JobAttempt,JobEvent,JobSpec,MatrixObservation,MetricSeriesResponse,Node,PersonalAccessToken,ProgressState,ResourceSeriesResponse,Secret,User}from "./types";
+import type{AuditEvent,Build,BuildPlan,Checkpoint,Job,JobAttempt,JobEvent,JobSpec,JobTelemetrySummaryResponse,MatrixObservation,MetricSeriesResponse,Node,PersonalAccessToken,ProgressState,ResourceSeriesResponse,Secret,User}from "./types";
 import { jobFormData } from "@/lib/job-inputs";
 import { buildFormData,type BuildMode,type DockerfileConfig } from "@/lib/builds";
 import { dashboardSchemaVersion,type DashboardList,type DashboardPreference,type DashboardTemplate,type DashboardTemplateMatch,type DashboardTemplateOverride,type DashboardTemplateReference,type DashboardTemplateResolution,type DashboardWidget } from "@/lib/dashboard-widgets";
@@ -13,6 +13,7 @@ export const api={
   createBuild:(name:string,source:File,mode:BuildMode="RAILPACK",config?:DockerfileConfig)=>request<Build>("/builds",{method:"POST",body:buildFormData(name,source,mode,config)}),buildPlan:(id:string)=>request<BuildPlan>(`/builds/${id}/plan`),confirmBuild:(id:string)=>request<Build>(`/builds/${id}/confirm`,{method:"POST"}),cancelBuild:(id:string)=>request<Build>(`/builds/${id}/cancel`,{method:"POST"}),deleteBuild:(id:string)=>request<void>(`/builds/${id}`,{method:"DELETE"}),
   buildLogs:async(id:string)=>{const response=await fetch(`/api/v1/builds/${encodeURIComponent(id)}/logs?limit=4194304`,{credentials:"same-origin"});if(!response.ok)throw new APIError(response.status,"build_logs_failed",response.statusText);return response.text()},
   jobs:async()=> (await request<{items:Job[]|null}>("/jobs")).items??[],job:(id:string)=>request<Job>(`/jobs/${id}`),
+  jobTelemetrySummaries:(ids:string[],after?:number,points=24)=>{const query=new URLSearchParams({points:String(points)});for(const id of ids)query.append("job_id",id);if(after!=null)query.set("after",String(after));return request<JobTelemetrySummaryResponse>(`/jobs/telemetry-summaries?${query}`)},
   createJob:(spec:JobSpec,inputs:File[]=[])=>request<Job>("/jobs",{method:"POST",body:inputs.length?jobFormData(spec,inputs):JSON.stringify(spec)}),stopJob:(id:string)=>request(`/jobs/${id}/stop`,{method:"POST"}),rerunJob:(id:string)=>request<Job>(`/jobs/${id}/rerun`,{method:"POST"}),deleteJob:(id:string)=>request(`/jobs/${id}`,{method:"DELETE"}),
   attempts:async(id:string)=>(await request<{items:JobAttempt[]|null}>(`/jobs/${id}/attempts`)).items??[],
   events:async(id:string,after=0,attemptId="")=>(await request<{items:JobEvent[]|null}>(`/jobs/${id}/events?after=${after}${attemptId?`&attempt_id=${encodeURIComponent(attemptId)}`:""}`)).items??[],

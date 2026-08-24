@@ -281,6 +281,18 @@ paths:
         '201': {description: Queued job, content: {application/json: {schema: {$ref: '#/components/schemas/Job'}}}}
         '413': {$ref: '#/components/responses/Problem'}
         '422': {$ref: '#/components/responses/Problem'}
+  /jobs/telemetry-summaries:
+    get:
+      security: [{sessionCookie: []}, {personalAccessToken: []}]
+      operationId: listJobTelemetrySummaries
+      description: Return bounded recent resource points and current SDK progress for up to 100 visible jobs. Passing after returns only resource points newer than the shared series cursor.
+      parameters:
+        - {name: job_id, in: query, required: true, schema: {type: array, minItems: 1, maxItems: 100, items: {type: string, format: uuid}}, style: form, explode: true}
+        - {name: points, in: query, schema: {type: integer, minimum: 2, maximum: 60, default: 24}}
+        - {name: after, in: query, schema: {type: integer, format: int64, minimum: 0}}
+      responses:
+        '200': {description: Authorized list telemetry summary, content: {application/json: {schema: {$ref: '#/components/schemas/JobTelemetrySummaryResponse'}}}}
+        '422': {$ref: '#/components/responses/Problem'}
   /jobs/{jobId}:
     parameters: [{$ref: '#/components/parameters/JobID'}]
     get:
@@ -1589,6 +1601,20 @@ components:
         resolution_seconds: {type: integer, enum: [5, 300]}
         truncated: {type: boolean}
         points: {type: array, items: {$ref: '#/components/schemas/ResourceSample'}}
+    JobTelemetrySummary:
+      type: object
+      required: [job_id, resources]
+      properties:
+        job_id: {type: string, format: uuid}
+        attempt_id: {type: string, format: uuid}
+        resources: {type: array, maxItems: 60, items: {$ref: '#/components/schemas/ResourceSample'}}
+        progress: {type: number, format: double, minimum: 0, maximum: 1}
+    JobTelemetrySummaryResponse:
+      type: object
+      required: [cursor, items]
+      properties:
+        cursor: {type: integer, format: int64, minimum: 0}
+        items: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/JobTelemetrySummary'}}
     LiveMetricSample:
       type: object
       required: [cursor, attempt_id, name, value, captured_at]
