@@ -1354,6 +1354,7 @@ components:
         point_size: {type: number, minimum: 1, maximum: 16, description: Supported by line and scatter plots.}
         opacity: {type: number, minimum: 0.05, maximum: 1, description: Supported by plot widgets.}
         matrix_mode: {type: string, enum: [absolute, normalized], description: Supported by confusion matrices.}
+        stack_mode: {type: string, enum: [overlap, stacked], description: Area chart composition. Overlap leaves missing categories as gaps; stacked treats them as zero and requires compatible units.}
     DashboardAxisAppearance:
       type: object
       additionalProperties: false
@@ -1380,7 +1381,7 @@ components:
       required: [id, type, size, position, sources]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
-        type: {type: string, enum: [lineplot, barplot, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, progress, logs, kpi, gauge]}
+        type: {type: string, enum: [lineplot, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, progress, logs, kpi, gauge]}
         title: {type: string, maxLength: 120, description: Optional compact overlay title. An omitted or empty title reserves no plot space.}
         size:
           type: object
@@ -1435,7 +1436,7 @@ components:
       required: [id, type, size, position, slots]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
-        type: {type: string, enum: [lineplot, barplot, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, progress, logs, kpi, gauge]}
+        type: {type: string, enum: [lineplot, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, progress, logs, kpi, gauge]}
         title: {type: string, maxLength: 120}
         size:
           type: object

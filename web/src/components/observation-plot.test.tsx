@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import {cleanup,render,screen,waitFor} from "@testing-library/react";
+import {cleanup,fireEvent,render,screen,waitFor} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {afterEach,describe,expect,it,vi} from "vitest";
 import {ObservationPlot} from "./observation-plot";
@@ -64,5 +64,26 @@ describe("ObservationPlot",()=>{
     expect(screen.getByText("Validation")).toBeTruthy();expect(screen.getByText("Epoch")).toBeTruthy();expect(screen.getByText("Loss (ratio)")).toBeTruthy();
     const path=container.querySelector('path[stroke="#123abc"]')!;expect(path.getAttribute("stroke-width")).toBe("3");expect(path.getAttribute("stroke-dasharray")).toBe("2 3");expect(path.parentElement?.getAttribute("opacity")).toBe("0.6");expect(container.querySelectorAll('circle[r="5"]')).toHaveLength(2);expect(container.querySelectorAll("line.stroke-border")).toHaveLength(0);
     expect(screen.getByRole("button",{name:"Styled legend"})).toBeTruthy();
+  });
+  it("renders overlapping areas with explicit gaps for misaligned categories",()=>{
+    const shifted={...duration,unit:"ratio",points:[{timestamp:1_000,value:.2,step:1},{timestamp:3_000,value:.7,step:3}]};
+    const {container}=render(<ObservationPlot type="area_chart" title="Quality" series={[loss,shifted]} xAxis="step" appearance={{schema_version:1,stack_mode:"overlap"}}/>);
+    const plot=screen.getByRole("img",{name:/Quality area_chart with 4 points/i});
+    expect(plot.getAttribute("data-missing-values")).toBe("gap");
+    expect(container.querySelectorAll('path[fill-opacity]')).toHaveLength(3);
+    expect(screen.getByRole("button",{name:"Zoom in Quality"})).toBeTruthy();
+  });
+  it("stacks shared bar categories deterministically and treats missing components as zero",()=>{
+    const shifted={...duration,unit:"ratio",points:[{timestamp:1_000,value:.2,step:1},{timestamp:3_000,value:.7,step:3}]};
+    const {container}=render(<ObservationPlot type="stacked_bar" title="Composition" series={[loss,shifted]} xAxis="step"/>);
+    const plot=screen.getByRole("img",{name:/Composition stacked_bar with 4 points/i});
+    expect(plot.getAttribute("data-missing-values")).toBe("zero");
+    expect(container.querySelectorAll("rect")).toHaveLength(6);
+    fireEvent.pointerMove(plot,{clientX:720,clientY:100});
+    expect(screen.getByText(/loss: 0 \(missing\)/i)).toBeTruthy();
+  });
+  it("rejects stacked series with incompatible units",()=>{
+    render(<ObservationPlot type="stacked_bar" series={[loss,duration]} xAxis="step"/>);
+    expect(screen.getByText("Compatible units required")).toBeTruthy();
   });
 });

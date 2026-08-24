@@ -79,8 +79,24 @@ func officialDashboardTemplates() []dashboardTemplate {
 		distributionTemplate("residual-diagnostics", "Residual diagnostics", "Histogram, box, and density views for bounded error distributions.", "regression", nil),
 		distributionTemplate("feature-distributions", "Feature distributions", "Compare one or more bounded feature distributions and explicit groups.", "general", nil),
 		distributionTemplate("drift-distributions", "Drift distributions", "Compare identified reference and candidate populations without synthesizing a score.", "time-series-anomaly", nil),
+		compositionTemplate("training-throughput-composition", "Training throughput composition", "Compare related throughput signals over training steps without assuming matching units.", "general", "area_chart", "train", []string{"throughput", "samples_per_second", "tokens_per_second"}, "overlap"),
+		compositionTemplate("classification-rate-composition", "Classification rate composition", "Inspect deterministic true and false outcome-rate components across evaluation steps.", "classification", "stacked_bar", "evaluation", []string{"true_positive_rate", "true_negative_rate", "false_positive_rate", "false_negative_rate"}, ""),
 	)
 	return result
+}
+
+func compositionTemplate(id, name, description, category, widgetType, phase string, roles []string, stackMode string) dashboardTemplate {
+	slots := make([]dashboardTemplateSlot, 0, len(roles))
+	for index, role := range roles {
+		minimum, missing := 0, "omit_slot"
+		if index == 0 {
+			minimum, missing = 1, "error"
+		}
+		slots = append(slots, officialMetricSlot(role, role, phase, minimum, missing))
+	}
+	widget := officialWidget("composition", widgetType, 12, 5, 0, 0, slots...)
+	widget.Appearance = &dashboardWidgetAppearance{SchemaVersion: 1, ColorScheme: "cool", Legend: "auto", StackMode: stackMode}
+	return dashboardTemplate{ID: id, Name: name, Description: description, Category: category, SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{widget}}
 }
 
 func distributionTemplate(id, name, description, category string, tags []string) dashboardTemplate {

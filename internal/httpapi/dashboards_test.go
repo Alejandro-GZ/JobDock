@@ -317,6 +317,20 @@ func TestDashboardValidationRejectsUnsupportedWidgets(t *testing.T) {
 	}
 }
 
+func TestDashboardValidationSupportsAreaAndStackedBar(t *testing.T) {
+	config := dashboardConfig{Widgets: []dashboardWidget{
+		{ID: "area", Type: "area_chart", Size: dashboardWidgetSize{Columns: 6, Rows: 3}, Sources: []dashboardWidgetSource{{Kind: "metric", Name: "train"}, {Kind: "metric", Name: "validation"}}, Appearance: &dashboardWidgetAppearance{SchemaVersion: 1, StackMode: "stacked", Legend: "auto"}},
+		{ID: "composition", Type: "stacked_bar", Size: dashboardWidgetSize{Columns: 6, Rows: 3}, Sources: []dashboardWidgetSource{{Kind: "metric", Name: "accepted"}, {Kind: "metric", Name: "rejected"}}, Appearance: &dashboardWidgetAppearance{SchemaVersion: 1, ColorScheme: "cool"}},
+	}}
+	if err := validateDashboardConfig(config); err != nil {
+		t.Fatalf("valid composition widgets were rejected: %v", err)
+	}
+	config.Widgets[1].Appearance.StackMode = "stacked"
+	if err := validateDashboardConfig(config); err == nil {
+		t.Fatal("stack mode was accepted outside an area chart")
+	}
+}
+
 func TestDashboardValidationRequiresFixedGaugeMaximum(t *testing.T) {
 	config := dashboardConfig{Widgets: []dashboardWidget{{ID: "gauge", Type: "gauge", Size: dashboardWidgetSize{Columns: 3, Rows: 3}, Sources: []dashboardWidgetSource{{Kind: "metric", Name: "loss"}}, GaugeMaxMode: "fixed"}}}
 	if err := validateDashboardConfig(config); err == nil {

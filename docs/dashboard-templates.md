@@ -62,6 +62,17 @@ stroke width and markers; compatible plots also support marker size and
 opacity. Confusion matrices retain an initial `absolute` or `normalized` mode.
 Settings are accepted only by compatible widget types.
 
+Area charts and stacked bar charts reuse the same bounded metric/resource
+queries, axes, legend, tooltip, zoom, and per-series presentation contract.
+Area charts default to `overlap`: each series retains its own observations and
+a category absent from that series is rendered as a gap. Setting
+`appearance.stack_mode` to `stacked` aligns the union of step or timestamp
+categories and treats a missing component as zero. Stacked bars always use
+that zero-fill rule. Both stacked modes require one shared display unit,
+preserve the configured source order, and separate positive and negative
+stacks. No interpolation or synthetic telemetry is persisted. The existing
+range and automatic-resolution limits remain the sampling boundary.
+
 Complete STAR plots use three to sixteen numeric metric or resource sources. Each
 source becomes a radial axis and retains its own display label, unit, color and
 range. Axes default to the bounded historical range already loaded for the

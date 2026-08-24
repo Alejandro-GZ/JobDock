@@ -106,4 +106,12 @@ func TestRepresentativeOfficialTemplatesResolveAndReportMissingSources(t *testin
 	if missing.Compatibility != "incompatible" || missing.SlotResults[1].Status != "missing" {
 		t.Fatalf("missing HPO source: %#v", missing)
 	}
+	composition := resolveDashboardTemplate(officialTemplateByID("classification-rate-composition"), []observableSource{
+		{Kind: "metric", Name: "tn-rate", Tags: []string{"metric:true_negative_rate", "phase:evaluation"}},
+		{Kind: "metric", Name: "tp-rate", Tags: []string{"metric:true_positive_rate", "phase:evaluation"}},
+		{Kind: "metric", Name: "fp-rate", Tags: []string{"metric:false_positive_rate", "phase:evaluation"}},
+	})
+	if composition.Compatibility == "incompatible" || composition.Widgets[0].Type != "stacked_bar" || len(composition.Widgets[0].Sources) != 3 || composition.Widgets[0].Sources[0].Name != "tp-rate" || composition.Widgets[0].Sources[1].Name != "tn-rate" || composition.Widgets[0].Sources[2].Name != "fp-rate" {
+		t.Fatalf("tag-resolved composition: %#v", composition)
+	}
 }

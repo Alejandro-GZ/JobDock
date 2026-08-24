@@ -68,6 +68,7 @@ type dashboardWidgetAppearance struct {
 	PointSize     *float64                             `json:"point_size,omitempty"`
 	Opacity       *float64                             `json:"opacity,omitempty"`
 	MatrixMode    string                               `json:"matrix_mode,omitempty"`
+	StackMode     string                               `json:"stack_mode,omitempty"`
 }
 type dashboardAxisAppearance struct {
 	Label string   `json:"label,omitempty"`
@@ -538,7 +539,7 @@ func validateDashboardWidgetAppearance(widget dashboardWidget) error {
 	if appearance.Legend != "" && appearance.Legend != "auto" && appearance.Legend != "hidden" && appearance.Legend != "open" {
 		return dashboardError("Widget appearance legend is invalid")
 	}
-	plot := widget.Type == "lineplot" || widget.Type == "barplot" || widget.Type == "scatterplot" || widget.Type == "starplot" || widget.Type == "histogram" || widget.Type == "boxplot" || widget.Type == "violin"
+	plot := widget.Type == "lineplot" || widget.Type == "barplot" || widget.Type == "area_chart" || widget.Type == "stacked_bar" || widget.Type == "scatterplot" || widget.Type == "starplot" || widget.Type == "histogram" || widget.Type == "boxplot" || widget.Type == "violin"
 	if len(appearance.Subtitle) > 160 {
 		return dashboardError("Widget appearance subtitle may contain at most 160 characters")
 	}
@@ -595,6 +596,9 @@ func validateDashboardWidgetAppearance(widget dashboardWidget) error {
 	if appearance.MatrixMode != "" && (widget.Type != "confusion_matrix" || appearance.MatrixMode != "absolute" && appearance.MatrixMode != "normalized") {
 		return dashboardError("Widget appearance matrix_mode is invalid for this widget")
 	}
+	if appearance.StackMode != "" && (widget.Type != "area_chart" || appearance.StackMode != "overlap" && appearance.StackMode != "stacked") {
+		return dashboardError("Widget appearance stack_mode is invalid for this widget")
+	}
 	return nil
 }
 
@@ -631,7 +635,7 @@ func validDashboardColor(value string) bool {
 }
 
 func supportedDashboardWidgetTypes() map[string]bool {
-	return map[string]bool{"lineplot": true, "barplot": true, "scatterplot": true, "starplot": true, "histogram": true, "boxplot": true, "violin": true, "confusion_matrix": true, "progress": true, "logs": true, "kpi": true, "gauge": true}
+	return map[string]bool{"lineplot": true, "barplot": true, "area_chart": true, "stacked_bar": true, "scatterplot": true, "starplot": true, "histogram": true, "boxplot": true, "violin": true, "confusion_matrix": true, "progress": true, "logs": true, "kpi": true, "gauge": true}
 }
 
 func supportedDashboardSourceKinds() map[string]bool {

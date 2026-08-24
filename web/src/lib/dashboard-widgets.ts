@@ -1,4 +1,4 @@
-export type DashboardWidgetType = "lineplot" | "barplot" | "scatterplot" | "starplot" | "histogram" | "boxplot" | "violin" | "confusion_matrix" | "progress" | "logs" | "kpi" | "gauge";
+export type DashboardWidgetType = "lineplot" | "barplot" | "area_chart" | "stacked_bar" | "scatterplot" | "starplot" | "histogram" | "boxplot" | "violin" | "confusion_matrix" | "progress" | "logs" | "kpi" | "gauge";
 export type ScalarAggregation = "last" | "min" | "max" | "avg";
 export type DashboardSourceKind = "metric" | "resource" | "distribution" | "matrix" | "progress" | "log";
 export type DashboardSourceRole = "x" | "y";
@@ -29,6 +29,7 @@ export type DashboardWidgetAppearance = {
   point_size?: number;
   opacity?: number;
   matrix_mode?: "absolute" | "normalized";
+  stack_mode?: "overlap" | "stacked";
 };
 
 export type DashboardWidget = {
@@ -113,6 +114,8 @@ export const widgetCategoryLabels:Readonly<Record<WidgetCatalogCategory,string>>
 export const widgetCatalog: ReadonlyArray<{ type: DashboardWidgetType; label: string; description: string;category:WidgetCatalogCategory }> = [
   { type: "lineplot", label: "Line plot", description: "A time series rendered as a continuous line.",category:"trends" },
   { type: "barplot", label: "Bar plot", description: "Recent observations rendered as discrete bars.",category:"trends" },
+  { type: "area_chart", label: "Area chart", description: "One or more compatible series rendered as overlapping or stacked areas.",category:"trends" },
+  { type: "stacked_bar", label: "Stacked bar chart", description: "Shared categories composed from multiple ordered series.",category:"trends" },
   { type: "scatterplot", label: "Scatter plot", description: "Observations plotted by step or capture time.",category:"relationships" },
   { type: "starplot", label: "STAR plot", description: "Latest values compared across normalized radial axes.",category:"relationships" },
   { type: "histogram", label: "Histogram", description: "Compare bounded feature, error, or drift distributions.",category:"diagnostics" },
@@ -234,7 +237,7 @@ function restoreAppearance(type:DashboardWidgetType,value:unknown):DashboardWidg
   if(!value||typeof value!=="object")return undefined;
   const item=value as Partial<DashboardWidgetAppearance>;
   if(item.schema_version!==1)return undefined;
-  const plot=type==="lineplot"||type==="barplot"||type==="scatterplot"||type==="starplot"||type==="histogram"||type==="boxplot"||type==="violin",appearance:DashboardWidgetAppearance={schema_version:1};
+  const plot=type==="lineplot"||type==="barplot"||type==="area_chart"||type==="stacked_bar"||type==="scatterplot"||type==="starplot"||type==="histogram"||type==="boxplot"||type==="violin",appearance:DashboardWidgetAppearance={schema_version:1};
   if(plot&&typeof item.subtitle==="string"&&item.subtitle.trim())appearance.subtitle=item.subtitle.trim().slice(0,160);
   if(plot&&["default","cool","warm","monochrome"].includes(String(item.color_scheme)))appearance.color_scheme=item.color_scheme;
   if(plot&&["auto","hidden","open"].includes(String(item.legend)))appearance.legend=item.legend;
@@ -246,6 +249,7 @@ function restoreAppearance(type:DashboardWidgetType,value:unknown):DashboardWidg
   if((type==="lineplot"||type==="scatterplot")&&finiteBetween(item.point_size,1,16))appearance.point_size=item.point_size;
   if(plot&&finiteBetween(item.opacity,.05,1))appearance.opacity=item.opacity;
   if(type==="confusion_matrix"&&(item.matrix_mode==="absolute"||item.matrix_mode==="normalized"))appearance.matrix_mode=item.matrix_mode;
+  if(type==="area_chart"&&(item.stack_mode==="overlap"||item.stack_mode==="stacked"))appearance.stack_mode=item.stack_mode;
   return appearance;
 }
 function restoreAxis(value:unknown):DashboardAxisAppearance|undefined{if(!value||typeof value!=="object")return undefined;const item=value as DashboardAxisAppearance,result:DashboardAxisAppearance={};if(typeof item.label==="string"&&item.label.trim())result.label=item.label.trim().slice(0,80);if(typeof item.unit==="string"&&item.unit.trim())result.unit=item.unit.trim().slice(0,64);if(item.scale==="linear"||item.scale==="log")result.scale=item.scale;if(item.range==="auto")result.range="auto";if(item.range==="manual"&&Number.isFinite(item.min)&&Number.isFinite(item.max)&&item.min!<item.max!){result.range="manual";result.min=item.min;result.max=item.max}return Object.keys(result).length?result:undefined}
