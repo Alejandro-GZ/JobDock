@@ -1,11 +1,16 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ObservabilityDashboard } from "./observability-dashboard";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 const wrap=(node:React.ReactNode)=><TooltipProvider>{node}</TooltipProvider>;
+beforeAll(()=>Object.defineProperties(HTMLElement.prototype,{
+  hasPointerCapture:{configurable:true,value:()=>false},
+  setPointerCapture:{configurable:true,value:()=>undefined},
+  scrollIntoView:{configurable:true,value:()=>undefined},
+}));
 describe("ObservabilityDashboard",()=>{
   afterEach(()=>{cleanup();vi.unstubAllGlobals()});
   it("keeps layout controls in edit mode and adds widgets by dropping from the library",async()=>{
@@ -31,7 +36,7 @@ describe("ObservabilityDashboard",()=>{
   it("offers declared matrix sources before observations exist",async()=>{
     const user=userEvent.setup(),descriptors=[{name:"validation_confusion",type:"matrix",phase:"validation",declared:true,observed:false}],saved=[{id:"matrix",type:"confusion_matrix" as const,size:{columns:6,rows:3},position:{x:0,y:0},sources:[{kind:"matrix" as const,name:"validation_confusion"}],grid_columns:12 as const}];
     const {rerender}=render(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready editMode numericSources={[]} observableSources={descriptors} matrices={[]} markers={[]} initialWidgets={saved}/>));
-    await user.click(screen.getByRole("button",{name:"Configure widget"}));expect(screen.getByRole("combobox",{name:"Source"}).textContent).toContain("validation · validation_confusion");
+    await user.click(screen.getByRole("button",{name:"Configure widget data"}));expect(screen.getByRole("combobox",{name:"Source"}).textContent).toContain("validation · validation_confusion");
     await user.click(screen.getByRole("button",{name:"Cancel"}));rerender(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready numericSources={[]} observableSources={descriptors} matrices={[]} markers={[]} initialWidgets={saved}/>));expect(await screen.findByText("Waiting for data")).toBeTruthy();
   });
   it("materializes a template replacement as an ordinary editable dashboard",async()=>{
@@ -40,7 +45,7 @@ describe("ObservabilityDashboard",()=>{
     expect((await screen.findAllByText("log / stdout")).length).toBeGreaterThan(0);
     rerender(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready editMode numericSources={[source]} matrices={[]} markers={[]} initialWidgets={saved} replacement={{key:"template-1",widgets:replacement}} onWidgetsChange={changed}/>));
     expect(await screen.findByText("metric / loss")).toBeTruthy();
-    expect(screen.getByRole("button",{name:"Configure widget"})).toBeTruthy();
+    expect(screen.getByRole("button",{name:"Configure widget data"})).toBeTruthy();
     expect(screen.getByRole("button",{name:"Remove widget"})).toBeTruthy();
     expect(changed).not.toHaveBeenCalled();
   });
@@ -50,16 +55,16 @@ describe("ObservabilityDashboard",()=>{
   });
   it("configures widget data and time range from its editing shell",async()=>{
     const user=userEvent.setup(),changed=vi.fn(),sources=[{kind:"metric" as const,name:"loss",title:"loss",unit:"ratio",points:[{timestamp:1,value:.8,step:1}]},{kind:"metric" as const,name:"duration",title:"duration",unit:"seconds",points:[{timestamp:1,value:8,step:1}]}],saved=[{id:"loss",type:"lineplot" as const,size:{columns:2,rows:1},position:{x:0,y:0},sources:[{kind:"metric" as const,name:"loss"}],grid_columns:4 as const}];
-    render(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready editMode numericSources={sources} matrices={[]} markers={[]} initialWidgets={saved} onWidgetsChange={changed}/>));await user.click(screen.getByRole("button",{name:"Configure widget"}));expect(screen.getByRole("combobox",{name:"Time range"})).toBeTruthy();expect(screen.getByRole("combobox",{name:"Color scheme"})).toBeTruthy();expect(screen.getByRole("combobox",{name:"Legend"})).toBeTruthy();expect(screen.getByRole("combobox",{name:"Line style"})).toBeTruthy();await user.type(screen.getByLabelText("Widget title"),"Training signals");await user.type(screen.getByLabelText("Widget subtitle"),"Validation split");await user.click(screen.getByRole("checkbox",{name:"duration (seconds)"}));await user.click(screen.getByRole("checkbox",{name:"Show points"}));await user.clear(screen.getByLabelText("Y axis label"));await user.type(screen.getByLabelText("Y axis label"),"Objective");await user.clear(screen.getByLabelText("loss display label"));await user.type(screen.getByLabelText("loss display label"),"Loss");await user.click(screen.getByRole("button",{name:"Apply"}));expect(await screen.findByText("metric / loss · metric / duration")).toBeTruthy();await waitFor(()=>expect(changed.mock.calls.at(-1)?.[0]?.[0]).toMatchObject({title:"Training signals",appearance:{schema_version:1,subtitle:"Validation split",show_points:true,y_axis:{label:"Objective"},series:{"metric:loss":{label:"Loss"}}}}));
+    render(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready editMode numericSources={sources} matrices={[]} markers={[]} initialWidgets={saved} onWidgetsChange={changed}/>));await user.click(screen.getByRole("button",{name:"Configure widget data"}));expect(screen.getByRole("combobox",{name:"Time range"})).toBeTruthy();expect(screen.queryByRole("combobox",{name:"Color scheme"})).toBeNull();screen.getByRole("combobox",{name:"Series to add"}).focus();await user.keyboard("{Enter}{ArrowDown}{Enter}");await user.click(screen.getByRole("button",{name:"Add selected series"}));await user.click(screen.getByRole("button",{name:"Apply"}));expect(await screen.findByText("metric / loss · metric / duration")).toBeTruthy();await user.click(screen.getByRole("button",{name:"Configure widget appearance"}));expect(screen.getByRole("combobox",{name:"Color scheme"})).toBeTruthy();expect(screen.getByRole("combobox",{name:"Legend"})).toBeTruthy();expect(screen.getByRole("combobox",{name:"Line style"})).toBeTruthy();await user.type(screen.getByLabelText("Widget title"),"Training signals");await user.type(screen.getByLabelText("Widget subtitle"),"Validation split");await user.click(screen.getByRole("checkbox",{name:"Show points"}));await user.clear(screen.getByLabelText("Y axis label"));await user.type(screen.getByLabelText("Y axis label"),"Objective");await user.clear(screen.getByLabelText("loss display label"));await user.type(screen.getByLabelText("loss display label"),"Loss");await user.click(screen.getByRole("button",{name:"Apply"}));await waitFor(()=>expect(changed.mock.calls.at(-1)?.[0]?.[0]).toMatchObject({title:"Training signals",appearance:{schema_version:1,subtitle:"Validation split",show_points:true,y_axis:{label:"Objective"},series:{"metric:loss":{label:"Loss"}}}}));
   });
   it("renders a legacy gauge and exposes its migrated domain in edit mode",async()=>{
     const user=userEvent.setup(),source={kind:"metric" as const,name:"temperature",title:"Temperature",unit:"°C",points:[{timestamp:1,value:20},{timestamp:2,value:40}]},saved=[{id:"gauge",type:"gauge" as const,size:{columns:6,rows:3},position:{x:0,y:0},sources:[{kind:"metric" as const,name:"temperature"}],grid_columns:12 as const,gauge_max_mode:"fixed" as const,gauge_max_value:100}];
     const {rerender}=render(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready numericSources={[source]} matrices={[]} markers={[]} initialWidgets={saved}/>));expect(await screen.findByRole("meter",{name:"Temperature: 40 °C"})).toBeTruthy();
-    rerender(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready editMode numericSources={[source]} matrices={[]} markers={[]} initialWidgets={saved}/>));await user.click(screen.getByRole("button",{name:"Configure widget"}));expect(screen.getByRole("combobox",{name:"Gauge presentation"}).textContent).toContain("Gauge");expect((screen.getByLabelText("Maximum") as HTMLInputElement).value).toBe("100");
+    rerender(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready editMode numericSources={[source]} matrices={[]} markers={[]} initialWidgets={saved}/>));await user.click(screen.getByRole("button",{name:"Configure widget data"}));expect(screen.getByRole("combobox",{name:"Gauge presentation"}).textContent).toContain("Gauge");expect((screen.getByLabelText("Maximum") as HTMLInputElement).value).toBe("100");
   });
   it("shows a single combined Logs console with stream selection beside its title",async()=>{
     class EventSourceStub{onopen=null;onerror=null;addEventListener(){}close(){}}vi.stubGlobal("EventSource",EventSourceStub);const user=userEvent.setup(),saved=[{id:"logs",type:"logs" as const,size:{columns:4,rows:2},position:{x:0,y:0},sources:[{kind:"log" as const,name:"stdout"}],grid_columns:4 as const}];
-    render(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready numericSources={[]} matrices={[]} markers={[]} initialWidgets={saved}/>));expect((await screen.findAllByText("Logs")).length).toBeGreaterThan(0);expect(screen.queryByText("stdout")).toBeNull();await user.click(screen.getByRole("button",{name:"Configure widget"}));expect((screen.getByRole("checkbox",{name:"stdout"}) as HTMLInputElement).checked).toBe(true);await user.click(screen.getByRole("checkbox",{name:"stderr"}));await user.click(screen.getByRole("button",{name:"Apply"}));
+    render(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready numericSources={[]} matrices={[]} markers={[]} initialWidgets={saved}/>));expect((await screen.findAllByText("Logs")).length).toBeGreaterThan(0);expect(screen.queryByText("stdout")).toBeNull();await user.click(screen.getByRole("button",{name:"Configure widget data"}));expect((screen.getByRole("checkbox",{name:"stdout"}) as HTMLInputElement).checked).toBe(true);await user.click(screen.getByRole("checkbox",{name:"stderr"}));await user.click(screen.getByRole("button",{name:"Apply"}));
   });
 });
 function dataTransfer(){const values=new Map<string,string>();return{effectAllowed:"all",dropEffect:"move",files:[],items:[],types:[],setData:(key:string,value:string)=>values.set(key,value),getData:(key:string)=>values.get(key)??"",clearData:()=>values.clear(),setDragImage:()=>undefined}}
