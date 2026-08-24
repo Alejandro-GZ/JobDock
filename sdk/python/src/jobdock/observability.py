@@ -224,3 +224,42 @@ class AnomalyObservation:
     detected: bool | None = None
     unit: str | None = None
     metadata: Metadata | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PartialDependence1D:
+    """A precomputed one-dimensional partial dependence curve."""
+
+    name: str
+    feature: str
+    grid: Sequence[float]
+    values: Sequence[float]
+    lower: Sequence[float] | None = None
+    upper: Sequence[float] | None = None
+    feature_unit: str | None = None
+    value_unit: str | None = None
+    model: str | None = None
+    output: str | None = None
+    step: int | None = None
+    timestamp: datetime | None = None
+    metadata: Metadata | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PartialDependence2D:
+    """A precomputed two-dimensional partial dependence surface."""
+
+    name: str
+    feature_x: str
+    grid_x: Sequence[float]
+    feature_y: str
+    grid_y: Sequence[float]
+    values: Sequence[Sequence[float | None]]
+    feature_x_unit: str | None = None
+    feature_y_unit: str | None = None
+    value_unit: str | None = None
+    model: str | None = None
+    output: str | None = None
+    step: int | None = None
+    timestamp: datetime | None = None
+    metadata: Metadata | None = None

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from jobdock import AnomalyObservation, CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, ObservabilityPhase, Phase, ProgressObservation, ProjectionObservation, RegressionDiagnostics, SEMANTIC_CATALOG_VERSION, ShapAttribution, TableColumn, TableObservation, current_job
+from jobdock import AnomalyObservation, CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, ObservabilityPhase, PartialDependence1D, PartialDependence2D, Phase, ProgressObservation, ProjectionObservation, RegressionDiagnostics, SEMANTIC_CATALOG_VERSION, ShapAttribution, TableColumn, TableObservation, current_job
 
 
 def test_current_job_is_noop_without_environment(monkeypatch):
@@ -144,6 +144,26 @@ def test_anomaly_reports_score_threshold_and_flag_without_inventing_values(tmp_p
     assert len(queued[1][1]["items"]) == 1
     with pytest.raises(ValueError, match="finite"):
         job.anomaly(AnomalyObservation("broken", float("nan")))
+    job.close()
+
+
+def test_partial_dependence_is_precomputed_bounded_and_preserves_axes(tmp_path: Path, monkeypatch):
+    job = Job("id", "http://jobdock.test", "token", tmp_path)
+    queued = []
+    monkeypatch.setattr(job, "_enqueue", lambda endpoint, payload: queued.append((endpoint, payload)))
+    job.partial_dependence_1d(PartialDependence1D("age_pdp", "age", [20, 40, 60], [.1, .4, .7], [.05, .3, .6], [.2, .5, .8], "years", "probability", model="candidate", output="risk", metadata={"split": "validation"}))
+    curve = queued[0][1]
+    assert curve["subtype"] == "partial_dependence"
+    assert curve["rows"][1] == {"feature_value": 40.0, "partial_dependence": .4, "lower": .3, "upper": .5}
+    assert curve["metadata"] == {"split": "validation", "feature": "age", "dimension": 1, "model": "candidate", "output": "risk", "feature_unit": "years", "value_unit": "probability"}
+    job.partial_dependence_2d(PartialDependence2D("age_income_pdp", "age", [20, 40], "income", [30_000, 60_000], [[.1, .2], [.3, .4]], value_unit="probability"))
+    surface = queued[1][1]
+    assert surface["matrix_type"] == "heatmap"
+    assert surface["row_labels"] == ["30000", "60000"]
+    assert surface["column_labels"] == ["20", "40"]
+    assert "partial_dependence:2d" in surface["tags"]
+    with pytest.raises(ValueError, match="ranges"):
+        job.partial_dependence_1d(PartialDependence1D("broken", "age", [1, 2], [.2, .3], [.4, .2], [.5, .4]))
     job.close()
 
 

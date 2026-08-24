@@ -8,6 +8,7 @@ import { FeatureImportanceWidget } from "@/components/feature-importance-widget"
 import { LiveLogs, type StreamName } from "@/components/live-logs";
 import { HeatmapWidget } from "@/components/heatmap-widget";
 import { ObservationPlot } from "@/components/observation-plot";
+import { PartialDependenceWidget } from "@/components/partial-dependence-widget";
 import { ProgressWidget } from "@/components/progress-widget";
 import { ProjectionScatterWidget } from "@/components/projection-scatter-widget";
 import { RegressionDiagnosticsWidget } from "@/components/regression-diagnostics-widget";
@@ -74,6 +75,7 @@ function DashboardWidgetView({jobID,attemptID,widget,numericSources,sourceOption
   if((widget.type==="prediction_vs_actual"||widget.type==="residual_plot")&&source?.kind==="table")return <RegressionDiagnosticsWidget jobID={jobID} attemptID={attemptID} widget={widget}/>;
   if(widget.type==="feature_importance"&&source?.kind==="table")return <FeatureImportanceWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
   if(widget.type==="shap_summary"&&source?.kind==="table")return <ShapSummaryWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
+  if(widget.type==="partial_dependence"&&source?.kind==="table")return <PartialDependenceWidget jobID={jobID} attemptID={attemptID} widget={widget}/>;
   if((widget.type==="embedding_scatter"||widget.type==="cluster_scatter")&&source?.kind==="table")return <ProjectionScatterWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
   if((widget.type==="bubble_chart"||widget.type==="parallel_coordinates"||widget.type==="pie_chart"||widget.type==="donut_chart"||widget.type==="treemap"||widget.type==="waterfall")&&source?.kind==="table")return <TabularChartWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
   if(widget.type==="progress"&&progress&&hasProgress(progress))return <ProgressWidget state={progress}/>;

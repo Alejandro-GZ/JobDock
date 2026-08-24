@@ -1,4 +1,4 @@
-export type DashboardWidgetType = "lineplot" | "loss_curve" | "learning_curve" | "anomaly_timeline" | "feature_importance" | "shap_summary" | "embedding_scatter" | "cluster_scatter" | "barplot" | "area_chart" | "stacked_bar" | "scatterplot" | "starplot" | "histogram" | "boxplot" | "violin" | "heatmap" | "correlation_heatmap" | "confusion_matrix" | "data_grid" | "roc_curve" | "precision_recall_curve" | "calibration_curve" | "prediction_vs_actual" | "residual_plot" | "bubble_chart" | "parallel_coordinates" | "pie_chart" | "donut_chart" | "treemap" | "waterfall" | "progress" | "logs" | "kpi" | "gauge";
+export type DashboardWidgetType = "lineplot" | "loss_curve" | "learning_curve" | "anomaly_timeline" | "feature_importance" | "shap_summary" | "partial_dependence" | "embedding_scatter" | "cluster_scatter" | "barplot" | "area_chart" | "stacked_bar" | "scatterplot" | "starplot" | "histogram" | "boxplot" | "violin" | "heatmap" | "correlation_heatmap" | "confusion_matrix" | "data_grid" | "roc_curve" | "precision_recall_curve" | "calibration_curve" | "prediction_vs_actual" | "residual_plot" | "bubble_chart" | "parallel_coordinates" | "pie_chart" | "donut_chart" | "treemap" | "waterfall" | "progress" | "logs" | "kpi" | "gauge";
 export type ScalarAggregation = "last" | "min" | "max" | "avg";
 export type DashboardSourceKind = "metric" | "resource" | "distribution" | "matrix" | "table" | "progress" | "log";
 export type DashboardSourceRole = "x" | "y" | "size" | "color" | "category" | "value" | "id" | "parent" | "kind";
@@ -154,6 +154,7 @@ export const widgetCatalog: ReadonlyArray<{ type: DashboardWidgetType; label: st
   { type: "residual_plot", label: "Residual plot", description: "Reported regression residuals against prediction or actual values.",category:"diagnostics" },
   { type: "feature_importance", label: "Feature importance", description: "Reported signed feature contributions with method and model provenance.",category:"diagnostics" },
   { type: "shap_summary", label: "SHAP summary", description: "Bounded precomputed SHAP effects as a beeswarm or global importance view.",category:"diagnostics" },
+  { type: "partial_dependence", label: "Partial dependence", description: "A precomputed one-dimensional feature response with optional reported range.",category:"diagnostics" },
   { type: "embedding_scatter", label: "Embedding scatter", description: "A bounded precomputed 2D/3D latent projection.",category:"relationships" },
   { type: "cluster_scatter", label: "Cluster scatter", description: "A bounded projection grouped by reported cluster or label.",category:"relationships" },
   { type: "bubble_chart", label: "Bubble chart", description: "Three numeric dimensions with optional grouping.",category:"relationships" },
@@ -256,7 +257,7 @@ export function compatibleSourceKinds(type: DashboardWidgetType): DashboardSourc
   if (type === "progress") return ["progress"];
   if(type === "logs") return ["log"];
   if(type==="histogram"||type==="boxplot"||type==="violin")return ["distribution"];
-  if(["data_grid","roc_curve","precision_recall_curve","calibration_curve","prediction_vs_actual","residual_plot","feature_importance","shap_summary","embedding_scatter","cluster_scatter","bubble_chart","parallel_coordinates","pie_chart","donut_chart","treemap","waterfall"].includes(type))return ["table"];
+  if(["data_grid","roc_curve","precision_recall_curve","calibration_curve","prediction_vs_actual","residual_plot","feature_importance","shap_summary","partial_dependence","embedding_scatter","cluster_scatter","bubble_chart","parallel_coordinates","pie_chart","donut_chart","treemap","waterfall"].includes(type))return ["table"];
   return ["metric", "resource"];
 }
 
@@ -269,6 +270,7 @@ function firstCompatibleSource(type: DashboardWidgetType, sources: DashboardSour
   if(type==="prediction_vs_actual"||type==="residual_plot"){const name=sources.tables?.find(item=>sources.table_types?.[item]==="regression_diagnostics");return name?{kind:"table",name}:undefined}
   if(type==="feature_importance"){const name=sources.tables?.find(item=>sources.table_types?.[item]==="feature_importance");return name?{kind:"table",name}:undefined}
   if(type==="shap_summary"){const name=sources.tables?.find(item=>sources.table_types?.[item]==="shap_attribution");return name?{kind:"table",name}:undefined}
+  if(type==="partial_dependence"){const name=sources.tables?.find(item=>sources.table_types?.[item]==="partial_dependence");return name?{kind:"table",name}:undefined}
   if(type==="embedding_scatter"||type==="cluster_scatter"){const name=sources.tables?.find(item=>sources.table_types?.[item]==="projection");return name?{kind:"table",name}:undefined}
   if (type === "confusion_matrix" || type === "heatmap" || type === "correlation_heatmap") {const expected=type==="correlation_heatmap"?"correlation":type;const name=sources.matrices.find(item=>(sources.matrix_types?.[item]??"confusion_matrix")===expected);return name?{kind:"matrix",name}:undefined}
   if (sources.metrics[0]) return { kind: "metric", name: sources.metrics[0] };

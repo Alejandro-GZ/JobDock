@@ -16,7 +16,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
-from .observability import AnomalyObservation, CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ObservabilityPhase, ProgressObservation, ProjectionObservation, RegressionDiagnostics, ShapAttribution, TableColumn, TableObservation
+from .observability import AnomalyObservation, CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ObservabilityPhase, PartialDependence1D, PartialDependence2D, ProgressObservation, ProjectionObservation, RegressionDiagnostics, ShapAttribution, TableColumn, TableObservation
 from . import __version__
 
 logger = logging.getLogger("jobdock")
@@ -49,6 +49,8 @@ class NoopJob:
     def shap(self, observation: ShapAttribution) -> None: pass
     def projection(self, observation: ProjectionObservation) -> None: pass
     def anomaly(self, observation: AnomalyObservation) -> None: pass
+    def partial_dependence_1d(self, observation: PartialDependence1D) -> None: pass
+    def partial_dependence_2d(self, observation: PartialDependence2D) -> None: pass
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None: pass
     def metrics(self, items: Iterable[Metric]) -> None: pass
     def declare_observability(self, manifest: ObservabilityManifest) -> None: pass
@@ -350,6 +352,40 @@ class Job:
         if observation.detected is not None:
             items.append(Metric(f"{name}.detection", 1.0 if observation.detected else 0.0, observation.step, captured_at, "flag", {**metadata, "anomaly_role": "detection", "score_series": name}, ("metric:anomaly_detection",)))
         self.metrics(items)
+
+    def partial_dependence_1d(self, observation: PartialDependence1D) -> None:
+        grid, values = [float(value) for value in observation.grid], [float(value) for value in observation.values]
+        if len(grid) < 2 or len(grid) > 500 or len(values) != len(grid) or any(not math.isfinite(value) for value in grid + values):
+            raise ValueError("partial dependence requires 2-500 finite grid/value pairs")
+        lower = None if observation.lower is None else [float(value) for value in observation.lower]
+        upper = None if observation.upper is None else [float(value) for value in observation.upper]
+        if (lower is None) != (upper is None) or lower is not None and (len(lower) != len(grid) or len(upper) != len(grid) or any(not math.isfinite(value) for value in lower + upper) or any(lower[index] > values[index] or values[index] > upper[index] for index in range(len(grid)))):
+            raise ValueError("partial dependence ranges must be paired, finite, ordered, and match the grid")
+        feature = _bounded_label(observation.feature, "partial dependence feature")
+        metadata = dict(observation.metadata or {})
+        metadata.update({"feature": feature, "dimension": 1})
+        for key, raw in (("model", observation.model), ("output", observation.output), ("feature_unit", observation.feature_unit), ("value_unit", observation.value_unit)):
+            if raw is not None:
+                metadata[key] = _bounded_label(raw, f"partial dependence {key}", 64 if key.endswith("unit") else 128)
+        columns = [TableColumn("feature_value", "number", observation.feature_unit), TableColumn("partial_dependence", "number", observation.value_unit), TableColumn("lower", "number", observation.value_unit, True), TableColumn("upper", "number", observation.value_unit, True)]
+        rows = [{"feature_value": grid[index], "partial_dependence": values[index], "lower": lower[index] if lower is not None else None, "upper": upper[index] if upper is not None else None} for index in range(len(grid))]
+        for start in range(0, len(rows), 256):
+            self.table(TableObservation(observation.name, columns, rows[start:start + 256], "partial_dependence", observation.step, observation.timestamp, ("explainability:partial_dependence", "partial_dependence:1d"), metadata, start == 0))
+
+    def partial_dependence_2d(self, observation: PartialDependence2D) -> None:
+        grid_x, grid_y = [float(value) for value in observation.grid_x], [float(value) for value in observation.grid_y]
+        values = [[None if value is None else float(value) for value in row] for row in observation.values]
+        if len(grid_x) < 2 or len(grid_y) < 2 or len(grid_x) > 128 or len(grid_y) > 128 or len(grid_x) * len(grid_y) > 4096 or len(values) != len(grid_y) or any(len(row) != len(grid_x) for row in values) or any(not math.isfinite(value) for value in grid_x + grid_y) or any(value is not None and not math.isfinite(value) for row in values for value in row):
+            raise ValueError("2D partial dependence requires a finite rectangular grid of 4-4096 cells")
+        feature_x, feature_y = _bounded_label(observation.feature_x, "partial dependence X feature"), _bounded_label(observation.feature_y, "partial dependence Y feature")
+        metadata = dict(observation.metadata or {})
+        metadata.update({"dimension": 2, "feature_x": feature_x, "feature_y": feature_y, "grid_x": grid_x, "grid_y": grid_y})
+        for key, raw in (("model", observation.model), ("output", observation.output), ("feature_x_unit", observation.feature_x_unit), ("feature_y_unit", observation.feature_y_unit), ("value_unit", observation.value_unit)):
+            if raw is not None:
+                metadata[key] = _bounded_label(raw, f"partial dependence {key}", 64 if key.endswith("unit") else 128)
+        labels_x = [_format_grid_value(value) for value in grid_x]
+        labels_y = [_format_grid_value(value) for value in grid_y]
+        self.matrix(MatrixObservation(observation.name, values, (), observation.step, observation.timestamp, metadata, "heatmap", labels_y, labels_x, observation.value_unit, ("explainability:partial_dependence", "partial_dependence:2d")))
 
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None:
         """Report one scalar metric while preserving the original call shape."""
@@ -677,6 +713,17 @@ def _validated_semantic_tags(tags: Iterable[str] | None) -> list[str] | None:
     return sorted(normalized)
 
 
+def _bounded_label(raw: str, field: str, maximum: int = 128) -> str:
+    value = raw.strip()
+    if not value or len(value) > maximum:
+        raise ValueError(f"{field} must contain 1-{maximum} characters")
+    return value
+
+
+def _format_grid_value(value: float) -> str:
+    return format(value, ".8g")
+
+
 def _validated_metadata(metadata: Mapping[str, JSONValue] | None) -> dict[str, JSONValue] | None:
     if metadata is None:
         return None
@@ -723,6 +770,6 @@ def _observation_payload(observation: Any, **fields: Any) -> dict[str, Any]:
     timestamp = observation.timestamp or datetime.now(timezone.utc)
     if timestamp.tzinfo is None or timestamp.utcoffset() is None: raise ValueError("observation timestamp must be timezone-aware")
     payload["timestamp"] = timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-    metadata = _validated_metadata(observation.metadata)
+    metadata = _validated_metadata(fields.get("metadata", observation.metadata))
     if metadata is not None: payload["metadata"] = metadata
     return payload

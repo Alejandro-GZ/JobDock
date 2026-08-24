@@ -118,6 +118,7 @@ func validSpecialTable(body domain.TableObservation) bool {
 		"feature_importance":     {"feature": "string", "value": "number", "method": "string"},
 		"shap_attribution":       {"sample_id": "string", "feature": "string", "shap_value": "number", "feature_value": "number"},
 		"projection":             {"sample_id": "string", "x": "number", "y": "number", "z": "number", "label": "string", "cluster": "string", "color": "string"},
+		"partial_dependence":     {"feature_value": "number", "partial_dependence": "number", "lower": "number", "upper": "number"},
 	}
 	typed := required[body.Subtype]
 	if typed == nil && body.Subtype != "multivariate" {
@@ -183,6 +184,14 @@ func validSpecialTable(body domain.TableObservation) bool {
 			return false
 		}
 	}
+	if body.Subtype == "partial_dependence" {
+		if !columnNullable(body.Columns, "lower") || !columnNullable(body.Columns, "upper") {
+			return false
+		}
+		if feature, ok := body.Metadata["feature"].(string); !ok || strings.TrimSpace(feature) == "" {
+			return false
+		}
+	}
 	identifiers := map[string]bool{}
 	parents := map[string]string{}
 	hasAccountingMarker := false
@@ -229,6 +238,17 @@ func validSpecialTable(body domain.TableObservation) bool {
 				if value, ok := group.(string); !ok || strings.TrimSpace(value) == "" {
 					return false
 				}
+			}
+		case "partial_dependence":
+			value, ok := row["partial_dependence"].(float64)
+			if !ok {
+				return false
+			}
+			if lower, exists := row["lower"].(float64); exists && lower > value {
+				return false
+			}
+			if upper, exists := row["upper"].(float64); exists && upper < value {
+				return false
 			}
 		case "feature_importance":
 			feature, featureOK := row["feature"].(string)
