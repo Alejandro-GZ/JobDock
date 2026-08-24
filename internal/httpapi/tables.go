@@ -116,6 +116,7 @@ func validSpecialTable(body domain.TableObservation) bool {
 		"waterfall":              {"label": "string", "value": "number", "kind": "string"},
 		"regression_diagnostics": {"actual": "number", "prediction": "number"},
 		"feature_importance":     {"feature": "string", "value": "number", "method": "string"},
+		"shap_attribution":       {"sample_id": "string", "feature": "string", "shap_value": "number", "feature_value": "number"},
 	}
 	typed := required[body.Subtype]
 	if typed == nil && body.Subtype != "multivariate" {
@@ -159,6 +160,17 @@ func validSpecialTable(body domain.TableObservation) bool {
 		}
 		definition, ok := body.Metadata["residual_definition"].(string)
 		if !ok || definition != "actual_minus_prediction" && definition != "prediction_minus_actual" {
+			return false
+		}
+	}
+	if body.Subtype == "shap_attribution" {
+		if !columnNullable(body.Columns, "feature_value") {
+			return false
+		}
+		features, values := body.Metadata["feature_names"], body.Metadata["mean_abs_shap"]
+		featureList, featureOK := features.([]any)
+		valueList, valueOK := values.([]any)
+		if !featureOK || !valueOK || len(featureList) == 0 || len(featureList) != len(valueList) || len(featureList) > 48 {
 			return false
 		}
 	}
@@ -215,6 +227,12 @@ func validSpecialTable(body domain.TableObservation) bool {
 			if !featureOK || strings.TrimSpace(feature) == "" || !methodOK || strings.TrimSpace(method) == "" {
 				return false
 			}
+		case "shap_attribution":
+			sample, sampleOK := row["sample_id"].(string)
+			feature, featureOK := row["feature"].(string)
+			if !sampleOK || strings.TrimSpace(sample) == "" || !featureOK || strings.TrimSpace(feature) == "" {
+				return false
+			}
 		}
 	}
 	if body.Subtype == "hierarchy" {
@@ -252,6 +270,15 @@ func validSpecialTable(body domain.TableObservation) bool {
 		}
 	}
 	return body.Subtype != "waterfall" || hasAccountingMarker
+}
+
+func columnNullable(columns []domain.TableColumn, name string) bool {
+	for _, column := range columns {
+		if column.Name == name {
+			return column.Nullable
+		}
+	}
+	return false
 }
 
 func validTableCell(value any, kind string) bool {

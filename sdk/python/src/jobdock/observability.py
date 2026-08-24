@@ -175,3 +175,19 @@ class FeatureImportance:
     step: int | None = None
     timestamp: datetime | None = None
     metadata: Metadata | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ShapAttribution:
+    """Bounded SHAP values precomputed by user code."""
+
+    name: str
+    feature_names: Sequence[str]
+    shap_values: Sequence[Sequence[float]]
+    feature_values: Sequence[Sequence[float | None]] | None = None
+    sample_ids: Sequence[str] | None = None
+    model: str | None = None
+    output: str | None = None
+    step: int | None = None
+    timestamp: datetime | None = None
+    metadata: Metadata | None = None

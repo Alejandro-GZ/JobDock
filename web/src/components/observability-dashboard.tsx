@@ -11,6 +11,7 @@ import { ObservationPlot } from "@/components/observation-plot";
 import { ProgressWidget } from "@/components/progress-widget";
 import { RegressionDiagnosticsWidget } from "@/components/regression-diagnostics-widget";
 import { ScalarSummaryWidget } from "@/components/scalar-summary-widget";
+import { ShapSummaryWidget } from "@/components/shap-summary-widget";
 import { StarPlot } from "@/components/star-plot";
 import { TabularChartWidget } from "@/components/tabular-chart-widget";
 import { type ChartMarker } from "@/components/time-series-chart";
@@ -71,6 +72,7 @@ function DashboardWidgetView({jobID,attemptID,widget,numericSources,sourceOption
   if((widget.type==="roc_curve"||widget.type==="precision_recall_curve"||widget.type==="calibration_curve")&&source?.kind==="table")return <EvaluationCurveWidget jobID={jobID} attemptID={attemptID} widget={widget}/>;
   if((widget.type==="prediction_vs_actual"||widget.type==="residual_plot")&&source?.kind==="table")return <RegressionDiagnosticsWidget jobID={jobID} attemptID={attemptID} widget={widget}/>;
   if(widget.type==="feature_importance"&&source?.kind==="table")return <FeatureImportanceWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
+  if(widget.type==="shap_summary"&&source?.kind==="table")return <ShapSummaryWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
   if((widget.type==="bubble_chart"||widget.type==="parallel_coordinates"||widget.type==="pie_chart"||widget.type==="donut_chart"||widget.type==="treemap"||widget.type==="waterfall")&&source?.kind==="table")return <TabularChartWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
   if(widget.type==="progress"&&progress&&hasProgress(progress))return <ProgressWidget state={progress}/>;
   if(widget.type==="confusion_matrix"&&source){const matrix=matrices.find(item=>item.name===source.name);if(matrix)return <ConfusionMatrixWidget matrix={matrix} initialMode={widget.appearance?.matrix_mode}/>}

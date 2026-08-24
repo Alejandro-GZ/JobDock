@@ -16,7 +16,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
-from .observability import CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ObservabilityPhase, ProgressObservation, RegressionDiagnostics, TableColumn, TableObservation
+from .observability import CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ObservabilityPhase, ProgressObservation, RegressionDiagnostics, ShapAttribution, TableColumn, TableObservation
 from . import __version__
 
 logger = logging.getLogger("jobdock")
@@ -46,6 +46,7 @@ class NoopJob:
     def evaluation_curve(self, observation: EvaluationCurve) -> None: pass
     def regression_diagnostics(self, observation: RegressionDiagnostics) -> None: pass
     def feature_importance(self, observation: FeatureImportance) -> None: pass
+    def shap(self, observation: ShapAttribution) -> None: pass
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None: pass
     def metrics(self, items: Iterable[Metric]) -> None: pass
     def declare_observability(self, manifest: ObservabilityManifest) -> None: pass
@@ -269,6 +270,33 @@ class Job:
         rows = [{"feature": name, "value": value, "method": method} for name, value in values.items()]
         for start in range(0, len(rows), 256):
             self.table(TableObservation(observation.name, columns, rows[start:start + 256], "feature_importance", observation.step, observation.timestamp, ("feature_importance:global", f"method:{method_tag[:64]}"), metadata, start == 0))
+
+    def shap(self, observation: ShapAttribution) -> None:
+        features = [str(value).strip() for value in observation.feature_names]
+        values = [[float(value) for value in row] for row in observation.shap_values]
+        if not features or len(features) > 48 or len(set(features)) != len(features) or any(not value or len(value) > 256 for value in features):
+            raise ValueError("SHAP attribution requires 1-48 unique feature names")
+        if not values or len(values) > 512 or len(values) * len(features) > 8192 or any(len(row) != len(features) or any(not math.isfinite(value) for value in row) for row in values):
+            raise ValueError("SHAP attribution requires a finite samples-by-features matrix of at most 512 samples and 8192 values")
+        feature_values = None if observation.feature_values is None else [[None if value is None else float(value) for value in row] for row in observation.feature_values]
+        if feature_values is not None and (len(feature_values) != len(values) or any(len(row) != len(features) or any(value is not None and not math.isfinite(value) for value in row) for row in feature_values)):
+            raise ValueError("SHAP feature values must match the attribution matrix and be finite when present")
+        sample_ids = [str(value).strip() for value in observation.sample_ids] if observation.sample_ids is not None else [str(index) for index in range(len(values))]
+        if len(sample_ids) != len(values) or len(set(sample_ids)) != len(sample_ids) or any(not value or len(value) > 256 for value in sample_ids):
+            raise ValueError("SHAP sample IDs must uniquely identify every sample")
+        metadata = dict(observation.metadata or {})
+        metadata["feature_names"] = features
+        metadata["mean_abs_shap"] = [sum(abs(row[index]) for row in values) / len(values) for index in range(len(features))]
+        for key, raw in (("model", observation.model), ("output", observation.output)):
+            if raw is not None:
+                value = raw.strip()
+                if not value or len(value) > 128:
+                    raise ValueError(f"SHAP {key} must contain 1-128 characters")
+                metadata[key] = value
+        columns = [TableColumn("sample_id", "string"), TableColumn("feature", "string"), TableColumn("shap_value", "number"), TableColumn("feature_value", "number", nullable=True)]
+        rows = [{"sample_id": sample_ids[sample], "feature": feature, "shap_value": values[sample][index], "feature_value": feature_values[sample][index] if feature_values is not None else None} for sample in range(len(values)) for index, feature in enumerate(features)]
+        for start in range(0, len(rows), 256):
+            self.table(TableObservation(observation.name, columns, rows[start:start + 256], "shap_attribution", observation.step, observation.timestamp, ("attribution:shap", "explainability:shap"), metadata, start == 0))
 
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None:
         """Report one scalar metric while preserving the original call shape."""

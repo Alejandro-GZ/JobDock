@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from jobdock import CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, ObservabilityPhase, Phase, ProgressObservation, RegressionDiagnostics, SEMANTIC_CATALOG_VERSION, TableColumn, TableObservation, current_job
+from jobdock import CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, ObservabilityPhase, Phase, ProgressObservation, RegressionDiagnostics, SEMANTIC_CATALOG_VERSION, ShapAttribution, TableColumn, TableObservation, current_job
 
 
 def test_current_job_is_noop_without_environment(monkeypatch):
@@ -96,6 +96,21 @@ def test_feature_importance_preserves_sign_method_and_bounded_chunks(tmp_path: P
     assert payload["replace"] is True
     with pytest.raises(ValueError, match="finite"):
         job.feature_importance(FeatureImportance("broken", {"x": float("nan")}, "gain"))
+    job.close()
+
+
+def test_shap_attribution_is_precomputed_bounded_and_feature_aware(tmp_path: Path, monkeypatch):
+    job = Job("id", "http://jobdock.test", "token", tmp_path)
+    queued = []
+    monkeypatch.setattr(job, "_enqueue", lambda endpoint, payload: queued.append((endpoint, payload)))
+    job.shap(ShapAttribution("validation_shap", ["age", "income"], [[-.2, .8], [.4, -.1]], [[20, 50_000], [40, 80_000]], ["a", "b"], model="candidate", output="risk"))
+    payload = queued[0][1]
+    assert payload["subtype"] == "shap_attribution"
+    assert payload["rows"][0] == {"sample_id": "a", "feature": "age", "shap_value": -.2, "feature_value": 20.0}
+    assert payload["metadata"]["mean_abs_shap"] == pytest.approx([.3, .45])
+    assert payload["metadata"]["model"] == "candidate"
+    with pytest.raises(ValueError, match="matrix"):
+        job.shap(ShapAttribution("broken", ["age"], [[1, 2]]))
     job.close()
 
 
