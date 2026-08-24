@@ -62,6 +62,7 @@ type dashboardWidget struct {
 	FeatureTopN        int                        `json:"feature_importance_top_n,omitempty"`
 	FeatureAbsolute    bool                       `json:"feature_importance_absolute,omitempty"`
 	ShapMode           string                     `json:"shap_mode,omitempty"`
+	ProjectionColorBy  string                     `json:"projection_color_by,omitempty"`
 	Appearance         *dashboardWidgetAppearance `json:"appearance,omitempty"`
 }
 type dashboardWidgetAppearance struct {
@@ -480,7 +481,7 @@ func validateDashboardConfig(config dashboardConfig) error {
 		if len(widget.TableColumns) > 64 || widget.TablePageSize != 0 && (widget.TablePageSize < 1 || widget.TablePageSize > 500) || widget.TableSortOrder != "" && widget.TableSortOrder != "asc" && widget.TableSortOrder != "desc" || widget.CategoryLimit != 0 && (widget.CategoryLimit < 2 || widget.CategoryLimit > 64) {
 			return dashboardError("Widget tabular configuration is invalid")
 		}
-		tabular := map[string]bool{"data_grid": true, "roc_curve": true, "precision_recall_curve": true, "calibration_curve": true, "prediction_vs_actual": true, "residual_plot": true, "feature_importance": true, "shap_summary": true, "bubble_chart": true, "parallel_coordinates": true, "pie_chart": true, "donut_chart": true, "treemap": true, "waterfall": true}[widget.Type]
+		tabular := map[string]bool{"data_grid": true, "roc_curve": true, "precision_recall_curve": true, "calibration_curve": true, "prediction_vs_actual": true, "residual_plot": true, "feature_importance": true, "shap_summary": true, "embedding_scatter": true, "cluster_scatter": true, "bubble_chart": true, "parallel_coordinates": true, "pie_chart": true, "donut_chart": true, "treemap": true, "waterfall": true}[widget.Type]
 		if !tabular && (len(widget.TableColumns) > 0 || widget.TableSortBy != "" || widget.TableSortOrder != "" || widget.TablePageSize != 0 || widget.NormalizeAxes != nil || widget.CategoryLimit != 0 || widget.GroupSmall != nil) {
 			return dashboardError("Tabular configuration is only valid for table-backed widgets")
 		}
@@ -498,6 +499,9 @@ func validateDashboardConfig(config dashboardConfig) error {
 		}
 		if widget.ShapMode != "" && (widget.Type != "shap_summary" || widget.ShapMode != "beeswarm" && widget.ShapMode != "bar") {
 			return dashboardError("SHAP summary mode must be beeswarm or bar")
+		}
+		if widget.ProjectionColorBy != "" && (widget.Type != "embedding_scatter" && widget.Type != "cluster_scatter" || widget.ProjectionColorBy != "label" && widget.ProjectionColorBy != "cluster" && widget.ProjectionColorBy != "color") {
+			return dashboardError("Projection color grouping must be label, cluster, or color")
 		}
 		for _, column := range widget.TableColumns {
 			if !tableIdentifierPattern.MatchString(column) {
@@ -698,7 +702,7 @@ func validDashboardColor(value string) bool {
 }
 
 func supportedDashboardWidgetTypes() map[string]bool {
-	return map[string]bool{"lineplot": true, "loss_curve": true, "learning_curve": true, "feature_importance": true, "shap_summary": true, "barplot": true, "area_chart": true, "stacked_bar": true, "scatterplot": true, "starplot": true, "histogram": true, "boxplot": true, "violin": true, "heatmap": true, "correlation_heatmap": true, "confusion_matrix": true, "data_grid": true, "roc_curve": true, "precision_recall_curve": true, "calibration_curve": true, "prediction_vs_actual": true, "residual_plot": true, "bubble_chart": true, "parallel_coordinates": true, "pie_chart": true, "donut_chart": true, "treemap": true, "waterfall": true, "progress": true, "logs": true, "kpi": true, "gauge": true}
+	return map[string]bool{"lineplot": true, "loss_curve": true, "learning_curve": true, "feature_importance": true, "shap_summary": true, "embedding_scatter": true, "cluster_scatter": true, "barplot": true, "area_chart": true, "stacked_bar": true, "scatterplot": true, "starplot": true, "histogram": true, "boxplot": true, "violin": true, "heatmap": true, "correlation_heatmap": true, "confusion_matrix": true, "data_grid": true, "roc_curve": true, "precision_recall_curve": true, "calibration_curve": true, "prediction_vs_actual": true, "residual_plot": true, "bubble_chart": true, "parallel_coordinates": true, "pie_chart": true, "donut_chart": true, "treemap": true, "waterfall": true, "progress": true, "logs": true, "kpi": true, "gauge": true}
 }
 
 func supportedDashboardSourceKinds() map[string]bool {

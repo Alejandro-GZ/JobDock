@@ -117,6 +117,7 @@ func validSpecialTable(body domain.TableObservation) bool {
 		"regression_diagnostics": {"actual": "number", "prediction": "number"},
 		"feature_importance":     {"feature": "string", "value": "number", "method": "string"},
 		"shap_attribution":       {"sample_id": "string", "feature": "string", "shap_value": "number", "feature_value": "number"},
+		"projection":             {"sample_id": "string", "x": "number", "y": "number", "z": "number", "label": "string", "cluster": "string", "color": "string"},
 	}
 	typed := required[body.Subtype]
 	if typed == nil && body.Subtype != "multivariate" {
@@ -171,6 +172,14 @@ func validSpecialTable(body domain.TableObservation) bool {
 		featureList, featureOK := features.([]any)
 		valueList, valueOK := values.([]any)
 		if !featureOK || !valueOK || len(featureList) == 0 || len(featureList) != len(valueList) || len(featureList) > 48 {
+			return false
+		}
+	}
+	if body.Subtype == "projection" {
+		if !columnNullable(body.Columns, "z") || !columnNullable(body.Columns, "label") || !columnNullable(body.Columns, "cluster") || !columnNullable(body.Columns, "color") {
+			return false
+		}
+		if method, ok := body.Metadata["method"].(string); !ok || strings.TrimSpace(method) == "" {
 			return false
 		}
 	}
@@ -231,6 +240,10 @@ func validSpecialTable(body domain.TableObservation) bool {
 			sample, sampleOK := row["sample_id"].(string)
 			feature, featureOK := row["feature"].(string)
 			if !sampleOK || strings.TrimSpace(sample) == "" || !featureOK || strings.TrimSpace(feature) == "" {
+				return false
+			}
+		case "projection":
+			if sample, ok := row["sample_id"].(string); !ok || strings.TrimSpace(sample) == "" {
 				return false
 			}
 		}
@@ -368,7 +381,16 @@ func (a *API) jobTable(w http.ResponseWriter, r *http.Request) {
 		}
 		absolute = parsed
 	}
-	page, err := a.store.Table(r.Context(), job.ID, attempt, name, store.TableQuery{After: after, Offset: offset, Limit: limit, SortBy: r.URL.Query().Get("sort"), Order: order, Filters: filters, AbsoluteSort: absolute})
+	sample := false
+	if value := r.URL.Query().Get("sample"); value != "" {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			writeProblem(w, 422, "invalid_table_sampling", "sample must be true or false")
+			return
+		}
+		sample = parsed
+	}
+	page, err := a.store.Table(r.Context(), job.ID, attempt, name, store.TableQuery{After: after, Offset: offset, Limit: limit, SortBy: r.URL.Query().Get("sort"), Order: order, Filters: filters, AbsoluteSort: absolute, Sample: sample})
 	if err != nil {
 		if strings.Contains(err.Error(), "unknown table") {
 			writeProblem(w, 422, "invalid_table_query", err.Error())

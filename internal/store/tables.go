@@ -18,6 +18,7 @@ type TableQuery struct {
 	SortBy, Order string
 	Filters       map[string]string
 	AbsoluteSort  bool
+	Sample        bool
 }
 
 func (s *Store) AppendTable(ctx context.Context, item domain.TableObservation) error {
@@ -127,6 +128,9 @@ func (s *Store) Table(ctx context.Context, jobID, attemptID, name string, query 
 		return page, err
 	}
 	order := `id ASC`
+	if query.Sample && query.SortBy == "" {
+		order = `((id * 1103515245 + 12345) & 2147483647) ASC`
+	}
 	if query.SortBy != "" {
 		direction := `ASC`
 		if query.Order == "desc" {

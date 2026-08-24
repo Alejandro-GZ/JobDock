@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from jobdock import CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, ObservabilityPhase, Phase, ProgressObservation, RegressionDiagnostics, SEMANTIC_CATALOG_VERSION, ShapAttribution, TableColumn, TableObservation, current_job
+from jobdock import CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, ObservabilityPhase, Phase, ProgressObservation, ProjectionObservation, RegressionDiagnostics, SEMANTIC_CATALOG_VERSION, ShapAttribution, TableColumn, TableObservation, current_job
 
 
 def test_current_job_is_noop_without_environment(monkeypatch):
@@ -111,6 +111,22 @@ def test_shap_attribution_is_precomputed_bounded_and_feature_aware(tmp_path: Pat
     assert payload["metadata"]["model"] == "candidate"
     with pytest.raises(ValueError, match="matrix"):
         job.shap(ShapAttribution("broken", ["age"], [[1, 2]]))
+    job.close()
+
+
+def test_projection_preserves_declared_method_groups_and_bounded_points(tmp_path: Path, monkeypatch):
+    job = Job("id", "http://jobdock.test", "token", tmp_path)
+    queued = []
+    monkeypatch.setattr(job, "_enqueue", lambda endpoint, payload: queued.append((endpoint, payload)))
+    job.projection(ProjectionObservation("umap_epoch_10", [0, 1], [2, 3], "UMAP", z=[.1, .2], sample_ids=["a", "b"], labels=["cat", "dog"], clusters=["0", "1"], parameters={"neighbors": 15}, step=10))
+    payload = queued[0][1]
+    assert payload["subtype"] == "projection"
+    assert payload["rows"][1] == {"sample_id": "b", "x": 1.0, "y": 3.0, "z": .2, "label": "dog", "cluster": "1", "color": None}
+    assert payload["metadata"] == {"method": "UMAP", "parameters": {"neighbors": 15}}
+    assert payload["tags"] == ["embedding:projection", "projection:umap", "table:projection"]
+    assert payload["step"] == 10
+    with pytest.raises(ValueError, match="1-10000"):
+        job.projection(ProjectionObservation("broken", [0], [], "PCA"))
     job.close()
 
 

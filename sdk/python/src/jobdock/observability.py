@@ -191,3 +191,22 @@ class ShapAttribution:
     step: int | None = None
     timestamp: datetime | None = None
     metadata: Metadata | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectionObservation:
+    """A precomputed 2D/3D projection; JobDock never runs the projector."""
+
+    name: str
+    x: Sequence[float]
+    y: Sequence[float]
+    method: str
+    z: Sequence[float] | None = None
+    sample_ids: Sequence[str] | None = None
+    labels: Sequence[str | None] | None = None
+    clusters: Sequence[str | None] | None = None
+    colors: Sequence[str | None] | None = None
+    parameters: Metadata | None = None
+    step: int | None = None
+    timestamp: datetime | None = None
+    metadata: Metadata | None = None

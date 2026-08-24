@@ -16,7 +16,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
-from .observability import CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ObservabilityPhase, ProgressObservation, RegressionDiagnostics, ShapAttribution, TableColumn, TableObservation
+from .observability import CheckpointObservation, DistributionObservation, EvaluationCurve, FeatureImportance, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ObservabilityPhase, ProgressObservation, ProjectionObservation, RegressionDiagnostics, ShapAttribution, TableColumn, TableObservation
 from . import __version__
 
 logger = logging.getLogger("jobdock")
@@ -47,6 +47,7 @@ class NoopJob:
     def regression_diagnostics(self, observation: RegressionDiagnostics) -> None: pass
     def feature_importance(self, observation: FeatureImportance) -> None: pass
     def shap(self, observation: ShapAttribution) -> None: pass
+    def projection(self, observation: ProjectionObservation) -> None: pass
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None: pass
     def metrics(self, items: Iterable[Metric]) -> None: pass
     def declare_observability(self, manifest: ObservabilityManifest) -> None: pass
@@ -297,6 +298,38 @@ class Job:
         rows = [{"sample_id": sample_ids[sample], "feature": feature, "shap_value": values[sample][index], "feature_value": feature_values[sample][index] if feature_values is not None else None} for sample in range(len(values)) for index, feature in enumerate(features)]
         for start in range(0, len(rows), 256):
             self.table(TableObservation(observation.name, columns, rows[start:start + 256], "shap_attribution", observation.step, observation.timestamp, ("attribution:shap", "explainability:shap"), metadata, start == 0))
+
+    def projection(self, observation: ProjectionObservation) -> None:
+        x, y = [float(value) for value in observation.x], [float(value) for value in observation.y]
+        count = len(x)
+        if count < 1 or count > 10_000 or len(y) != count or any(not math.isfinite(value) for value in x + y):
+            raise ValueError("projection requires 1-10000 finite x/y points")
+        z = None if observation.z is None else [float(value) for value in observation.z]
+        if z is not None and (len(z) != count or any(not math.isfinite(value) for value in z)):
+            raise ValueError("projection z values must match every point and be finite")
+        method = observation.method.strip()
+        method_tag = re.sub(r"[^a-z0-9_.-]+", "_", method.lower()).strip("_.-")
+        if not method or len(method) > 128 or not method_tag:
+            raise ValueError("projection method must contain 1-128 semantic characters")
+        def optional(values: Iterable[str | None] | None, field: str, maximum: int) -> list[str | None]:
+            if values is None:
+                return [None] * count
+            result = [None if value is None else str(value).strip() for value in values]
+            if len(result) != count or any(value is not None and (not value or len(value) > maximum) for value in result):
+                raise ValueError(f"projection {field} must match every point")
+            return result
+        sample_ids = optional(observation.sample_ids, "sample IDs", 256) if observation.sample_ids is not None else [str(index) for index in range(count)]
+        if len(set(sample_ids)) != count:
+            raise ValueError("projection sample IDs must be unique")
+        labels, clusters, colors = optional(observation.labels, "labels", 128), optional(observation.clusters, "clusters", 128), optional(observation.colors, "colors", 64)
+        metadata = dict(observation.metadata or {})
+        metadata["method"] = method
+        if observation.parameters:
+            metadata["parameters"] = dict(observation.parameters)
+        columns = [TableColumn("sample_id", "string"), TableColumn("x", "number"), TableColumn("y", "number"), TableColumn("z", "number", nullable=True), TableColumn("label", "string", nullable=True), TableColumn("cluster", "string", nullable=True), TableColumn("color", "string", nullable=True)]
+        rows = [{"sample_id": sample_ids[index], "x": x[index], "y": y[index], "z": z[index] if z is not None else None, "label": labels[index], "cluster": clusters[index], "color": colors[index]} for index in range(count)]
+        for start in range(0, len(rows), 256):
+            self.table(TableObservation(observation.name, columns, rows[start:start + 256], "projection", observation.step, observation.timestamp, ("embedding:projection", f"projection:{method_tag[:64]}"), metadata, start == 0))
 
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None:
         """Report one scalar metric while preserving the original call shape."""
