@@ -441,6 +441,43 @@ type DistributionObservation struct {
 	ObservationContext
 }
 
+type TableColumn struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Unit     string `json:"unit,omitempty"`
+	Nullable bool   `json:"nullable,omitempty"`
+}
+
+type TableObservation struct {
+	JobID     string           `json:"-"`
+	AttemptID string           `json:"attempt_id,omitempty"`
+	Name      string           `json:"name"`
+	Subtype   string           `json:"subtype,omitempty"`
+	Columns   []TableColumn    `json:"columns"`
+	Rows      []map[string]any `json:"rows"`
+	Tags      []string         `json:"tags,omitempty"`
+	ObservationContext
+}
+
+type TableRow struct {
+	Cursor     int64          `json:"cursor"`
+	Step       *int64         `json:"step,omitempty"`
+	CapturedAt time.Time      `json:"timestamp"`
+	Values     map[string]any `json:"values"`
+}
+
+type TablePage struct {
+	AttemptID string         `json:"attempt_id"`
+	Name      string         `json:"name"`
+	Subtype   string         `json:"subtype"`
+	Columns   []TableColumn  `json:"columns"`
+	Tags      []string       `json:"tags,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	Items     []TableRow     `json:"items"`
+	Total     int64          `json:"total"`
+	Next      *int64         `json:"next_cursor,omitempty"`
+}
+
 type ProgressState struct {
 	AttemptID      string               `json:"attempt_id"`
 	Simple         *ProgressObservation `json:"simple,omitempty"`

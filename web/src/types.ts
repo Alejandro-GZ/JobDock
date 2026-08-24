@@ -41,3 +41,6 @@ export type MatrixObservation={id:number;attempt_id:string;name:string;matrix_ty
 export type DistributionBin={lower:number;upper:number;count:number};
 export type DistributionSummary={count:number;min:number;q1:number;median:number;q3:number;max:number;mean:number;whisker_low:number;whisker_high:number;outliers:number[]};
 export type DistributionObservation={id:number;name:string;group:string;unit?:string;step?:number;timestamp?:string;samples:number[];bins:DistributionBin[];density:Array<{x:number;density:number}>;summary:DistributionSummary;scores?:Record<string,number>;tags?:string[];metadata?:ObservationMetadata};
+export type TableColumn={name:string;type:"string"|"number"|"integer"|"boolean"|"datetime";unit?:string;nullable?:boolean};
+export type TableRow={cursor:number;step?:number;timestamp:string;values:Record<string,unknown>};
+export type TablePage={attempt_id:string;name:string;subtype:string;columns:TableColumn[];tags?:string[];metadata?:ObservationMetadata;items:TableRow[];total:number;next_cursor?:number};

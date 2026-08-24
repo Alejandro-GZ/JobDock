@@ -51,6 +51,13 @@ type dashboardWidget struct {
 	DomainMax          *float64                   `json:"domain_max,omitempty"`
 	ThresholdDirection string                     `json:"threshold_direction,omitempty"`
 	ShowDelta          bool                       `json:"show_delta,omitempty"`
+	TableColumns       []string                   `json:"table_columns,omitempty"`
+	TableSortBy        string                     `json:"table_sort_by,omitempty"`
+	TableSortOrder     string                     `json:"table_sort_order,omitempty"`
+	TablePageSize      int                        `json:"table_page_size,omitempty"`
+	NormalizeAxes      *bool                      `json:"normalize_axes,omitempty"`
+	CategoryLimit      int                        `json:"category_limit,omitempty"`
+	GroupSmall         *bool                      `json:"group_small_categories,omitempty"`
 	Appearance         *dashboardWidgetAppearance `json:"appearance,omitempty"`
 }
 type dashboardWidgetAppearance struct {
@@ -466,6 +473,24 @@ func validateDashboardConfig(config dashboardConfig) error {
 		if widget.HistogramBins != 0 && (widget.Type != "histogram" || widget.HistogramBins < 2 || widget.HistogramBins > 256) {
 			return dashboardError("Histogram bins must be automatic or between 2 and 256")
 		}
+		if len(widget.TableColumns) > 64 || widget.TablePageSize != 0 && (widget.TablePageSize < 1 || widget.TablePageSize > 500) || widget.TableSortOrder != "" && widget.TableSortOrder != "asc" && widget.TableSortOrder != "desc" || widget.CategoryLimit != 0 && (widget.CategoryLimit < 2 || widget.CategoryLimit > 64) {
+			return dashboardError("Widget tabular configuration is invalid")
+		}
+		tabular := map[string]bool{"data_grid": true, "roc_curve": true, "precision_recall_curve": true, "calibration_curve": true, "bubble_chart": true, "parallel_coordinates": true, "pie_chart": true, "donut_chart": true, "treemap": true, "waterfall": true}[widget.Type]
+		if !tabular && (len(widget.TableColumns) > 0 || widget.TableSortBy != "" || widget.TableSortOrder != "" || widget.TablePageSize != 0 || widget.NormalizeAxes != nil || widget.CategoryLimit != 0 || widget.GroupSmall != nil) {
+			return dashboardError("Tabular configuration is only valid for table-backed widgets")
+		}
+		if widget.NormalizeAxes != nil && widget.Type != "parallel_coordinates" {
+			return dashboardError("Axis normalization is only valid for parallel coordinates")
+		}
+		if (widget.CategoryLimit != 0 || widget.GroupSmall != nil) && widget.Type != "pie_chart" && widget.Type != "donut_chart" {
+			return dashboardError("Category grouping is only valid for pie and donut widgets")
+		}
+		for _, column := range widget.TableColumns {
+			if !tableIdentifierPattern.MatchString(column) {
+				return dashboardError("Widget table columns are invalid")
+			}
+		}
 		if widget.GaugeMaxMode != "" && widget.GaugeMaxMode != "historical" && widget.GaugeMaxMode != "fixed" {
 			return dashboardError("Widget gauge_max_mode is invalid")
 		}
@@ -517,12 +542,18 @@ func validateDashboardConfig(config dashboardConfig) error {
 		if (widget.Type == "kpi" || widget.Type == "gauge") && len(widget.Sources) > 1 {
 			return dashboardError("Scalar summary widgets accept at most one source")
 		}
+		if widget.Type != "roc_curve" && widget.Type != "precision_recall_curve" && widget.Type != "calibration_curve" && tabular && len(widget.Sources) > 1 {
+			return dashboardError("This table-backed widget accepts at most one source")
+		}
 		for _, source := range widget.Sources {
 			if !validKinds[source.Kind] || len(strings.TrimSpace(source.Name)) < 1 || len(source.Name) > 128 {
 				return dashboardError("Widget source is invalid")
 			}
-			if source.Role != "" && source.Role != "x" && source.Role != "y" {
-				return dashboardError("Widget source role must be x or y")
+			if !compatibleDashboardSourceKinds(widget.Type)[source.Kind] {
+				return dashboardError("Widget source kind is incompatible with its widget type")
+			}
+			if source.Role != "" && !map[string]bool{"x": true, "y": true, "size": true, "color": true, "category": true, "value": true, "id": true, "parent": true, "kind": true}[source.Role] {
+				return dashboardError("Widget source role is invalid")
 			}
 		}
 	}
@@ -653,11 +684,11 @@ func validDashboardColor(value string) bool {
 }
 
 func supportedDashboardWidgetTypes() map[string]bool {
-	return map[string]bool{"lineplot": true, "barplot": true, "area_chart": true, "stacked_bar": true, "scatterplot": true, "starplot": true, "histogram": true, "boxplot": true, "violin": true, "heatmap": true, "correlation_heatmap": true, "confusion_matrix": true, "progress": true, "logs": true, "kpi": true, "gauge": true}
+	return map[string]bool{"lineplot": true, "barplot": true, "area_chart": true, "stacked_bar": true, "scatterplot": true, "starplot": true, "histogram": true, "boxplot": true, "violin": true, "heatmap": true, "correlation_heatmap": true, "confusion_matrix": true, "data_grid": true, "roc_curve": true, "precision_recall_curve": true, "calibration_curve": true, "bubble_chart": true, "parallel_coordinates": true, "pie_chart": true, "donut_chart": true, "treemap": true, "waterfall": true, "progress": true, "logs": true, "kpi": true, "gauge": true}
 }
 
 func supportedDashboardSourceKinds() map[string]bool {
-	return map[string]bool{"metric": true, "resource": true, "distribution": true, "matrix": true, "progress": true, "log": true}
+	return map[string]bool{"metric": true, "resource": true, "distribution": true, "matrix": true, "table": true, "progress": true, "log": true}
 }
 
 type dashboardError string

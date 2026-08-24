@@ -112,3 +112,35 @@ class DistributionObservation:
     scores: Mapping[str, float] | None = None
     tags: SemanticTags | None = None
     metadata: Metadata | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TableColumn:
+    name: str
+    type: str
+    unit: str | None = None
+    nullable: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class TableObservation:
+    name: str
+    columns: Sequence[TableColumn]
+    rows: Sequence[Mapping[str, JSONValue]]
+    subtype: str = "table"
+    step: int | None = None
+    timestamp: datetime | None = None
+    tags: SemanticTags | None = None
+    metadata: Metadata | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationCurve:
+    name: str
+    curve_type: str
+    points: Sequence[Mapping[str, JSONValue]]
+    summary: Mapping[str, float] | None = None
+    model: str | None = None
+    step: int | None = None
+    timestamp: datetime | None = None
+    metadata: Metadata | None = None

@@ -1,7 +1,7 @@
-export type DashboardWidgetType = "lineplot" | "barplot" | "area_chart" | "stacked_bar" | "scatterplot" | "starplot" | "histogram" | "boxplot" | "violin" | "heatmap" | "correlation_heatmap" | "confusion_matrix" | "progress" | "logs" | "kpi" | "gauge";
+export type DashboardWidgetType = "lineplot" | "barplot" | "area_chart" | "stacked_bar" | "scatterplot" | "starplot" | "histogram" | "boxplot" | "violin" | "heatmap" | "correlation_heatmap" | "confusion_matrix" | "data_grid" | "roc_curve" | "precision_recall_curve" | "calibration_curve" | "bubble_chart" | "parallel_coordinates" | "pie_chart" | "donut_chart" | "treemap" | "waterfall" | "progress" | "logs" | "kpi" | "gauge";
 export type ScalarAggregation = "last" | "min" | "max" | "avg";
-export type DashboardSourceKind = "metric" | "resource" | "distribution" | "matrix" | "progress" | "log";
-export type DashboardSourceRole = "x" | "y";
+export type DashboardSourceKind = "metric" | "resource" | "distribution" | "matrix" | "table" | "progress" | "log";
+export type DashboardSourceRole = "x" | "y" | "size" | "color" | "category" | "value" | "id" | "parent" | "kind";
 export type DashboardWidgetSource = { kind: DashboardSourceKind; name: string; role?: DashboardSourceRole };
 export type DashboardWidgetSize = { columns: number; rows: number };
 export type DashboardWidgetPosition = { x: number; y: number };
@@ -58,6 +58,13 @@ export type DashboardWidget = {
   domain_max?: number;
   threshold_direction?: "higher_is_worse" | "lower_is_worse";
   show_delta?: boolean;
+  table_columns?: string[];
+  table_sort_by?: string;
+  table_sort_order?: "asc"|"desc";
+  table_page_size?: number;
+  normalize_axes?: boolean;
+  category_limit?: number;
+  group_small_categories?: boolean;
   appearance?: DashboardWidgetAppearance;
 };
 
@@ -110,6 +117,8 @@ export type DashboardSources = {
   matrices: string[];
   matrix_types?: Record<string,string>;
   distributions?: string[];
+  tables?: string[];
+  table_types?: Record<string,string>;
   progress: boolean;
   logs?: boolean;
 };
@@ -129,6 +138,16 @@ export const widgetCatalog: ReadonlyArray<{ type: DashboardWidgetType; label: st
   { type: "heatmap", label: "Heatmap", description: "Rectangular typed values with optional row and column labels.",category:"diagnostics" },
   { type: "correlation_heatmap", label: "Correlation heatmap", description: "Declared variable correlations on a preserved symmetric matrix.",category:"diagnostics" },
   { type: "confusion_matrix", label: "Confusion matrix", description: "Absolute or normalized classification outcomes.",category:"diagnostics" },
+  { type: "data_grid", label: "Table / Data grid", description: "Paginated typed records with server-side sort and filters.",category:"operational" },
+  { type: "roc_curve", label: "ROC curve", description: "False-positive and true-positive rates with optional thresholds and AUC.",category:"diagnostics" },
+  { type: "precision_recall_curve", label: "Precision–Recall curve", description: "Recall and precision with optional thresholds and average precision.",category:"diagnostics" },
+  { type: "calibration_curve", label: "Calibration curve", description: "Predicted probability against observed fraction by bin.",category:"diagnostics" },
+  { type: "bubble_chart", label: "Bubble chart", description: "Three numeric dimensions with optional grouping.",category:"relationships" },
+  { type: "parallel_coordinates", label: "Parallel coordinates", description: "Compare multiple typed dimensions from bounded tabular rows.",category:"relationships" },
+  { type: "pie_chart", label: "Pie chart", description: "Bounded categorical proportions with explicit Other grouping.",category:"summaries" },
+  { type: "donut_chart", label: "Donut chart", description: "Bounded categorical proportions in a compact ring.",category:"summaries" },
+  { type: "treemap", label: "Treemap", description: "Hierarchical non-negative values reported by the job.",category:"relationships" },
+  { type: "waterfall", label: "Waterfall", description: "Ordered contributions and explicit totals or subtotals.",category:"summaries" },
   { type: "progress", label: "Progress", description: "Global progress, current stage and upcoming milestones.",category:"summaries" },
   { type: "logs", label: "Logs", description: "Live stdout, stderr, or both streams.",category:"operational" },
   { type: "kpi", label: "KPI / Scorecard", description: "A scalar summary with optional delta and threshold state.",category:"summaries" },
@@ -139,7 +158,7 @@ export const dashboardSchemaVersion=1;
 
 export function restoreDashboardWidgets(value:unknown):DashboardWidget[]|null{
   if(!Array.isArray(value)||value.length>64)return null;
-  const types=new Set(widgetCatalog.map(item=>item.type)),kinds=new Set<DashboardSourceKind>(["metric","resource","distribution","matrix","progress","log"]);
+  const types=new Set(widgetCatalog.map(item=>item.type)),kinds=new Set<DashboardSourceKind>(["metric","resource","distribution","matrix","table","progress","log"]);
   const widgets:DashboardWidget[]=[];
   for(const candidate of value){
     if(!candidate||typeof candidate!=="object")return null;const item=candidate as Partial<DashboardWidget>;
@@ -147,7 +166,7 @@ export function restoreDashboardWidgets(value:unknown):DashboardWidget[]|null{
     if(item.sources.some(source=>!source||!kinds.has(source.kind)||typeof source.name!=="string"||!source.name))return null;
     const factor=item.grid_columns===12?1:item.grid_columns===4?3:6;
     const scalar=item.type==="kpi"||item.type==="gauge";
-    widgets.push({id:item.id,type:item.type as DashboardWidgetType,title:typeof item.title==="string"?item.title.trim().slice(0,120):undefined,size:{columns:clampColumns(item.size.columns*factor),rows:clampRows(item.size.rows*factor)},position:{x:Math.max(0,Math.min(11,(item.position.x||0)*factor)),y:Math.max(0,(item.position.y||0)*factor)},sources:item.sources.map(source=>({...source})),x_axis:item.x_axis==="step"?"step":"time",grid_columns:12,time_range:validRange(item.time_range)?item.time_range:"all",histogram_bins:item.type==="histogram"&&finiteBetween(item.histogram_bins,2,256)?Math.round(item.histogram_bins):undefined,gauge_max_mode:item.gauge_max_mode==="fixed"?"fixed":"historical",gauge_max_value:typeof item.gauge_max_value==="number"&&Number.isFinite(item.gauge_max_value)&&item.gauge_max_value>0?item.gauge_max_value:undefined,scalar_aggregation:scalar&&["last","min","max","avg"].includes(String(item.scalar_aggregation))?item.scalar_aggregation:"last",gauge_style:item.type==="gauge"&&item.gauge_style==="bullet"?"bullet":item.type==="gauge"?"gauge":undefined,target_value:scalar&&finite(item.target_value)?item.target_value:undefined,warning_value:scalar&&finite(item.warning_value)?item.warning_value:undefined,critical_value:scalar&&finite(item.critical_value)?item.critical_value:undefined,domain_min:scalar&&finite(item.domain_min)?item.domain_min:undefined,domain_max:scalar&&finite(item.domain_max)?item.domain_max:item.type==="gauge"&&item.gauge_max_mode==="fixed"&&finite(item.gauge_max_value)?item.gauge_max_value:undefined,threshold_direction:scalar&&item.threshold_direction==="lower_is_worse"?"lower_is_worse":scalar?"higher_is_worse":undefined,show_delta:item.type==="kpi"&&item.show_delta===true||undefined,appearance:restoreAppearance(item.type as DashboardWidgetType,item.appearance)});
+    widgets.push({id:item.id,type:item.type as DashboardWidgetType,title:typeof item.title==="string"?item.title.trim().slice(0,120):undefined,size:{columns:clampColumns(item.size.columns*factor),rows:clampRows(item.size.rows*factor)},position:{x:Math.max(0,Math.min(11,(item.position.x||0)*factor)),y:Math.max(0,(item.position.y||0)*factor)},sources:item.sources.map(source=>({...source})),x_axis:item.x_axis==="step"?"step":"time",grid_columns:12,time_range:validRange(item.time_range)?item.time_range:"all",histogram_bins:item.type==="histogram"&&finiteBetween(item.histogram_bins,2,256)?Math.round(item.histogram_bins):undefined,gauge_max_mode:item.gauge_max_mode==="fixed"?"fixed":"historical",gauge_max_value:typeof item.gauge_max_value==="number"&&Number.isFinite(item.gauge_max_value)&&item.gauge_max_value>0?item.gauge_max_value:undefined,scalar_aggregation:scalar&&["last","min","max","avg"].includes(String(item.scalar_aggregation))?item.scalar_aggregation:"last",gauge_style:item.type==="gauge"&&item.gauge_style==="bullet"?"bullet":item.type==="gauge"?"gauge":undefined,target_value:scalar&&finite(item.target_value)?item.target_value:undefined,warning_value:scalar&&finite(item.warning_value)?item.warning_value:undefined,critical_value:scalar&&finite(item.critical_value)?item.critical_value:undefined,domain_min:scalar&&finite(item.domain_min)?item.domain_min:undefined,domain_max:scalar&&finite(item.domain_max)?item.domain_max:item.type==="gauge"&&item.gauge_max_mode==="fixed"&&finite(item.gauge_max_value)?item.gauge_max_value:undefined,threshold_direction:scalar&&item.threshold_direction==="lower_is_worse"?"lower_is_worse":scalar?"higher_is_worse":undefined,show_delta:item.type==="kpi"&&item.show_delta===true||undefined,table_columns:Array.isArray(item.table_columns)?item.table_columns.filter(value=>typeof value==="string").slice(0,64):undefined,table_sort_by:typeof item.table_sort_by==="string"?item.table_sort_by:undefined,table_sort_order:item.table_sort_order==="desc"?"desc":"asc",table_page_size:finiteBetween(item.table_page_size,1,500)?Math.round(item.table_page_size!):undefined,normalize_axes:typeof item.normalize_axes==="boolean"?item.normalize_axes:undefined,category_limit:finiteBetween(item.category_limit,2,64)?Math.round(item.category_limit!):undefined,group_small_categories:typeof item.group_small_categories==="boolean"?item.group_small_categories:undefined,appearance:restoreAppearance(item.type as DashboardWidgetType,item.appearance)});
   }
   if(new Set(widgets.map(widget=>widget.id)).size!==widgets.length)return null;
   return layoutDashboardWidgets(widgets);
@@ -222,6 +241,7 @@ export function compatibleSourceKinds(type: DashboardWidgetType): DashboardSourc
   if (type === "progress") return ["progress"];
   if(type === "logs") return ["log"];
   if(type==="histogram"||type==="boxplot"||type==="violin")return ["distribution"];
+  if(["data_grid","roc_curve","precision_recall_curve","calibration_curve","bubble_chart","parallel_coordinates","pie_chart","donut_chart","treemap","waterfall"].includes(type))return ["table"];
   return ["metric", "resource"];
 }
 
@@ -229,6 +249,8 @@ function firstCompatibleSource(type: DashboardWidgetType, sources: DashboardSour
   if (type === "progress") return sources.progress ? { kind: "progress", name: "progress" } : undefined;
   if(type === "logs")return sources.logs?{kind:"log",name:"stdout"}:undefined;
   if(type==="histogram"||type==="boxplot"||type==="violin")return sources.distributions?.[0]?{kind:"distribution",name:sources.distributions[0]}:undefined;
+  if(["data_grid","bubble_chart","parallel_coordinates","pie_chart","donut_chart","treemap","waterfall"].includes(type))return sources.tables?.[0]?{kind:"table",name:sources.tables[0]}:undefined;
+  if(type==="roc_curve"||type==="precision_recall_curve"||type==="calibration_curve"){const expected=type==="roc_curve"?"roc":type==="precision_recall_curve"?"precision_recall":"calibration";const name=sources.tables?.find(item=>sources.table_types?.[item]===expected);return name?{kind:"table",name}:undefined}
   if (type === "confusion_matrix" || type === "heatmap" || type === "correlation_heatmap") {const expected=type==="correlation_heatmap"?"correlation":type;const name=sources.matrices.find(item=>(sources.matrix_types?.[item]??"confusion_matrix")===expected);return name?{kind:"matrix",name}:undefined}
   if (sources.metrics[0]) return { kind: "metric", name: sources.metrics[0] };
   if (sources.resources[0]) return { kind: "resource", name: sources.resources[0] };

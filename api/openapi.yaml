@@ -503,6 +503,23 @@ paths:
       description: Return the latest bounded distribution snapshot per name and group with server-derived bins, quantiles, density, whiskers, and bounded outliers.
       parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDQuery'}, {name: name, in: query, schema: {type: string}}, {name: group, in: query, schema: {type: string}}, {name: bins, in: query, schema: {oneOf: [{type: string, enum: [auto]}, {type: integer, minimum: 2, maximum: 256}]}}]
       responses: {'200': {description: Attempt-scoped compact distribution views, content: {application/json: {schema: {$ref: '#/components/schemas/DistributionList'}}}}, '422': {$ref: '#/components/responses/Problem'} }
+  /jobs/{jobId}/tables:
+    get:
+      operationId: queryJobTable
+      description: Query a bounded, attempt-scoped page of typed structured records using server-side sorting and exact-match filters.
+      parameters:
+        - {$ref: '#/components/parameters/JobID'}
+        - {$ref: '#/components/parameters/AttemptIDQuery'}
+        - {name: name, in: query, required: true, schema: {type: string, minLength: 1, maxLength: 128}}
+        - {name: after, in: query, schema: {type: integer, format: int64, minimum: 0}}
+        - {name: offset, in: query, schema: {type: integer, format: int64, minimum: 0, maximum: 1000000}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 100}}
+        - {name: sort, in: query, schema: {type: string, minLength: 1, maxLength: 128}}
+        - {name: order, in: query, schema: {type: string, enum: [asc, desc], default: asc}}
+        - {name: filter, in: query, description: Repeatable exact-match column=value filter., schema: {type: array, items: {type: string}}}
+      responses:
+        '200': {description: Bounded table page, content: {application/json: {schema: {$ref: '#/components/schemas/TablePage'}}}}
+        '422': {$ref: '#/components/responses/Problem'}
   /jobs/{jobId}/observations/stream:
     get:
       operationId: streamJobObservations
@@ -863,6 +880,17 @@ paths:
       operationId: reportDistribution
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DistributionObservationWrite'}}}}
       responses: {'202': {description: Bounded distribution snapshot accepted}, '422': {$ref: '#/components/responses/Problem'}}
+  /job-context/tables:
+    post:
+      security: [{bearerToken: []}]
+      operationId: reportTableRows
+      description: Append typed structured records to a stable attempt-scoped table descriptor.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/TableObservationWrite'}}}}
+      responses:
+        '202': {description: Table rows accepted}
+        '409': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
   /job-context/metrics:
     post:
       security: [{bearerToken: []}]
@@ -1309,7 +1337,7 @@ components:
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
         type: {type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$'}
-        subtype: {type: string, enum: [confusion_matrix, heatmap, correlation], description: Stable semantic subtype for matrix sources.}
+        subtype: {type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: Stable semantic subtype for matrix and table sources.}
         unit: {type: string, maxLength: 64}
         tags: {$ref: '#/components/schemas/SemanticMetricTags'}
         metadata: {$ref: '#/components/schemas/ObservationMetadata'}
@@ -1329,9 +1357,9 @@ components:
       additionalProperties: false
       required: [kind, name]
       properties:
-        kind: {type: string, enum: [metric, resource, distribution, matrix, progress, log]}
+        kind: {type: string, enum: [metric, resource, distribution, matrix, table, progress, log]}
         name: {type: string, minLength: 1, maxLength: 128}
-        role: {type: string, enum: [x, y]}
+        role: {type: string, enum: [x, y, size, color, category, value, id, parent, kind]}
     DashboardWidgetAppearance:
       type: object
       additionalProperties: true
@@ -1386,7 +1414,7 @@ components:
       required: [id, type, size, position, sources]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
-        type: {type: string, enum: [lineplot, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, heatmap, correlation_heatmap, progress, logs, kpi, gauge]}
+        type: {type: string, enum: [lineplot, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, heatmap, correlation_heatmap, progress, logs, kpi, gauge, data_grid, roc_curve, precision_recall_curve, calibration_curve, bubble_chart, parallel_coordinates, pie_chart, donut_chart, treemap, waterfall]}
         title: {type: string, maxLength: 120, description: Optional compact overlay title. An omitted or empty title reserves no plot space.}
         size:
           type: object
@@ -1414,6 +1442,13 @@ components:
         domain_max: {type: number}
         threshold_direction: {type: string, enum: [higher_is_worse, lower_is_worse]}
         show_delta: {type: boolean}
+        table_columns: {type: array, maxItems: 64, uniqueItems: true, items: {type: string, minLength: 1, maxLength: 128}}
+        table_sort_by: {type: string, minLength: 1, maxLength: 128}
+        table_sort_order: {type: string, enum: [asc, desc]}
+        table_page_size: {type: integer, minimum: 1, maximum: 500}
+        normalize_axes: {type: boolean}
+        category_limit: {type: integer, minimum: 2, maximum: 64}
+        group_small_categories: {type: boolean}
         appearance: {$ref: '#/components/schemas/DashboardWidgetAppearance'}
     DashboardTemplateCardinality:
       type: object
@@ -1430,9 +1465,9 @@ components:
         id: {type: string, minLength: 1, maxLength: 128}
         required_tags: {$ref: '#/components/schemas/SemanticMetricTags'}
         optional_tags: {$ref: '#/components/schemas/SemanticMetricTags'}
-        source_types: {type: array, minItems: 1, maxItems: 6, uniqueItems: true, items: {type: string, enum: [metric, resource, distribution, matrix, progress, log]}}
+        source_types: {type: array, minItems: 1, maxItems: 7, uniqueItems: true, items: {type: string, enum: [metric, resource, distribution, matrix, table, progress, log]}}
         cardinality: {$ref: '#/components/schemas/DashboardTemplateCardinality'}
-        role: {type: string, enum: [x, y]}
+        role: {type: string, enum: [x, y, size, color, category, value, id, parent, kind]}
         on_missing: {type: string, enum: [error, omit_slot, omit_widget]}
         on_ambiguous: {type: string, enum: [error, omit_slot, omit_widget]}
     DashboardTemplateWidget:
@@ -1441,7 +1476,7 @@ components:
       required: [id, type, size, position, slots]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
-        type: {type: string, enum: [lineplot, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, heatmap, correlation_heatmap, progress, logs, kpi, gauge]}
+        type: {type: string, enum: [lineplot, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, heatmap, correlation_heatmap, progress, logs, kpi, gauge, data_grid, roc_curve, precision_recall_curve, calibration_curve, bubble_chart, parallel_coordinates, pie_chart, donut_chart, treemap, waterfall]}
         title: {type: string, maxLength: 120}
         size:
           type: object
@@ -1468,6 +1503,13 @@ components:
         domain_max: {type: number}
         threshold_direction: {type: string, enum: [higher_is_worse, lower_is_worse]}
         show_delta: {type: boolean}
+        table_columns: {type: array, maxItems: 64, uniqueItems: true, items: {type: string, minLength: 1, maxLength: 128}}
+        table_sort_by: {type: string, minLength: 1, maxLength: 128}
+        table_sort_order: {type: string, enum: [asc, desc]}
+        table_page_size: {type: integer, minimum: 1, maximum: 500}
+        normalize_axes: {type: boolean}
+        category_limit: {type: integer, minimum: 2, maximum: 64}
+        group_small_categories: {type: boolean}
         appearance: {$ref: '#/components/schemas/DashboardWidgetAppearance'}
     DashboardTemplate:
       type: object
@@ -2020,6 +2062,49 @@ components:
       properties:
         attempt_id: {type: string, format: uuid}
         items: {type: array, maxItems: 512, items: {$ref: '#/components/schemas/DistributionView'}}
+    TableColumn:
+      type: object
+      additionalProperties: false
+      required: [name, type]
+      properties:
+        name: {type: string, pattern: '^[A-Za-z_][A-Za-z0-9_.-]{0,127}$'}
+        type: {type: string, enum: [string, number, integer, boolean, datetime]}
+        unit: {type: string, maxLength: 64}
+        nullable: {type: boolean, default: false}
+    TableObservationWrite:
+      allOf:
+        - {$ref: '#/components/schemas/ObservationContext'}
+        - type: object
+          required: [name, columns, rows]
+          properties:
+            name: {type: string, pattern: '^[A-Za-z_][A-Za-z0-9_.-]{0,127}$'}
+            subtype: {type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', default: table}
+            columns: {type: array, minItems: 1, maxItems: 64, items: {$ref: '#/components/schemas/TableColumn'}}
+            rows: {type: array, minItems: 1, maxItems: 256, items: {type: object, maxProperties: 64, additionalProperties: true}}
+            tags: {$ref: '#/components/schemas/SemanticMetricTags'}
+    TableRow:
+      type: object
+      additionalProperties: false
+      required: [cursor, timestamp, values]
+      properties:
+        cursor: {type: integer, format: int64, minimum: 1}
+        step: {type: integer, format: int64}
+        timestamp: {type: string, format: date-time}
+        values: {type: object, maxProperties: 64, additionalProperties: true}
+    TablePage:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, name, subtype, columns, items, total]
+      properties:
+        attempt_id: {type: string, format: uuid}
+        name: {type: string}
+        subtype: {type: string}
+        columns: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/TableColumn'}}
+        tags: {$ref: '#/components/schemas/SemanticMetricTags'}
+        metadata: {$ref: '#/components/schemas/ObservationMetadata'}
+        items: {type: array, maxItems: 500, items: {$ref: '#/components/schemas/TableRow'}}
+        total: {type: integer, format: int64, minimum: 0}
+        next_cursor: {type: integer, format: int64, minimum: 0}
     ProgressState:
       type: object
       required: [attempt_id, milestones, reached]

@@ -1,4 +1,4 @@
-import type{AuditEvent,Build,BuildPlan,Checkpoint,DistributionObservation,Job,JobAttempt,JobEvent,JobSpec,JobTelemetrySummaryResponse,MatrixObservation,MetricSeriesResponse,Node,PersonalAccessToken,ProgressState,ResourceSeriesResponse,Secret,User}from "./types";
+import type{AuditEvent,Build,BuildPlan,Checkpoint,DistributionObservation,Job,JobAttempt,JobEvent,JobSpec,JobTelemetrySummaryResponse,MatrixObservation,MetricSeriesResponse,Node,PersonalAccessToken,ProgressState,ResourceSeriesResponse,Secret,TablePage,User}from "./types";
 import { jobFormData } from "@/lib/job-inputs";
 import { buildFormData,type BuildMode,type DockerfileConfig } from "@/lib/builds";
 import { dashboardSchemaVersion,type DashboardList,type DashboardPreference,type DashboardTemplate,type DashboardTemplateMatch,type DashboardTemplateOverride,type DashboardTemplateReference,type DashboardTemplateResolution,type DashboardWidget } from "@/lib/dashboard-widgets";
@@ -37,6 +37,7 @@ export const api={
   progress:(id:string,attemptId:string)=>request<ProgressState>(`/jobs/${id}/progress?attempt_id=${encodeURIComponent(attemptId)}`),
   matrices:async(id:string,attemptId:string)=>(await request<{items:MatrixObservation[]}>(`/jobs/${id}/matrices?attempt_id=${encodeURIComponent(attemptId)}&resolution=auto`)).items,
   distributions:async(id:string,attemptId:string,bins?:number)=>(await request<{items?:DistributionObservation[]}>(`/jobs/${id}/distributions?attempt_id=${encodeURIComponent(attemptId)}${bins?`&bins=${bins}`:""}`)).items??[],
+  table:(id:string,attemptId:string,name:string,query="")=>request<TablePage>(`/jobs/${id}/tables?attempt_id=${encodeURIComponent(attemptId)}&name=${encodeURIComponent(name)}${query?`&${query}`:""}`),
   openObservationStream:(id:string,attemptId:string)=>new EventSource(`/api/v1/jobs/${encodeURIComponent(id)}/observations/stream?attempt_id=${encodeURIComponent(attemptId)}&after=latest`),
   openSeriesStream:(id:string,attemptId:string,after:number)=>new EventSource(`/api/v1/jobs/${encodeURIComponent(id)}/series/stream?attempt_id=${encodeURIComponent(attemptId)}&after=${after}`),
   metricsCSV:(id:string,query:string)=>seriesCSV(id,"metrics",query),

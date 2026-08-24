@@ -302,8 +302,8 @@ func validateDashboardTemplate(template dashboardTemplate) error {
 			if slot.Cardinality.Min < 0 || slot.Cardinality.Max < 1 || slot.Cardinality.Max > 64 || slot.Cardinality.Min > slot.Cardinality.Max {
 				return errors.New("Template slot cardinality must satisfy 0 <= min <= max <= 64")
 			}
-			if slot.Role != "" && slot.Role != "x" && slot.Role != "y" {
-				return errors.New("Template slot role must be x or y")
+			if slot.Role != "" && !map[string]bool{"x": true, "y": true, "size": true, "color": true, "category": true, "value": true, "id": true, "parent": true, "kind": true}[slot.Role] {
+				return errors.New("Template slot role is invalid")
 			}
 			if slot.OnMissing != "" && slot.OnMissing != "error" && slot.OnMissing != "omit_slot" && slot.OnMissing != "omit_widget" {
 				return errors.New("Template slot on_missing behavior is invalid")
@@ -522,6 +522,8 @@ func compatibleDashboardSourceKinds(widgetType string) map[string]bool {
 	switch widgetType {
 	case "confusion_matrix", "heatmap", "correlation_heatmap":
 		return map[string]bool{"matrix": true}
+	case "data_grid", "roc_curve", "precision_recall_curve", "calibration_curve", "bubble_chart", "parallel_coordinates", "pie_chart", "donut_chart", "treemap", "waterfall":
+		return map[string]bool{"table": true}
 	case "progress":
 		return map[string]bool{"progress": true}
 	case "logs":

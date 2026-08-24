@@ -16,7 +16,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
-from .observability import CheckpointObservation, DistributionObservation, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ObservabilityPhase, ProgressObservation
+from .observability import CheckpointObservation, DistributionObservation, EvaluationCurve, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ObservabilityPhase, ProgressObservation, TableColumn, TableObservation
 from . import __version__
 
 logger = logging.getLogger("jobdock")
@@ -42,6 +42,8 @@ class NoopJob:
     def heatmap(self, name: str, values: Iterable[Iterable[float | None]], *, row_labels: Iterable[str] = (), column_labels: Iterable[str] = (), unit: str | None = None, step: int | None = None, timestamp: datetime | None = None, tags: Iterable[str] | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None: pass
     def correlation_heatmap(self, name: str, values: Iterable[Iterable[float | None]], variables: Iterable[str], *, step: int | None = None, timestamp: datetime | None = None, tags: Iterable[str] | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None: pass
     def distribution(self, observation: DistributionObservation) -> None: pass
+    def table(self, observation: TableObservation) -> None: pass
+    def evaluation_curve(self, observation: EvaluationCurve) -> None: pass
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None: pass
     def metrics(self, items: Iterable[Metric]) -> None: pass
     def declare_observability(self, manifest: ObservabilityManifest) -> None: pass
@@ -149,6 +151,69 @@ class Job:
             raise ValueError("distribution scores must contain at most 32 named finite values")
         payload = _observation_payload(observation, name=name, group=group, unit=unit, values=values, scores=scores or None, tags=_validated_semantic_tags(observation.tags))
         self._enqueue("distributions", payload)
+
+    def table(self, observation: TableObservation) -> None:
+        name, subtype = observation.name.strip(), observation.subtype.strip().lower() or "table"
+        if not name or len(name) > 128 or not subtype or len(subtype) > 64:
+            raise ValueError("table name and subtype are invalid")
+        columns = []
+        seen: set[str] = set()
+        for column in observation.columns:
+            column_name, kind = column.name.strip(), column.type.strip().lower()
+            unit = column.unit.strip() if column.unit is not None else None
+            if not column_name or len(column_name) > 128 or column_name in seen or kind not in {"string", "number", "integer", "boolean", "datetime"} or unit is not None and (not unit or len(unit) > 64):
+                raise ValueError("table columns require unique names and supported types")
+            seen.add(column_name)
+            entry: dict[str, Any] = {"name": column_name, "type": kind}
+            if unit is not None: entry["unit"] = unit
+            if column.nullable: entry["nullable"] = True
+            columns.append(entry)
+        rows = [dict(row) for row in observation.rows]
+        if not columns or len(columns) > 64 or not rows or len(rows) > 256:
+            raise ValueError("table uploads require 1-64 columns and 1-256 rows")
+        schema = {column["name"]: column for column in columns}
+        for row in rows:
+            if any(key not in schema for key in row) or any(column["name"] not in row and not column.get("nullable") for column in columns):
+                raise ValueError("table rows must match the declared schema")
+            for key, value in row.items():
+                if value is None:
+                    if not schema[key].get("nullable"): raise ValueError("non-nullable table cells require values")
+                elif not _valid_table_value(value, schema[key]["type"]):
+                    raise ValueError("table cell does not match its declared type")
+        tags = set(_validated_semantic_tags(observation.tags) or ())
+        tags.add(f"table:{subtype}")
+        payload = _observation_payload(observation, name=name, subtype=subtype, columns=columns, rows=rows, tags=sorted(tags))
+        if len(json.dumps(payload, separators=(",", ":")).encode()) > 1 << 20:
+            raise ValueError("table payload must not exceed 1 MiB")
+        self._enqueue("tables", payload)
+
+    def evaluation_curve(self, observation: EvaluationCurve) -> None:
+        kind = observation.curve_type.strip().lower()
+        definitions = {
+            "roc": ("fpr", "tpr", "auc"),
+            "precision_recall": ("recall", "precision", "average_precision"),
+            "calibration": ("predicted_probability", "observed_fraction", "ece"),
+        }
+        if kind not in definitions:
+            raise ValueError("curve_type must be roc, precision_recall, or calibration")
+        x, y, _ = definitions[kind]
+        rows = [dict(point) for point in observation.points]
+        if not rows or len(rows) > 500:
+            raise ValueError("evaluation curves require 1-500 points")
+        allowed = {x, y, "threshold"} | ({"bin_size"} if kind == "calibration" else set())
+        if any(set(row) - allowed or x not in row or y not in row or not _valid_probability(row[x]) or not _valid_probability(row[y]) or "threshold" in row and row["threshold"] is not None and not _valid_finite_number(row["threshold"]) or "bin_size" in row and row["bin_size"] is not None and (not isinstance(row["bin_size"], int) or isinstance(row["bin_size"], bool) or row["bin_size"] < 0) for row in rows):
+            raise ValueError("evaluation curve points are invalid")
+        summary = {str(key): float(value) for key, value in (observation.summary or {}).items()}
+        if len(summary) > 16 or any(not key or len(key) > 128 or not math.isfinite(value) for key, value in summary.items()):
+            raise ValueError("evaluation curve summary is invalid")
+        metadata = dict(observation.metadata or {})
+        if summary: metadata["summary"] = summary
+        if observation.model: metadata["model"] = observation.model.strip()[:128]
+        columns = [TableColumn(x, "number"), TableColumn(y, "number"), TableColumn("threshold", "number", nullable=True)]
+        if kind == "calibration": columns.append(TableColumn("bin_size", "integer", nullable=True))
+        normalized = [{column.name: row.get(column.name) for column in columns} for row in rows]
+        for start in range(0, len(normalized), 256):
+            self.table(TableObservation(observation.name, columns, normalized[start:start + 256], kind, observation.step, observation.timestamp, (f"curve:{kind}",), metadata or None))
 
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None:
         """Report one scalar metric while preserving the original call shape."""
@@ -359,6 +424,31 @@ def _symmetric_nullable_matrix(values: list[list[float | None]]) -> bool:
             elif not math.isclose(left, right, rel_tol=1e-6, abs_tol=1e-6):
                 return False
     return True
+
+
+def _valid_table_value(value: Any, kind: str) -> bool:
+    if kind == "string":
+        return isinstance(value, str) and len(value.encode()) <= 4096
+    if kind == "number":
+        return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(float(value))
+    if kind == "integer":
+        return not isinstance(value, bool) and isinstance(value, int) and abs(value) <= 9_007_199_254_740_991
+    if kind == "boolean":
+        return isinstance(value, bool)
+    if kind == "datetime" and isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is not None
+        except ValueError:
+            return False
+    return False
+
+
+def _valid_finite_number(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(float(value))
+
+
+def _valid_probability(value: Any) -> bool:
+    return _valid_finite_number(value) and 0 <= float(value) <= 1
 
 
 _observable_source_type_pattern = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
