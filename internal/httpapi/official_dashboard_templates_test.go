@@ -35,7 +35,7 @@ func TestOfficialObservabilityCatalogIsCompleteAndCanonical(t *testing.T) {
 
 func TestOfficialDashboardTemplateCatalogIsDiverseValidAndFrameworkNeutral(t *testing.T) {
 	templates, ids, categories, signatures, layouts := officialDashboardTemplates(), map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
-	if len(templates) < 45 || len(templates) > 70 {
+	if len(templates) < 45 || len(templates) > 90 {
 		t.Fatalf("official template count: %d", len(templates))
 	}
 	standard := map[string]bool{}
@@ -49,7 +49,10 @@ func TestOfficialDashboardTemplateCatalogIsDiverseValidAndFrameworkNeutral(t *te
 	}
 	standard["matrix:heatmap"] = true
 	standard["matrix:correlation"] = true
-	for _, subtype := range []string{"table", "roc", "precision_recall", "calibration", "regression_diagnostics", "feature_importance", "multivariate", "categorical", "hierarchy", "waterfall"} {
+	standard["partial_dependence:2d"] = true
+	standard["metric:anomaly_threshold"] = true
+	standard["metric:anomaly_detection"] = true
+	for _, subtype := range []string{"table", "roc", "precision_recall", "calibration", "regression_diagnostics", "feature_importance", "shap_attribution", "projection", "partial_dependence", "multivariate", "categorical", "hierarchy", "waterfall"} {
 		standard["table:"+subtype] = true
 	}
 	for _, template := range templates {
@@ -133,5 +136,25 @@ func TestRepresentativeOfficialTemplatesResolveAndReportMissingSources(t *testin
 	})
 	if composition.Compatibility == "incompatible" || composition.Widgets[0].Type != "stacked_bar" || len(composition.Widgets[0].Sources) != 3 || composition.Widgets[0].Sources[0].Name != "tp-rate" || composition.Widgets[0].Sources[1].Name != "tn-rate" || composition.Widgets[0].Sources[2].Name != "fp-rate" {
 		t.Fatalf("tag-resolved composition: %#v", composition)
+	}
+}
+
+func TestSpecializedExplainabilityProjectionAndAnomalyTemplatesResolveByTags(t *testing.T) {
+	tests := []struct {
+		id, kind, name, tag, widgetType string
+	}{
+		{"shap-summary", "table", "validation_shap", "table:shap_attribution", "shap_summary"},
+		{"embedding-projection", "table", "umap_epoch_10", "table:projection", "embedding_scatter"},
+		{"anomaly-score-timeline", "metric", "reconstruction_error", "metric:anomaly_score", "anomaly_timeline"},
+		{"partial-dependence-curve", "table", "age_pdp", "table:partial_dependence", "partial_dependence"},
+		{"partial-dependence-surface", "matrix", "age_income_pdp", "partial_dependence:2d", "heatmap"},
+	}
+	for _, test := range tests {
+		t.Run(test.id, func(t *testing.T) {
+			resolution := resolveDashboardTemplate(officialTemplateByID(test.id), []observableSource{{Kind: test.kind, Name: test.name, Tags: []string{test.tag}}})
+			if resolution.Compatibility == "incompatible" || len(resolution.Widgets) != 1 || resolution.Widgets[0].Type != test.widgetType || resolution.Widgets[0].Sources[0].Name != test.name {
+				t.Fatalf("specialized resolution: %#v", resolution)
+			}
+		})
 	}
 }

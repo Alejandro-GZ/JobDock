@@ -91,6 +91,14 @@ func officialDashboardTemplates() []dashboardTemplate {
 		semanticLossTemplate(),
 		learningCurveTemplate(),
 		featureImportanceTemplate(),
+		shapSummaryTemplate(),
+		explainabilitySuiteTemplate(),
+		projectionTemplate("embedding-projection", "Embedding projection", "Explore a bounded precomputed embedding colored by reported labels.", "embedding_scatter"),
+		projectionTemplate("cluster-projection", "Cluster projection", "Explore a bounded precomputed projection grouped by reported clusters.", "cluster_scatter"),
+		projectionComparisonTemplate(),
+		anomalyTimelineTemplate(),
+		partialDependenceTemplate(),
+		matrixTemplate("partial-dependence-surface", "Partial dependence surface", "Inspect a precomputed two-feature partial dependence surface.", "general", "heatmap", "partial_dependence:2d"),
 		multivariateTemplate(),
 		categoricalSnapshotTemplate(),
 		tabularTemplate("hierarchical-composition", "Hierarchical composition", "Inspect an explicit non-negative parent-child snapshot.", "general", "treemap", "table:hierarchy", 12, 7),
@@ -121,6 +129,47 @@ func learningCurveTemplate() dashboardTemplate {
 func featureImportanceTemplate() dashboardTemplate {
 	slot := dashboardTemplateSlot{ID: "importance", RequiredTags: []string{"table:feature_importance"}, SourceTypes: []string{"table"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 1}, OnMissing: "error", OnAmbiguous: "error"}
 	return dashboardTemplate{ID: "feature-importance", Name: "Feature importance", Description: "Inspect signed feature contributions reported by a model explanation method.", Category: "general", SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{officialWidget("importance", "feature_importance", 12, 8, 0, 0, slot)}}
+}
+
+func shapSummaryTemplate() dashboardTemplate {
+	slot := dashboardTemplateSlot{ID: "shap", RequiredTags: []string{"table:shap_attribution"}, SourceTypes: []string{"table"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 1}, OnMissing: "error", OnAmbiguous: "error"}
+	return dashboardTemplate{ID: "shap-summary", Name: "SHAP summary", Description: "Inspect bounded precomputed local effects as a beeswarm or global magnitude view.", Category: "general", SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{officialWidget("shap", "shap_summary", 12, 8, 0, 0, slot)}}
+}
+
+func explainabilitySuiteTemplate() dashboardTemplate {
+	shap := dashboardTemplateSlot{ID: "shap", RequiredTags: []string{"table:shap_attribution"}, SourceTypes: []string{"table"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 1}, OnMissing: "error", OnAmbiguous: "error"}
+	importance := dashboardTemplateSlot{ID: "importance", RequiredTags: []string{"table:feature_importance"}, SourceTypes: []string{"table"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 1}, OnMissing: "omit_widget", OnAmbiguous: "error"}
+	pdp := dashboardTemplateSlot{ID: "pdp", RequiredTags: []string{"table:partial_dependence"}, SourceTypes: []string{"table"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 1}, OnMissing: "omit_widget", OnAmbiguous: "error"}
+	return dashboardTemplate{ID: "model-explainability-suite", Name: "Model explainability suite", Description: "Combine reported SHAP effects with optional global importance and one-dimensional partial dependence.", Category: "general", SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{
+		officialWidget("shap", "shap_summary", 12, 6, 0, 0, shap),
+		officialWidget("importance", "feature_importance", 6, 6, 0, 6, importance),
+		officialWidget("pdp", "partial_dependence", 6, 6, 6, 6, pdp),
+	}}
+}
+
+func projectionTemplate(id, name, description, widgetType string) dashboardTemplate {
+	slot := dashboardTemplateSlot{ID: "projection", RequiredTags: []string{"table:projection"}, SourceTypes: []string{"table"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 1}, OnMissing: "error", OnAmbiguous: "error"}
+	return dashboardTemplate{ID: id, Name: name, Description: description, Category: "clustering-representation", SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{officialWidget("projection", widgetType, 12, 8, 0, 0, slot)}}
+}
+
+func projectionComparisonTemplate() dashboardTemplate {
+	slot := dashboardTemplateSlot{ID: "projection", RequiredTags: []string{"table:projection"}, SourceTypes: []string{"table"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 1}, OnMissing: "error", OnAmbiguous: "error"}
+	return dashboardTemplate{ID: "projection-label-cluster-comparison", Name: "Projection label and cluster comparison", Description: "Compare one reported projection using label-aware and cluster-aware views.", Category: "clustering-representation", SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{
+		officialWidget("labels", "embedding_scatter", 6, 7, 0, 0, slot),
+		officialWidget("clusters", "cluster_scatter", 6, 7, 6, 0, slot),
+	}}
+}
+
+func anomalyTimelineTemplate() dashboardTemplate {
+	score := dashboardTemplateSlot{ID: "score", RequiredTags: []string{"metric:anomaly_score"}, SourceTypes: []string{"metric"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 8}, OnMissing: "error", OnAmbiguous: "error"}
+	threshold := dashboardTemplateSlot{ID: "threshold", RequiredTags: []string{"metric:anomaly_threshold"}, SourceTypes: []string{"metric"}, Cardinality: dashboardTemplateCardinality{Min: 0, Max: 8}, OnMissing: "omit_slot", OnAmbiguous: "error"}
+	detection := dashboardTemplateSlot{ID: "detection", RequiredTags: []string{"metric:anomaly_detection"}, SourceTypes: []string{"metric"}, Cardinality: dashboardTemplateCardinality{Min: 0, Max: 8}, OnMissing: "omit_slot", OnAmbiguous: "error"}
+	return dashboardTemplate{ID: "anomaly-score-timeline", Name: "Anomaly score timeline", Description: "Inspect reported anomaly scores, optional thresholds, and detection markers without synthesizing decisions.", Category: "time-series-anomaly", SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{{ID: "anomaly", Type: "anomaly_timeline", Size: dashboardWidgetSize{Columns: 12, Rows: 7}, Position: dashboardWidgetPosition{}, Slots: []dashboardTemplateSlot{score, threshold, detection}, GridColumns: 12, XAxis: "time", TimeRange: "all"}}}
+}
+
+func partialDependenceTemplate() dashboardTemplate {
+	slot := dashboardTemplateSlot{ID: "pdp", RequiredTags: []string{"table:partial_dependence"}, SourceTypes: []string{"table"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 1}, OnMissing: "error", OnAmbiguous: "error"}
+	return dashboardTemplate{ID: "partial-dependence-curve", Name: "Partial dependence curve", Description: "Inspect a precomputed one-feature response and optional reported uncertainty range.", Category: "general", SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{officialWidget("pdp", "partial_dependence", 12, 7, 0, 0, slot)}}
 }
 
 func multivariateTemplate() dashboardTemplate {
