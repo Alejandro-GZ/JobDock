@@ -495,8 +495,8 @@ paths:
   /jobs/{jobId}/matrices:
     get:
       operationId: listJobMatrices
-      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDQuery'}, {name: name, in: query, schema: {type: string}}, {name: step, in: query, schema: {type: integer, format: int64}}]
-      responses: {'200': {description: Latest matrices by name or matrices selected by step, content: {application/json: {schema: {$ref: '#/components/schemas/MatrixList'}}}}}
+      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDQuery'}, {name: name, in: query, schema: {type: string}}, {name: step, in: query, schema: {type: integer, format: int64}}, {name: resolution, in: query, description: Explicit generic-heatmap resolution. Correlation and confusion matrices preserve their exact cells., schema: {oneOf: [{type: string, enum: [auto, full]}, {type: integer, enum: [32, 64]}], default: auto}}]
+      responses: {'200': {description: Latest typed matrices by name or matrices selected by step, with explicit resolution metadata when a generic heatmap is reduced, content: {application/json: {schema: {$ref: '#/components/schemas/MatrixList'}}}}}
   /jobs/{jobId}/distributions:
     get:
       operationId: listJobDistributions
@@ -1309,6 +1309,7 @@ components:
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
         type: {type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$'}
+        subtype: {type: string, enum: [confusion_matrix, heatmap, correlation], description: Stable semantic subtype for matrix sources.}
         unit: {type: string, maxLength: 64}
         tags: {$ref: '#/components/schemas/SemanticMetricTags'}
         metadata: {$ref: '#/components/schemas/ObservationMetadata'}
@@ -1354,6 +1355,10 @@ components:
         point_size: {type: number, minimum: 1, maximum: 16, description: Supported by line and scatter plots.}
         opacity: {type: number, minimum: 0.05, maximum: 1, description: Supported by plot widgets.}
         matrix_mode: {type: string, enum: [absolute, normalized], description: Supported by confusion matrices.}
+        heatmap_scale: {type: string, enum: [auto, manual], description: Color-domain strategy for heatmaps. Correlation auto mode uses -1..1.}
+        heatmap_min: {type: number, description: Manual heatmap domain minimum.}
+        heatmap_max: {type: number, description: Manual heatmap domain maximum.}
+        heatmap_palette: {type: string, enum: [sequential, diverging], description: Heatmap color palette.}
         stack_mode: {type: string, enum: [overlap, stacked], description: Area chart composition. Overlap leaves missing categories as gaps; stacked treats them as zero and requires compatible units.}
     DashboardAxisAppearance:
       type: object
@@ -1381,7 +1386,7 @@ components:
       required: [id, type, size, position, sources]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
-        type: {type: string, enum: [lineplot, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, progress, logs, kpi, gauge]}
+        type: {type: string, enum: [lineplot, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, heatmap, correlation_heatmap, progress, logs, kpi, gauge]}
         title: {type: string, maxLength: 120, description: Optional compact overlay title. An omitted or empty title reserves no plot space.}
         size:
           type: object
@@ -1436,7 +1441,7 @@ components:
       required: [id, type, size, position, slots]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
-        type: {type: string, enum: [lineplot, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, progress, logs, kpi, gauge]}
+        type: {type: string, enum: [lineplot, barplot, area_chart, stacked_bar, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, heatmap, correlation_heatmap, progress, logs, kpi, gauge]}
         title: {type: string, maxLength: 120}
         size:
           type: object
@@ -1870,7 +1875,7 @@ components:
       type: array
       maxItems: 32
       uniqueItems: true
-      description: Canonical lowercase semantic dimensions stored once on the attempt-scoped metric series descriptor. Standard and custom tags use namespace:value syntax.
+      description: Canonical lowercase semantic dimensions stored on an attempt-scoped observable descriptor. Standard and custom tags use namespace:value syntax.
       items:
         type: string
         minLength: 3
@@ -1942,8 +1947,24 @@ components:
             id: {type: integer, format: int64}
             attempt_id: {type: string, format: uuid}
             name: {type: string, minLength: 1, maxLength: 128}
-            values: {type: array, minItems: 1, maxItems: 128, items: {type: array, minItems: 1, maxItems: 128, items: {type: number, format: double}}}
-            labels: {type: array, minItems: 1, maxItems: 128, items: {type: string, minLength: 1, maxLength: 128}}
+            matrix_type: {type: string, enum: [confusion_matrix, heatmap, correlation], default: confusion_matrix}
+            values: {type: array, minItems: 1, maxItems: 128, items: {type: array, minItems: 1, maxItems: 128, items: {oneOf: [{type: number, format: double}, {type: 'null'}]}}}
+            labels: {type: array, minItems: 1, maxItems: 128, deprecated: true, description: Backward-compatible shared axes for confusion matrices., items: {type: string, minLength: 1, maxLength: 128}}
+            row_labels: {type: array, minItems: 1, maxItems: 128, items: {type: string, minLength: 1, maxLength: 128}}
+            column_labels: {type: array, minItems: 1, maxItems: 128, items: {type: string, minLength: 1, maxLength: 128}}
+            unit: {type: string, maxLength: 64}
+            tags: {$ref: '#/components/schemas/SemanticMetricTags'}
+            resolution: {$ref: '#/components/schemas/MatrixResolution'}
+    MatrixResolution:
+      type: object
+      additionalProperties: false
+      required: [mode, original_rows, original_columns, rows, columns]
+      properties:
+        mode: {type: string, enum: [full, aggregated]}
+        original_rows: {type: integer, minimum: 1, maximum: 128}
+        original_columns: {type: integer, minimum: 1, maximum: 128}
+        rows: {type: integer, minimum: 1, maximum: 128}
+        columns: {type: integer, minimum: 1, maximum: 128}
     MatrixList:
       type: object
       required: [attempt_id, items]

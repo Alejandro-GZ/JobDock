@@ -82,11 +82,16 @@ class ProgressObservation:
 @dataclass(frozen=True, slots=True)
 class MatrixObservation:
     name: str
-    values: Sequence[Sequence[float]]
+    values: Sequence[Sequence[float | None]]
     labels: Sequence[str] = ()
     step: int | None = None
     timestamp: datetime | None = None
     metadata: Metadata | None = None
+    matrix_type: str = "confusion_matrix"
+    row_labels: Sequence[str] = ()
+    column_labels: Sequence[str] = ()
+    unit: str | None = None
+    tags: SemanticTags | None = None
 
 
 @dataclass(frozen=True, slots=True)

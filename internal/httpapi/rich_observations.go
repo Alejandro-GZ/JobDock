@@ -160,29 +160,68 @@ func (a *API) sdkMatrix(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	body.Name = strings.TrimSpace(body.Name)
-	size := len(body.Values)
-	if job.AttemptID == "" || body.Name == "" || len(body.Name) > 128 || size == 0 || size > maxMatrixDimension || len(body.Labels) != size {
-		writeProblem(w, 422, "invalid_matrix", "Matrices must be named NxN values with 1-128 labels")
+	body.Name, body.MatrixType, body.Unit = strings.TrimSpace(body.Name), strings.TrimSpace(body.MatrixType), strings.TrimSpace(body.Unit)
+	if body.MatrixType == "" {
+		body.MatrixType = "confusion_matrix"
+	}
+	if body.MatrixType != "confusion_matrix" && body.MatrixType != "heatmap" && body.MatrixType != "correlation" {
+		writeProblem(w, 422, "invalid_matrix_type", "matrix_type must be confusion_matrix, heatmap, or correlation")
+		return
+	}
+	rows := len(body.Values)
+	columns := 0
+	if rows > 0 {
+		columns = len(body.Values[0])
+	}
+	if job.AttemptID == "" || body.Name == "" || len(body.Name) > 128 || rows == 0 || rows > maxMatrixDimension || columns == 0 || columns > maxMatrixDimension || rows*columns > maxMatrixDimension*maxMatrixDimension || len(body.Unit) > 64 {
+		writeProblem(w, 422, "invalid_matrix", "Matrices require a name and a rectangular 1-128 by 1-128 value grid")
 		return
 	}
 	for _, row := range body.Values {
-		if len(row) != size {
-			writeProblem(w, 422, "invalid_matrix", "Matrix values must be square")
+		if len(row) != columns {
+			writeProblem(w, 422, "invalid_matrix", "Matrix rows must have the same number of columns")
 			return
 		}
 		for _, value := range row {
-			if math.IsNaN(value) || math.IsInf(value, 0) {
+			if value != nil && (math.IsNaN(*value) || math.IsInf(*value, 0)) {
 				writeProblem(w, 422, "invalid_matrix", "Matrix values must be finite")
 				return
 			}
 		}
 	}
-	for _, label := range body.Labels {
-		if label == "" || len(label) > 128 {
-			writeProblem(w, 422, "invalid_matrix", "Matrix labels must contain 1-128 characters")
-			return
-		}
+	if len(body.RowLabels) == 0 && len(body.Labels) > 0 {
+		body.RowLabels = append([]string(nil), body.Labels...)
+	}
+	if len(body.ColumnLabels) == 0 && len(body.Labels) > 0 {
+		body.ColumnLabels = append([]string(nil), body.Labels...)
+	}
+	if !validMatrixLabels(body.RowLabels, rows) || !validMatrixLabels(body.ColumnLabels, columns) {
+		writeProblem(w, 422, "invalid_matrix_labels", "Row and column labels must be omitted or match their dimension with 1-128 character values")
+		return
+	}
+	if body.MatrixType == "confusion_matrix" && (rows != columns || len(body.RowLabels) != rows || !equalStrings(body.RowLabels, body.ColumnLabels) || matrixHasNull(body.Values)) {
+		writeProblem(w, 422, "invalid_confusion_matrix", "Confusion matrices require finite square values and one shared class label list")
+		return
+	}
+	if body.MatrixType == "correlation" && (rows != columns || len(body.RowLabels) != rows || !equalStrings(body.RowLabels, body.ColumnLabels) || !symmetricMatrix(body.Values)) {
+		writeProblem(w, 422, "invalid_correlation_matrix", "Correlation matrices require matching variable axes and symmetric values, including null positions")
+		return
+	}
+	if body.MatrixType == "confusion_matrix" {
+		body.Labels = append([]string(nil), body.RowLabels...)
+	} else {
+		body.Labels = nil
+	}
+	canonicalTags := append([]string(nil), body.Tags...)
+	canonicalTags = append(canonicalTags, "matrix:"+body.MatrixType)
+	if body.MatrixType == "correlation" {
+		canonicalTags = append(canonicalTags, "matrix:heatmap")
+	}
+	var err error
+	body.Tags, err = normalizeMetricTags(canonicalTags)
+	if err != nil {
+		writeProblem(w, 422, "invalid_matrix_tags", err.Error())
+		return
 	}
 	if encoded, _ := json.Marshal(body); len(encoded) > maxMatrixBytes {
 		writeProblem(w, 413, "matrix_too_large", "Matrix payload must not exceed 1 MiB")
@@ -203,6 +242,62 @@ func (a *API) sdkMatrix(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, created)
+}
+
+func validMatrixLabels(labels []string, size int) bool {
+	if len(labels) == 0 {
+		return true
+	}
+	if len(labels) != size {
+		return false
+	}
+	for _, label := range labels {
+		if len(strings.TrimSpace(label)) < 1 || len(label) > 128 {
+			return false
+		}
+	}
+	return true
+}
+
+func equalStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func matrixHasNull(values [][]*float64) bool {
+	for _, row := range values {
+		for _, value := range row {
+			if value == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func symmetricMatrix(values [][]*float64) bool {
+	for row := range values {
+		for column := row + 1; column < len(values); column++ {
+			left, right := values[row][column], values[column][row]
+			if left == nil || right == nil {
+				if left != nil || right != nil {
+					return false
+				}
+				continue
+			}
+			if math.Abs(*left-*right) > 1e-6 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (a *API) sdkDistribution(w http.ResponseWriter, r *http.Request) {
@@ -486,6 +581,14 @@ func (a *API) jobMatrices(w http.ResponseWriter, r *http.Request) {
 		}
 		step = &parsed
 	}
+	resolution := r.URL.Query().Get("resolution")
+	if resolution == "" {
+		resolution = "auto"
+	}
+	if resolution != "auto" && resolution != "full" && resolution != "32" && resolution != "64" {
+		writeProblem(w, 422, "invalid_matrix_resolution", "resolution must be auto, full, 32, or 64")
+		return
+	}
 	items, err := a.store.Matrices(r.Context(), job.ID, attempt, r.URL.Query().Get("name"), step, 100)
 	if err != nil {
 		writeStoreError(w, err)
@@ -505,7 +608,73 @@ func (a *API) jobMatrices(w http.ResponseWriter, r *http.Request) {
 			items = append(items, latest[name])
 		}
 	}
+	for index := range items {
+		items[index] = resolveMatrixResolution(items[index], resolution)
+	}
 	writeJSON(w, 200, map[string]any{"attempt_id": attempt, "items": items})
+}
+
+func resolveMatrixResolution(item domain.MatrixObservation, mode string) domain.MatrixObservation {
+	rows, columns := len(item.Values), 0
+	if rows > 0 {
+		columns = len(item.Values[0])
+	}
+	target := 0
+	if item.MatrixType == "heatmap" {
+		switch mode {
+		case "auto", "64":
+			target = 64
+		case "32":
+			target = 32
+		}
+	}
+	item.Resolution = &domain.MatrixResolution{Mode: "full", OriginalRows: rows, OriginalColumns: columns, Rows: rows, Columns: columns}
+	if target == 0 || rows <= target && columns <= target {
+		return item
+	}
+	rowStride, columnStride := (rows+target-1)/target, (columns+target-1)/target
+	resultRows, resultColumns := (rows+rowStride-1)/rowStride, (columns+columnStride-1)/columnStride
+	values := make([][]*float64, resultRows)
+	for resultRow := range values {
+		values[resultRow] = make([]*float64, resultColumns)
+		for resultColumn := range values[resultRow] {
+			var sum float64
+			count := 0
+			for row := resultRow * rowStride; row < min(rows, (resultRow+1)*rowStride); row++ {
+				for column := resultColumn * columnStride; column < min(columns, (resultColumn+1)*columnStride); column++ {
+					if item.Values[row][column] != nil {
+						sum += *item.Values[row][column]
+						count++
+					}
+				}
+			}
+			if count > 0 {
+				value := sum / float64(count)
+				values[resultRow][resultColumn] = &value
+			}
+		}
+	}
+	item.Values = values
+	item.RowLabels = aggregateMatrixLabels(item.RowLabels, rows, rowStride)
+	item.ColumnLabels = aggregateMatrixLabels(item.ColumnLabels, columns, columnStride)
+	item.Resolution = &domain.MatrixResolution{Mode: "aggregated", OriginalRows: rows, OriginalColumns: columns, Rows: resultRows, Columns: resultColumns}
+	return item
+}
+
+func aggregateMatrixLabels(labels []string, size, stride int) []string {
+	if len(labels) != size {
+		return nil
+	}
+	result := make([]string, 0, (size+stride-1)/stride)
+	for start := 0; start < size; start += stride {
+		end := min(size, start+stride)
+		if end-start == 1 {
+			result = append(result, labels[start])
+		} else {
+			result = append(result, labels[start]+"…"+labels[end-1])
+		}
+	}
+	return result
 }
 
 func (a *API) checkpointArchive(w http.ResponseWriter, r *http.Request) {

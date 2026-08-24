@@ -68,6 +68,10 @@ func TestRichObservationsAreAttemptAwareIncrementalAndBounded(t *testing.T) {
 	postJobContext(t, server.URL, token, "matrices", `{"name":"confusion","values":[[8,2],[1,9]],"labels":["cat","dog"],"step":5}`, http.StatusAccepted)
 	postJobContext(t, server.URL, token, "matrices", `{"name":"confusion","values":[[9,1],[0,10]],"labels":["cat","dog"],"step":6}`, http.StatusAccepted)
 	postJobContext(t, server.URL, token, "matrices", `{"name":"broken","values":[[1,2]],"labels":["cat"]}`, http.StatusUnprocessableEntity)
+	postJobContext(t, server.URL, token, "matrices", `{"name":"attention","matrix_type":"heatmap","values":[[0.8,null,0.2],[0.1,0.7,0.2]],"row_labels":["q1","q2"],"column_labels":["k1","k2","k3"],"unit":"score"}`, http.StatusAccepted)
+	postJobContext(t, server.URL, token, "matrices", `{"name":"attention","matrix_type":"heatmap","values":[[1]],"unit":"ms"}`, http.StatusConflict)
+	postJobContext(t, server.URL, token, "matrices", `{"name":"features","matrix_type":"correlation","values":[[1,-0.4],[-0.4,1]],"row_labels":["age","income"],"column_labels":["age","income"]}`, http.StatusAccepted)
+	postJobContext(t, server.URL, token, "matrices", `{"name":"invalid-correlation","matrix_type":"correlation","values":[[1,0.2],[0.3,1]],"row_labels":["a","b"],"column_labels":["a","b"]}`, http.StatusUnprocessableEntity)
 	var matrices struct {
 		AttemptID string                     `json:"attempt_id"`
 		Items     []domain.MatrixObservation `json:"items"`
@@ -79,6 +83,10 @@ func TestRichObservationsAreAttemptAwareIncrementalAndBounded(t *testing.T) {
 	getSeriesJSON(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/matrices?attempt_id="+attemptID+"&name=confusion&step=5", &matrices)
 	if len(matrices.Items) != 1 || matrices.Items[0].Step == nil || *matrices.Items[0].Step != 5 {
 		t.Fatalf("matrix by step: %#v", matrices)
+	}
+	getSeriesJSON(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/matrices?attempt_id="+attemptID+"&name=attention", &matrices)
+	if len(matrices.Items) != 1 || matrices.Items[0].MatrixType != "heatmap" || matrices.Items[0].Values[0][1] != nil || len(matrices.Items[0].ColumnLabels) != 3 || matrices.Items[0].Unit != "score" || !containsString(matrices.Items[0].Tags, "matrix:heatmap") {
+		t.Fatalf("typed heatmap: %#v", matrices)
 	}
 
 	postJobContext(t, server.URL, token, "distributions", `{"name":"residual","group":"baseline","unit":"ms","values":[1,2,2,3,100],"scores":{"psi":0.12},"tags":["histogram:error"]}`, http.StatusAccepted)
@@ -139,6 +147,26 @@ func TestRichObservationsAreAttemptAwareIncrementalAndBounded(t *testing.T) {
 	getSeriesJSON(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/progress?attempt_id="+secondAttempt, &progress)
 	if progress.Simple != nil || progress.Current != nil || len(progress.Milestones) != 0 {
 		t.Fatalf("attempt progress leaked: %#v", progress)
+	}
+}
+
+func TestGenericHeatmapResolutionIsExplicitAndSemanticMatricesRemainExact(t *testing.T) {
+	values := make([][]*float64, 70)
+	for row := range values {
+		values[row] = make([]*float64, 90)
+		for column := range values[row] {
+			value := float64(row + column)
+			values[row][column] = &value
+		}
+	}
+	values[0][0] = nil
+	item := resolveMatrixResolution(domain.MatrixObservation{MatrixType: "heatmap", Values: values}, "auto")
+	if item.Resolution == nil || item.Resolution.Mode != "aggregated" || item.Resolution.OriginalRows != 70 || item.Resolution.OriginalColumns != 90 || len(item.Values) > 64 || len(item.Values[0]) > 64 {
+		t.Fatalf("automatic heatmap resolution: %#v", item.Resolution)
+	}
+	correlation := resolveMatrixResolution(domain.MatrixObservation{MatrixType: "correlation", Values: values}, "32")
+	if correlation.Resolution == nil || correlation.Resolution.Mode != "full" || len(correlation.Values) != 70 || len(correlation.Values[0]) != 90 {
+		t.Fatalf("correlation matrix must remain exact: %#v", correlation.Resolution)
 	}
 }
 

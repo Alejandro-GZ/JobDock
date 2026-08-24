@@ -169,9 +169,15 @@ func calculateGlobalProgress(state domain.ProgressState) *float64 {
 }
 
 func (s *Store) AppendMatrix(ctx context.Context, item domain.MatrixObservation) (domain.MatrixObservation, error) {
+	if item.MatrixType == "" {
+		item.MatrixType = "confusion_matrix"
+	}
 	labels, _ := json.Marshal(item.Labels)
+	rowLabels, _ := json.Marshal(item.RowLabels)
+	columnLabels, _ := json.Marshal(item.ColumnLabels)
 	values, _ := json.Marshal(item.Values)
 	metadata, _ := json.Marshal(item.Metadata)
+	tags, _ := json.Marshal(item.Tags)
 	if len(item.Metadata) == 0 {
 		metadata = nil
 	}
@@ -187,13 +193,21 @@ func (s *Store) AppendMatrix(ctx context.Context, item domain.MatrixObservation)
 	if err = ensureDeclaredSourceType(ctx, tx, item.AttemptID, item.Name, "matrix"); err != nil {
 		return item, err
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO job_matrix_observations(job_id,attempt_id,name,step,captured_at,labels_json,values_json,metadata_json) VALUES(?,?,?,?,?,?,?,?)`, item.JobID, item.AttemptID, item.Name, item.Step, captured.UnixMilli(), labels, values, metadata)
+	var currentType, currentUnit, currentTags sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT subtype,unit,tags_json FROM job_rich_observable_descriptors WHERE attempt_id=? AND kind='matrix' AND name=?`, item.AttemptID, item.Name).Scan(&currentType, &currentUnit, &currentTags)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return item, err
+	}
+	if err == nil && (currentType.Valid && currentType.String != item.MatrixType || currentUnit.Valid && currentUnit.String != item.Unit || currentTags.Valid && currentTags.String != string(tags)) {
+		return item, ErrObservableDeclarationConflict
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO job_matrix_observations(job_id,attempt_id,name,step,captured_at,labels_json,values_json,metadata_json,matrix_type,row_labels_json,column_labels_json,unit,tags_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, item.JobID, item.AttemptID, item.Name, item.Step, captured.UnixMilli(), labels, values, nullableJSON(metadata, len(item.Metadata)), item.MatrixType, nullableJSON(rowLabels, len(item.RowLabels)), nullableJSON(columnLabels, len(item.ColumnLabels)), nullableString(item.Unit), nullableJSON(tags, len(item.Tags)))
 	if err != nil {
 		return item, mapConstraint(err)
 	}
 	item.ID, _ = result.LastInsertId()
 	item.CapturedAt = &captured
-	if _, err = tx.ExecContext(ctx, `INSERT INTO job_rich_observable_descriptors(job_id,attempt_id,kind,name,created_at,updated_at) VALUES(?,?, 'matrix',?,?,?) ON CONFLICT(job_id,attempt_id,kind,name) DO UPDATE SET updated_at=excluded.updated_at`, item.JobID, item.AttemptID, item.Name, captured.UnixMilli(), captured.UnixMilli()); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO job_rich_observable_descriptors(job_id,attempt_id,kind,name,created_at,updated_at,subtype,unit,tags_json,metadata_json) VALUES(?,?,'matrix',?,?,?,?,?,?,?) ON CONFLICT(job_id,attempt_id,kind,name) DO UPDATE SET updated_at=excluded.updated_at,subtype=COALESCE(job_rich_observable_descriptors.subtype,excluded.subtype),unit=COALESCE(job_rich_observable_descriptors.unit,excluded.unit),tags_json=COALESCE(job_rich_observable_descriptors.tags_json,excluded.tags_json),metadata_json=COALESCE(job_rich_observable_descriptors.metadata_json,excluded.metadata_json)`, item.JobID, item.AttemptID, item.Name, captured.UnixMilli(), captured.UnixMilli(), item.MatrixType, nullableString(item.Unit), nullableJSON(tags, len(item.Tags)), nullableJSON(metadata, len(item.Metadata))); err != nil {
 		return item, mapConstraint(err)
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO job_observation_updates(job_id,attempt_id,kind,observed_at) VALUES(?,?, 'matrix',?)`, item.JobID, item.AttemptID, captured.UnixMilli()); err != nil {
@@ -214,7 +228,7 @@ func (s *Store) Matrices(ctx context.Context, jobID, attemptID, name string, ste
 		args = append(args, *step)
 	}
 	args = append(args, limit)
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,step,captured_at,labels_json,values_json,metadata_json FROM job_matrix_observations WHERE `+where+` ORDER BY captured_at DESC,id DESC LIMIT ?`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,step,captured_at,labels_json,values_json,metadata_json,matrix_type,row_labels_json,column_labels_json,unit,tags_json FROM job_matrix_observations WHERE `+where+` ORDER BY captured_at DESC,id DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -225,8 +239,8 @@ func (s *Store) Matrices(ctx context.Context, jobID, attemptID, name string, ste
 		var st sql.NullInt64
 		var captured int64
 		var labels, values string
-		var metadata sql.NullString
-		if err = rows.Scan(&item.ID, &item.Name, &st, &captured, &labels, &values, &metadata); err != nil {
+		var metadata, rowLabels, columnLabels, unit, tags sql.NullString
+		if err = rows.Scan(&item.ID, &item.Name, &st, &captured, &labels, &values, &metadata, &item.MatrixType, &rowLabels, &columnLabels, &unit, &tags); err != nil {
 			return nil, err
 		}
 		item.AttemptID = attemptID
@@ -237,6 +251,16 @@ func (s *Store) Matrices(ctx context.Context, jobID, attemptID, name string, ste
 		}
 		_ = json.Unmarshal([]byte(labels), &item.Labels)
 		_ = json.Unmarshal([]byte(values), &item.Values)
+		if rowLabels.Valid {
+			_ = json.Unmarshal([]byte(rowLabels.String), &item.RowLabels)
+		}
+		if columnLabels.Valid {
+			_ = json.Unmarshal([]byte(columnLabels.String), &item.ColumnLabels)
+		}
+		item.Unit = unit.String
+		if tags.Valid {
+			_ = json.Unmarshal([]byte(tags.String), &item.Tags)
+		}
 		if metadata.Valid {
 			_ = json.Unmarshal([]byte(metadata.String), &item.Metadata)
 		}

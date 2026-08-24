@@ -54,21 +54,25 @@ type dashboardWidget struct {
 	Appearance         *dashboardWidgetAppearance `json:"appearance,omitempty"`
 }
 type dashboardWidgetAppearance struct {
-	SchemaVersion int                                  `json:"schema_version"`
-	Subtitle      string                               `json:"subtitle,omitempty"`
-	ColorScheme   string                               `json:"color_scheme,omitempty"`
-	Series        map[string]dashboardSeriesAppearance `json:"series,omitempty"`
-	Legend        string                               `json:"legend,omitempty"`
-	ShowGrid      *bool                                `json:"show_grid,omitempty"`
-	XAxis         *dashboardAxisAppearance             `json:"x_axis,omitempty"`
-	YAxis         *dashboardAxisAppearance             `json:"y_axis,omitempty"`
-	LineStyle     string                               `json:"line_style,omitempty"`
-	LineWidth     *float64                             `json:"line_width,omitempty"`
-	ShowPoints    *bool                                `json:"show_points,omitempty"`
-	PointSize     *float64                             `json:"point_size,omitempty"`
-	Opacity       *float64                             `json:"opacity,omitempty"`
-	MatrixMode    string                               `json:"matrix_mode,omitempty"`
-	StackMode     string                               `json:"stack_mode,omitempty"`
+	SchemaVersion  int                                  `json:"schema_version"`
+	Subtitle       string                               `json:"subtitle,omitempty"`
+	ColorScheme    string                               `json:"color_scheme,omitempty"`
+	Series         map[string]dashboardSeriesAppearance `json:"series,omitempty"`
+	Legend         string                               `json:"legend,omitempty"`
+	ShowGrid       *bool                                `json:"show_grid,omitempty"`
+	XAxis          *dashboardAxisAppearance             `json:"x_axis,omitempty"`
+	YAxis          *dashboardAxisAppearance             `json:"y_axis,omitempty"`
+	LineStyle      string                               `json:"line_style,omitempty"`
+	LineWidth      *float64                             `json:"line_width,omitempty"`
+	ShowPoints     *bool                                `json:"show_points,omitempty"`
+	PointSize      *float64                             `json:"point_size,omitempty"`
+	Opacity        *float64                             `json:"opacity,omitempty"`
+	MatrixMode     string                               `json:"matrix_mode,omitempty"`
+	StackMode      string                               `json:"stack_mode,omitempty"`
+	HeatmapScale   string                               `json:"heatmap_scale,omitempty"`
+	HeatmapMin     *float64                             `json:"heatmap_min,omitempty"`
+	HeatmapMax     *float64                             `json:"heatmap_max,omitempty"`
+	HeatmapPalette string                               `json:"heatmap_palette,omitempty"`
 }
 type dashboardAxisAppearance struct {
 	Label string   `json:"label,omitempty"`
@@ -599,6 +603,20 @@ func validateDashboardWidgetAppearance(widget dashboardWidget) error {
 	if appearance.StackMode != "" && (widget.Type != "area_chart" || appearance.StackMode != "overlap" && appearance.StackMode != "stacked") {
 		return dashboardError("Widget appearance stack_mode is invalid for this widget")
 	}
+	heatmap := widget.Type == "heatmap" || widget.Type == "correlation_heatmap"
+	if appearance.HeatmapScale != "" && (!heatmap || appearance.HeatmapScale != "auto" && appearance.HeatmapScale != "manual") {
+		return dashboardError("Widget appearance heatmap_scale is invalid for this widget")
+	}
+	if appearance.HeatmapPalette != "" && (!heatmap || appearance.HeatmapPalette != "sequential" && appearance.HeatmapPalette != "diverging") {
+		return dashboardError("Widget appearance heatmap_palette is invalid for this widget")
+	}
+	if appearance.HeatmapMin != nil || appearance.HeatmapMax != nil {
+		if !heatmap || appearance.HeatmapScale != "manual" || appearance.HeatmapMin == nil || appearance.HeatmapMax == nil || math.IsNaN(*appearance.HeatmapMin) || math.IsNaN(*appearance.HeatmapMax) || math.IsInf(*appearance.HeatmapMin, 0) || math.IsInf(*appearance.HeatmapMax, 0) || *appearance.HeatmapMin >= *appearance.HeatmapMax {
+			return dashboardError("Manual heatmap color scale requires finite increasing bounds")
+		}
+	} else if appearance.HeatmapScale == "manual" {
+		return dashboardError("Manual heatmap color scale requires minimum and maximum")
+	}
 	return nil
 }
 
@@ -635,7 +653,7 @@ func validDashboardColor(value string) bool {
 }
 
 func supportedDashboardWidgetTypes() map[string]bool {
-	return map[string]bool{"lineplot": true, "barplot": true, "area_chart": true, "stacked_bar": true, "scatterplot": true, "starplot": true, "histogram": true, "boxplot": true, "violin": true, "confusion_matrix": true, "progress": true, "logs": true, "kpi": true, "gauge": true}
+	return map[string]bool{"lineplot": true, "barplot": true, "area_chart": true, "stacked_bar": true, "scatterplot": true, "starplot": true, "histogram": true, "boxplot": true, "violin": true, "heatmap": true, "correlation_heatmap": true, "confusion_matrix": true, "progress": true, "logs": true, "kpi": true, "gauge": true}
 }
 
 func supportedDashboardSourceKinds() map[string]bool {

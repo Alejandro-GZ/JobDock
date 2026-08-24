@@ -403,13 +403,27 @@ type ProgressObservation struct {
 }
 
 type MatrixObservation struct {
-	ID        int64       `json:"id,omitempty"`
-	JobID     string      `json:"-"`
-	AttemptID string      `json:"attempt_id,omitempty"`
-	Name      string      `json:"name"`
-	Values    [][]float64 `json:"values"`
-	Labels    []string    `json:"labels,omitempty"`
+	ID           int64             `json:"id,omitempty"`
+	JobID        string            `json:"-"`
+	AttemptID    string            `json:"attempt_id,omitempty"`
+	Name         string            `json:"name"`
+	MatrixType   string            `json:"matrix_type,omitempty"`
+	Values       [][]*float64      `json:"values"`
+	Labels       []string          `json:"labels,omitempty"`
+	RowLabels    []string          `json:"row_labels,omitempty"`
+	ColumnLabels []string          `json:"column_labels,omitempty"`
+	Unit         string            `json:"unit,omitempty"`
+	Tags         []string          `json:"tags,omitempty"`
+	Resolution   *MatrixResolution `json:"resolution,omitempty"`
 	ObservationContext
+}
+
+type MatrixResolution struct {
+	Mode            string `json:"mode"`
+	OriginalRows    int    `json:"original_rows"`
+	OriginalColumns int    `json:"original_columns"`
+	Rows            int    `json:"rows"`
+	Columns         int    `json:"columns"`
 }
 
 // DistributionObservation is a bounded statistical snapshot. Group identifies

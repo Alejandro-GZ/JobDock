@@ -23,6 +23,7 @@ type MetricDescriptor struct {
 	Milestone string         `json:"milestone,omitempty"`
 	Declared  bool           `json:"declared"`
 	Observed  bool           `json:"observed"`
+	Subtype   string         `json:"subtype,omitempty"`
 }
 
 func (s *Store) MetricDescriptors(ctx context.Context, jobID, attemptID string, requiredTags []string) ([]MetricDescriptor, error) {

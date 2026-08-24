@@ -81,8 +81,22 @@ func officialDashboardTemplates() []dashboardTemplate {
 		distributionTemplate("drift-distributions", "Drift distributions", "Compare identified reference and candidate populations without synthesizing a score.", "time-series-anomaly", nil),
 		compositionTemplate("training-throughput-composition", "Training throughput composition", "Compare related throughput signals over training steps without assuming matching units.", "general", "area_chart", "train", []string{"throughput", "samples_per_second", "tokens_per_second"}, "overlap"),
 		compositionTemplate("classification-rate-composition", "Classification rate composition", "Inspect deterministic true and false outcome-rate components across evaluation steps.", "classification", "stacked_bar", "evaluation", []string{"true_positive_rate", "true_negative_rate", "false_positive_rate", "false_negative_rate"}, ""),
+		matrixTemplate("generic-heatmap", "Generic heatmap", "Inspect a typed rectangular matrix without assigning classification semantics.", "general", "heatmap", "matrix:heatmap"),
+		matrixTemplate("correlation-heatmap", "Correlation heatmap", "Inspect a reported symmetric correlation matrix without deriving or synthesizing correlations.", "clustering-representation", "correlation_heatmap", "matrix:correlation"),
 	)
 	return result
+}
+
+func matrixTemplate(id, name, description, category, widgetType, tag string) dashboardTemplate {
+	slot := dashboardTemplateSlot{ID: "matrix", RequiredTags: []string{tag}, SourceTypes: []string{"matrix"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 1}, OnMissing: "error", OnAmbiguous: "error"}
+	palette := "sequential"
+	if widgetType == "correlation_heatmap" {
+		palette = "diverging"
+	}
+	return dashboardTemplate{ID: id, Name: name, Description: description, Category: category, SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{{
+		ID: "matrix", Type: widgetType, Size: dashboardWidgetSize{Columns: 12, Rows: 8}, Position: dashboardWidgetPosition{X: 0, Y: 0}, Slots: []dashboardTemplateSlot{slot}, GridColumns: 12,
+		Appearance: &dashboardWidgetAppearance{SchemaVersion: 1, HeatmapScale: "auto", HeatmapPalette: palette},
+	}}}
 }
 
 func compositionTemplate(id, name, description, category, widgetType, phase string, roles []string, stackMode string) dashboardTemplate {

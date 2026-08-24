@@ -520,7 +520,7 @@ func templateWidget(item dashboardTemplateWidget, sources []dashboardWidgetSourc
 
 func compatibleDashboardSourceKinds(widgetType string) map[string]bool {
 	switch widgetType {
-	case "confusion_matrix":
+	case "confusion_matrix", "heatmap", "correlation_heatmap":
 		return map[string]bool{"matrix": true}
 	case "progress":
 		return map[string]bool{"progress": true}

@@ -35,7 +35,7 @@ export const api={
   resources:(id:string,query:string)=>request<ResourceSeriesResponse>(`/jobs/${id}/resources?${query}`),
   checkpoints:async(id:string,attemptId:string)=>(await request<{items:Checkpoint[]}>(`/jobs/${id}/checkpoints?attempt_id=${encodeURIComponent(attemptId)}&limit=500`)).items,
   progress:(id:string,attemptId:string)=>request<ProgressState>(`/jobs/${id}/progress?attempt_id=${encodeURIComponent(attemptId)}`),
-  matrices:async(id:string,attemptId:string)=>(await request<{items:MatrixObservation[]}>(`/jobs/${id}/matrices?attempt_id=${encodeURIComponent(attemptId)}`)).items,
+  matrices:async(id:string,attemptId:string)=>(await request<{items:MatrixObservation[]}>(`/jobs/${id}/matrices?attempt_id=${encodeURIComponent(attemptId)}&resolution=auto`)).items,
   distributions:async(id:string,attemptId:string,bins?:number)=>(await request<{items?:DistributionObservation[]}>(`/jobs/${id}/distributions?attempt_id=${encodeURIComponent(attemptId)}${bins?`&bins=${bins}`:""}`)).items??[],
   openObservationStream:(id:string,attemptId:string)=>new EventSource(`/api/v1/jobs/${encodeURIComponent(id)}/observations/stream?attempt_id=${encodeURIComponent(attemptId)}&after=latest`),
   openSeriesStream:(id:string,attemptId:string,after:number)=>new EventSource(`/api/v1/jobs/${encodeURIComponent(id)}/series/stream?attempt_id=${encodeURIComponent(attemptId)}&after=${after}`),

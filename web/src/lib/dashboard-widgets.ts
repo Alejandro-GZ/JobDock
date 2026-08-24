@@ -1,4 +1,4 @@
-export type DashboardWidgetType = "lineplot" | "barplot" | "area_chart" | "stacked_bar" | "scatterplot" | "starplot" | "histogram" | "boxplot" | "violin" | "confusion_matrix" | "progress" | "logs" | "kpi" | "gauge";
+export type DashboardWidgetType = "lineplot" | "barplot" | "area_chart" | "stacked_bar" | "scatterplot" | "starplot" | "histogram" | "boxplot" | "violin" | "heatmap" | "correlation_heatmap" | "confusion_matrix" | "progress" | "logs" | "kpi" | "gauge";
 export type ScalarAggregation = "last" | "min" | "max" | "avg";
 export type DashboardSourceKind = "metric" | "resource" | "distribution" | "matrix" | "progress" | "log";
 export type DashboardSourceRole = "x" | "y";
@@ -30,6 +30,10 @@ export type DashboardWidgetAppearance = {
   opacity?: number;
   matrix_mode?: "absolute" | "normalized";
   stack_mode?: "overlap" | "stacked";
+  heatmap_scale?: "auto" | "manual";
+  heatmap_min?: number;
+  heatmap_max?: number;
+  heatmap_palette?: "sequential" | "diverging";
 };
 
 export type DashboardWidget = {
@@ -104,6 +108,7 @@ export type DashboardSources = {
   metrics: string[];
   resources: string[];
   matrices: string[];
+  matrix_types?: Record<string,string>;
   distributions?: string[];
   progress: boolean;
   logs?: boolean;
@@ -121,6 +126,8 @@ export const widgetCatalog: ReadonlyArray<{ type: DashboardWidgetType; label: st
   { type: "histogram", label: "Histogram", description: "Compare bounded feature, error, or drift distributions.",category:"diagnostics" },
   { type: "boxplot", label: "Box plot", description: "Compare quartiles, whiskers, and bounded outliers by group.",category:"diagnostics" },
   { type: "violin", label: "Violin plot", description: "Compare compact density summaries by group.",category:"diagnostics" },
+  { type: "heatmap", label: "Heatmap", description: "Rectangular typed values with optional row and column labels.",category:"diagnostics" },
+  { type: "correlation_heatmap", label: "Correlation heatmap", description: "Declared variable correlations on a preserved symmetric matrix.",category:"diagnostics" },
   { type: "confusion_matrix", label: "Confusion matrix", description: "Absolute or normalized classification outcomes.",category:"diagnostics" },
   { type: "progress", label: "Progress", description: "Global progress, current stage and upcoming milestones.",category:"summaries" },
   { type: "logs", label: "Logs", description: "Live stdout, stderr, or both streams.",category:"operational" },
@@ -151,7 +158,7 @@ export function defaultDashboardWidgets(sources: DashboardSources): DashboardWid
   if (sources.progress) definitions.push({ type: "progress", source: { kind: "progress", name: "progress" } });
   for (const name of sources.metrics) definitions.push({ type: "lineplot", source: { kind: "metric", name } });
   for (const name of sources.resources) definitions.push({ type: "lineplot", source: { kind: "resource", name } });
-  for (const name of sources.matrices) definitions.push({ type: "confusion_matrix", source: { kind: "matrix", name } });
+  for (const name of sources.matrices) definitions.push({ type: sources.matrix_types?.[name]==="correlation"?"correlation_heatmap":sources.matrix_types?.[name]==="heatmap"?"heatmap":"confusion_matrix", source: { kind: "matrix", name } });
   return layoutDashboardWidgets(definitions.map(definition => ({
     id: `default-${definition.source.kind}-${safeID(definition.source.name)}`,
     type: definition.type,
@@ -211,7 +218,7 @@ export function resizeDashboardWidget(widgets: DashboardWidget[], id: string, si
 }
 
 export function compatibleSourceKinds(type: DashboardWidgetType): DashboardSourceKind[] {
-  if (type === "confusion_matrix") return ["matrix"];
+  if (type === "confusion_matrix" || type === "heatmap" || type === "correlation_heatmap") return ["matrix"];
   if (type === "progress") return ["progress"];
   if(type === "logs") return ["log"];
   if(type==="histogram"||type==="boxplot"||type==="violin")return ["distribution"];
@@ -222,7 +229,7 @@ function firstCompatibleSource(type: DashboardWidgetType, sources: DashboardSour
   if (type === "progress") return sources.progress ? { kind: "progress", name: "progress" } : undefined;
   if(type === "logs")return sources.logs?{kind:"log",name:"stdout"}:undefined;
   if(type==="histogram"||type==="boxplot"||type==="violin")return sources.distributions?.[0]?{kind:"distribution",name:sources.distributions[0]}:undefined;
-  if (type === "confusion_matrix") return sources.matrices[0] ? { kind: "matrix", name: sources.matrices[0] } : undefined;
+  if (type === "confusion_matrix" || type === "heatmap" || type === "correlation_heatmap") {const expected=type==="correlation_heatmap"?"correlation":type;const name=sources.matrices.find(item=>(sources.matrix_types?.[item]??"confusion_matrix")===expected);return name?{kind:"matrix",name}:undefined}
   if (sources.metrics[0]) return { kind: "metric", name: sources.metrics[0] };
   if (sources.resources[0]) return { kind: "resource", name: sources.resources[0] };
   return undefined;
@@ -250,6 +257,9 @@ function restoreAppearance(type:DashboardWidgetType,value:unknown):DashboardWidg
   if(plot&&finiteBetween(item.opacity,.05,1))appearance.opacity=item.opacity;
   if(type==="confusion_matrix"&&(item.matrix_mode==="absolute"||item.matrix_mode==="normalized"))appearance.matrix_mode=item.matrix_mode;
   if(type==="area_chart"&&(item.stack_mode==="overlap"||item.stack_mode==="stacked"))appearance.stack_mode=item.stack_mode;
+  if((type==="heatmap"||type==="correlation_heatmap")&&(item.heatmap_scale==="auto"||item.heatmap_scale==="manual"))appearance.heatmap_scale=item.heatmap_scale;
+  if((type==="heatmap"||type==="correlation_heatmap")&&(item.heatmap_palette==="sequential"||item.heatmap_palette==="diverging"))appearance.heatmap_palette=item.heatmap_palette;
+  if((type==="heatmap"||type==="correlation_heatmap")&&item.heatmap_scale==="manual"&&finite(item.heatmap_min)&&finite(item.heatmap_max)&&item.heatmap_min!<item.heatmap_max!){appearance.heatmap_min=item.heatmap_min;appearance.heatmap_max=item.heatmap_max}
   return appearance;
 }
 function restoreAxis(value:unknown):DashboardAxisAppearance|undefined{if(!value||typeof value!=="object")return undefined;const item=value as DashboardAxisAppearance,result:DashboardAxisAppearance={};if(typeof item.label==="string"&&item.label.trim())result.label=item.label.trim().slice(0,80);if(typeof item.unit==="string"&&item.unit.trim())result.unit=item.unit.trim().slice(0,64);if(item.scale==="linear"||item.scale==="log")result.scale=item.scale;if(item.range==="auto")result.range="auto";if(item.range==="manual"&&Number.isFinite(item.min)&&Number.isFinite(item.max)&&item.min!<item.max!){result.range="manual";result.min=item.min;result.max=item.max}return Object.keys(result).length?result:undefined}

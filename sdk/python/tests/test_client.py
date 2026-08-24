@@ -205,6 +205,8 @@ def test_progress_milestones_matrices_and_checkpoint_context(tmp_path: Path, mon
     assert queued[1][0] == "milestones/reached" and queued[1][1]["milestone"] == "prepare"
     assert queued[2][0] == "progress" and queued[2][1]["value"] == .5 and queued[2][1]["milestone"] == "train"
     assert queued[3][0] == "matrices" and queued[3][1]["values"] == [[8.0, 2.0], [1.0, 9.0]]
+    assert queued[3][1]["matrix_type"] == "confusion_matrix"
+    assert queued[3][1]["tags"] == ["matrix:confusion_matrix"]
 
     responses = iter([{"id": "sync-rich"}, {"status": "CONFIRMED"}])
     calls = []
@@ -221,10 +223,30 @@ def test_rich_observation_validation_is_bounded(tmp_path: Path):
     job = Job("id", "http://jobdock.test", "token", tmp_path)
     with pytest.raises(ValueError, match="positive finite"):
         job.define_milestones([Milestone("train", 0)])
-    with pytest.raises(ValueError, match="NxN"):
+    with pytest.raises(ValueError, match="square"):
         job.confusion_matrix("broken", [[1, 2]], ["cat"])
     with pytest.raises(ValueError, match="finite"):
         job.confusion_matrix("broken", [[float("inf")]], ["cat"])
     with pytest.raises(ValueError, match="timezone-aware"):
         job.progress(.5, timestamp=datetime(2026, 1, 1))
+    job.close()
+
+
+def test_generic_and_correlation_heatmaps_are_typed_without_derived_values(tmp_path: Path, monkeypatch):
+    job = Job("id", "http://jobdock.test", "token", tmp_path)
+    queued = []
+    monkeypatch.setattr(job, "_enqueue", lambda endpoint, payload: queued.append((endpoint, payload)))
+    job.heatmap("attention", [[.8, None, .2], [.1, .7, .2]], row_labels=["q1", "q2"], column_labels=["k1", "k2", "k3"], unit="score", tags=["phase:evaluation"])
+    job.correlation_heatmap("features", [[1, -.4], [-.4, 1]], ["age", "income"])
+    queued[0][1].pop("timestamp")
+    assert queued[0][1] == {
+        "name": "attention", "matrix_type": "heatmap", "values": [[.8, None, .2], [.1, .7, .2]],
+        "row_labels": ["q1", "q2"], "column_labels": ["k1", "k2", "k3"], "unit": "score",
+        "tags": ["matrix:heatmap", "phase:evaluation"],
+    }
+    assert queued[1][1]["matrix_type"] == "correlation"
+    assert queued[1][1]["values"] == [[1.0, -.4], [-.4, 1.0]]
+    assert queued[1][1]["tags"] == ["matrix:correlation", "matrix:heatmap"]
+    with pytest.raises(ValueError, match="symmetric"):
+        job.correlation_heatmap("invented", [[1, .2], [.3, 1]], ["a", "b"])
     job.close()

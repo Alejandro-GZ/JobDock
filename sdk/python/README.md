@@ -150,6 +150,27 @@ job.confusion_matrix(
 )
 ```
 
+Generic heatmaps use independent optional row and column labels and may contain
+explicit null cells. Correlation heatmaps are a separate semantic specialization:
+JobDock validates and renders the symmetric values reported by user code, but it
+never calculates missing correlations.
+
+```python
+job.heatmap(
+    "attention",
+    [[0.8, None, 0.2], [0.1, 0.7, 0.2]],
+    row_labels=["query-1", "query-2"],
+    column_labels=["key-1", "key-2", "key-3"],
+    unit="score",
+)
+
+job.correlation_heatmap(
+    "feature-correlation",
+    [[1.0, -0.35], [-0.35, 1.0]],
+    ["age", "income"],
+)
+```
+
 Histogram, box, violin, feature, class, and drift views share a bounded
 distribution contract. A group identifies a class or population; JobDock
 derives bins, quantiles, whiskers, bounded outliers, and density on the server.

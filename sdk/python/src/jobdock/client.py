@@ -39,6 +39,8 @@ class NoopJob:
     def milestone(self, name: str, *, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None: pass
     def matrix(self, observation: MatrixObservation) -> None: pass
     def confusion_matrix(self, name: str, values: Iterable[Iterable[float]], labels: Iterable[str], *, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None: pass
+    def heatmap(self, name: str, values: Iterable[Iterable[float | None]], *, row_labels: Iterable[str] = (), column_labels: Iterable[str] = (), unit: str | None = None, step: int | None = None, timestamp: datetime | None = None, tags: Iterable[str] | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None: pass
+    def correlation_heatmap(self, name: str, values: Iterable[Iterable[float | None]], variables: Iterable[str], *, step: int | None = None, timestamp: datetime | None = None, tags: Iterable[str] | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None: pass
     def distribution(self, observation: DistributionObservation) -> None: pass
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None: pass
     def metrics(self, items: Iterable[Metric]) -> None: pass
@@ -98,18 +100,41 @@ class Job:
         self._enqueue("milestones/reached", _observation_payload(observation, milestone=name.strip()))
 
     def matrix(self, observation: MatrixObservation) -> None:
-        values = [[float(value) for value in row] for row in observation.values]
-        labels = list(observation.labels)
-        size = len(values)
-        if not observation.name.strip() or len(observation.name.strip()) > 128 or size == 0 or size > 128 or len(labels) != size or any(len(row) != size for row in values) or any(not label or len(label) > 128 for label in labels):
-            raise ValueError("matrix requires a name, NxN values, and one label per dimension")
-        if any(not math.isfinite(value) for row in values for value in row): raise ValueError("matrix values must be finite")
-        payload = _observation_payload(observation, name=observation.name.strip(), values=values, labels=labels)
+        values = [[None if value is None else float(value) for value in row] for row in observation.values]
+        labels, rows, columns = list(observation.labels), list(observation.row_labels), list(observation.column_labels)
+        matrix_type, row_count = observation.matrix_type.strip().lower(), len(values)
+        column_count = len(values[0]) if values else 0
+        if not observation.name.strip() or len(observation.name.strip()) > 128 or matrix_type not in {"confusion_matrix", "heatmap", "correlation"} or row_count == 0 or row_count > 128 or column_count == 0 or column_count > 128 or any(len(row) != column_count for row in values):
+            raise ValueError("matrix requires a name, a supported type, and a rectangular 1-128 by 1-128 grid")
+        if any(value is not None and not math.isfinite(value) for row in values for value in row): raise ValueError("matrix values must be finite or null")
+        if not rows and labels: rows = labels
+        if not columns and labels: columns = labels
+        if matrix_type == "confusion_matrix" and row_count != column_count:
+            raise ValueError("confusion matrices require finite square values and shared class labels")
+        if any(not label or len(label) > 128 for label in [*rows, *columns]) or rows and len(rows) != row_count or columns and len(columns) != column_count:
+            raise ValueError("matrix labels must be omitted or match their dimension")
+        if matrix_type == "confusion_matrix" and (row_count != column_count or rows != columns or len(rows) != row_count or any(value is None for row in values for value in row)):
+            raise ValueError("confusion matrices require finite square values and shared class labels")
+        if matrix_type == "correlation" and (row_count != column_count or rows != columns or len(rows) != row_count or not _symmetric_nullable_matrix(values)):
+            raise ValueError("correlation matrices require matching variable axes and symmetric values")
+        unit = observation.unit.strip() if observation.unit is not None else None
+        if unit is not None and (not unit or len(unit) > 64): raise ValueError("matrix unit must contain 1-64 characters")
+        tags = set(_validated_semantic_tags(observation.tags) or ())
+        tags.add(f"matrix:{matrix_type}")
+        if matrix_type == "correlation": tags.add("matrix:heatmap")
+        payload = _observation_payload(observation, name=observation.name.strip(), matrix_type=matrix_type, values=values, labels=labels or None, row_labels=rows or None, column_labels=columns or None, unit=unit, tags=sorted(tags))
         if len(json.dumps(payload, separators=(",", ":")).encode()) > 1 << 20: raise ValueError("matrix payload must not exceed 1 MiB")
         self._enqueue("matrices", payload)
 
     def confusion_matrix(self, name: str, values: Iterable[Iterable[float]], labels: Iterable[str], *, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None:
         self.matrix(MatrixObservation(name, [list(row) for row in values], list(labels), step, timestamp, metadata))
+
+    def heatmap(self, name: str, values: Iterable[Iterable[float | None]], *, row_labels: Iterable[str] = (), column_labels: Iterable[str] = (), unit: str | None = None, step: int | None = None, timestamp: datetime | None = None, tags: Iterable[str] | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None:
+        self.matrix(MatrixObservation(name, [list(row) for row in values], (), step, timestamp, metadata, "heatmap", list(row_labels), list(column_labels), unit, None if tags is None else tuple(tags)))
+
+    def correlation_heatmap(self, name: str, values: Iterable[Iterable[float | None]], variables: Iterable[str], *, step: int | None = None, timestamp: datetime | None = None, tags: Iterable[str] | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None:
+        labels = list(variables)
+        self.matrix(MatrixObservation(name, [list(row) for row in values], (), step, timestamp, metadata, "correlation", labels, labels, None, None if tags is None else tuple(tags)))
 
     def distribution(self, observation: DistributionObservation) -> None:
         name, group = observation.name.strip(), observation.group.strip() or "default"
@@ -323,6 +348,17 @@ def _metric_payload(metric: Metric) -> dict[str, Any]:
     if tags is not None:
         item["tags"] = tags
     return item
+
+
+def _symmetric_nullable_matrix(values: list[list[float | None]]) -> bool:
+    for row in range(len(values)):
+        for column in range(row + 1, len(values)):
+            left, right = values[row][column], values[column][row]
+            if left is None or right is None:
+                if left is not None or right is not None: return False
+            elif not math.isclose(left, right, rel_tol=1e-6, abs_tol=1e-6):
+                return False
+    return True
 
 
 _observable_source_type_pattern = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")

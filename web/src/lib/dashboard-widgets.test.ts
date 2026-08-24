@@ -14,19 +14,26 @@ describe("dashboard widget model",()=>{
   });
 
   it("supports the complete catalog without mutating telemetry or existing widgets",()=>{
-    expect(widgetCatalog.map(item=>item.type)).toEqual(["lineplot","barplot","area_chart","stacked_bar","scatterplot","starplot","histogram","boxplot","violin","confusion_matrix","progress","logs","kpi","gauge"]);
+    expect(widgetCatalog.map(item=>item.type)).toEqual(["lineplot","barplot","area_chart","stacked_bar","scatterplot","starplot","histogram","boxplot","violin","heatmap","correlation_heatmap","confusion_matrix","progress","logs","kpi","gauge"]);
     expect(new Set(widgetCatalog.map(item=>item.category))).toEqual(new Set(["trends","relationships","summaries","diagnostics","operational"]));
     const original=defaultDashboardWidgets(sources),snapshot=structuredClone(original);
     const added=widgetCatalog.map((item,index)=>createDashboardWidget(item.type,sources,`new-${index}`));
-    expect(added.map(widget=>widget.sources[0]?.kind)).toEqual(["metric","metric","metric","metric","metric","metric",undefined,undefined,undefined,"matrix","progress","log","metric","metric"]);
+    expect(added.map(widget=>widget.sources[0]?.kind)).toEqual(["metric","metric","metric","metric","metric","metric",undefined,undefined,undefined,undefined,undefined,"matrix","progress","log","metric","metric"]);
     expect(added[4].sources.map(source=>source.role)).toEqual(["x","y"]);
     expect(added[5]).toMatchObject({type:"starplot",sources:[{kind:"metric",name:"loss"},{kind:"metric",name:"accuracy"},{kind:"resource",name:"cpu"}]});
-    expect(added[12]).toMatchObject({type:"kpi",scalar_aggregation:"last"});
-    expect(added[13]).toMatchObject({type:"gauge",gauge_style:"gauge",scalar_aggregation:"last"});
+    expect(added[14]).toMatchObject({type:"kpi",scalar_aggregation:"last"});
+    expect(added[15]).toMatchObject({type:"gauge",gauge_style:"gauge",scalar_aggregation:"last"});
     const removed=removeDashboardWidget(original,original[1].id);
     expect(original).toEqual(snapshot);
     expect(removed).toHaveLength(original.length-1);
     expect(compatibleSourceKinds("lineplot")).toEqual(["metric","resource"]);
+  });
+
+  it("keeps confusion, generic heatmap, and correlation sources semantically separate",()=>{
+    const typed={...sources,matrices:["confusion","attention","features"],matrix_types:{confusion:"confusion_matrix",attention:"heatmap",features:"correlation"}};
+    expect(createDashboardWidget("confusion_matrix",typed,"confusion").sources[0]?.name).toBe("confusion");
+    expect(createDashboardWidget("heatmap",typed,"heatmap").sources[0]?.name).toBe("attention");
+    expect(createDashboardWidget("correlation_heatmap",typed,"correlation").sources[0]?.name).toBe("features");
   });
 
   it("reorders and resizes without overlapping occupied grid cells",()=>{

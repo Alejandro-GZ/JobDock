@@ -35,7 +35,7 @@ func TestOfficialObservabilityCatalogIsCompleteAndCanonical(t *testing.T) {
 
 func TestOfficialDashboardTemplateCatalogIsDiverseValidAndFrameworkNeutral(t *testing.T) {
 	templates, ids, categories, signatures, layouts := officialDashboardTemplates(), map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
-	if len(templates) < 45 || len(templates) > 55 {
+	if len(templates) < 45 || len(templates) > 60 {
 		t.Fatalf("official template count: %d", len(templates))
 	}
 	standard := map[string]bool{}
@@ -47,6 +47,8 @@ func TestOfficialDashboardTemplateCatalogIsDiverseValidAndFrameworkNeutral(t *te
 	for _, phase := range officialObservabilityCatalog.Phases {
 		standard["phase:"+phase.ID] = true
 	}
+	standard["matrix:heatmap"] = true
+	standard["matrix:correlation"] = true
 	for _, template := range templates {
 		if ids[template.ID] || template.Name == "" || template.Description == "" || !dashboardTemplateCategories[template.Category] {
 			t.Fatalf("invalid template metadata: %#v", template)
@@ -90,6 +92,21 @@ func TestOfficialDashboardTemplateCatalogIsDiverseValidAndFrameworkNeutral(t *te
 	}
 	if len(layouts) < 12 {
 		t.Fatalf("layout signatures=%d want at least 12", len(layouts))
+	}
+}
+
+func TestHeatmapTemplatesResolveOnlyTypedMatrixSources(t *testing.T) {
+	heatmap := resolveDashboardTemplate(officialTemplateByID("generic-heatmap"), []observableSource{{Kind: "matrix", Name: "attention", Tags: []string{"matrix:heatmap"}}})
+	if heatmap.Compatibility != "compatible" || len(heatmap.Widgets) != 1 || heatmap.Widgets[0].Type != "heatmap" || heatmap.Widgets[0].Sources[0].Name != "attention" {
+		t.Fatalf("generic heatmap resolution: %#v", heatmap)
+	}
+	correlation := resolveDashboardTemplate(officialTemplateByID("correlation-heatmap"), []observableSource{{Kind: "matrix", Name: "features", Tags: []string{"matrix:correlation", "matrix:heatmap"}}})
+	if correlation.Compatibility != "compatible" || correlation.Widgets[0].Type != "correlation_heatmap" || correlation.Widgets[0].Appearance.HeatmapPalette != "diverging" {
+		t.Fatalf("correlation heatmap resolution: %#v", correlation)
+	}
+	confusionOnly := resolveDashboardTemplate(officialTemplateByID("generic-heatmap"), []observableSource{{Kind: "matrix", Name: "confusion", Tags: []string{"matrix:confusion_matrix"}}})
+	if confusionOnly.Compatibility != "incompatible" {
+		t.Fatalf("confusion matrix must retain separate semantics: %#v", confusionOnly)
 	}
 }
 

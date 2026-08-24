@@ -62,17 +62,17 @@ func TestRichObservableDescriptorsAreStableAndAttemptScoped(t *testing.T) {
 	if err = repository.AppendProgress(ctx, job.ID, attemptID, "simple", domain.ProgressObservation{Value: .75}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = repository.AppendMatrix(ctx, domain.MatrixObservation{JobID: job.ID, AttemptID: attemptID, Name: "validation", Values: [][]float64{{1, 0}, {0, 1}}}); err != nil {
+	if _, err = repository.AppendMatrix(ctx, domain.MatrixObservation{JobID: job.ID, AttemptID: attemptID, Name: "validation", Values: nullableTestMatrix([][]float64{{1, 0}, {0, 1}})}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = repository.AppendMatrix(ctx, domain.MatrixObservation{JobID: job.ID, AttemptID: attemptID, Name: "validation", Values: [][]float64{{2, 0}, {0, 2}}}); err != nil {
+	if _, err = repository.AppendMatrix(ctx, domain.MatrixObservation{JobID: job.ID, AttemptID: attemptID, Name: "validation", Values: nullableTestMatrix([][]float64{{2, 0}, {0, 2}})}); err != nil {
 		t.Fatal(err)
 	}
 	descriptors, err := repository.ObservableDescriptors(ctx, job.ID, attemptID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(descriptors) != 4 || descriptors[0].Name != "future_accuracy" || !descriptors[0].Declared || descriptors[0].Observed || descriptors[0].Phase != "validation" || descriptors[1].Name != "loss" || !descriptors[1].Declared || !descriptors[1].Observed || descriptors[1].Unit != "ratio" || descriptors[2].Type != "matrix" || !descriptors[2].Declared || !descriptors[2].Observed || descriptors[3].Type != "progress" || descriptors[3].Declared || !descriptors[3].Observed {
+	if len(descriptors) != 4 || descriptors[0].Name != "future_accuracy" || !descriptors[0].Declared || descriptors[0].Observed || descriptors[0].Phase != "validation" || descriptors[1].Name != "loss" || !descriptors[1].Declared || !descriptors[1].Observed || descriptors[1].Unit != "ratio" || descriptors[2].Type != "matrix" || descriptors[2].Subtype != "confusion_matrix" || !descriptors[2].Declared || !descriptors[2].Observed || descriptors[3].Type != "progress" || descriptors[3].Declared || !descriptors[3].Observed {
 		t.Fatalf("observable descriptors: %#v", descriptors)
 	}
 	var metricSamples int
@@ -101,4 +101,16 @@ func TestRichObservableDescriptorsAreStableAndAttemptScoped(t *testing.T) {
 	if err != nil || len(otherPhases) != 0 {
 		t.Fatalf("phases leaked across attempts: %#v %v", otherPhases, err)
 	}
+}
+
+func nullableTestMatrix(values [][]float64) [][]*float64 {
+	result := make([][]*float64, len(values))
+	for row := range values {
+		result[row] = make([]*float64, len(values[row]))
+		for column := range values[row] {
+			value := values[row][column]
+			result[row][column] = &value
+		}
+	}
+	return result
 }
