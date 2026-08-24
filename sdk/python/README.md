@@ -150,7 +150,35 @@ job.confusion_matrix(
 )
 ```
 
-The SDK exports presentation-independent `CheckpointObservation`, `ProgressObservation`, `Milestone`, and `MatrixObservation` contracts. These types contain no chart or React concepts.
+Histogram, box, violin, feature, class, and drift views share a bounded
+distribution contract. A group identifies a class or population; JobDock
+derives bins, quantiles, whiskers, bounded outliers, and density on the server.
+Optional scores are displayed only when user code reports them:
+
+```python
+from jobdock import DistributionObservation
+
+job.distribution(DistributionObservation(
+    "residual",
+    residuals[:4096],
+    group="baseline",
+    unit="ms",
+    tags=["histogram:error", "distribution:drift"],
+))
+job.distribution(DistributionObservation(
+    "residual",
+    candidate_residuals[:4096],
+    group="current",
+    unit="ms",
+    scores={"psi": measured_psi},
+))
+```
+
+Each snapshot accepts at most 4096 finite samples. JobDock returns at most 512
+samples, 256 bins, and 128 outliers to a renderer and never requires uploading
+or persisting the original dataset.
+
+The SDK exports presentation-independent `CheckpointObservation`, `ProgressObservation`, `Milestone`, `MatrixObservation`, and `DistributionObservation` contracts. These types contain no chart or React concepts.
 
 Outside JobDock, `current_job()` returns a no-op object. Use `current_job(required=True)` when missing execution context should be an error.
 

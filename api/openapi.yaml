@@ -497,6 +497,12 @@ paths:
       operationId: listJobMatrices
       parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDQuery'}, {name: name, in: query, schema: {type: string}}, {name: step, in: query, schema: {type: integer, format: int64}}]
       responses: {'200': {description: Latest matrices by name or matrices selected by step, content: {application/json: {schema: {$ref: '#/components/schemas/MatrixList'}}}}}
+  /jobs/{jobId}/distributions:
+    get:
+      operationId: listJobDistributions
+      description: Return the latest bounded distribution snapshot per name and group with server-derived bins, quantiles, density, whiskers, and bounded outliers.
+      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/AttemptIDQuery'}, {name: name, in: query, schema: {type: string}}, {name: group, in: query, schema: {type: string}}, {name: bins, in: query, schema: {oneOf: [{type: string, enum: [auto]}, {type: integer, minimum: 2, maximum: 256}]}}]
+      responses: {'200': {description: Attempt-scoped compact distribution views, content: {application/json: {schema: {$ref: '#/components/schemas/DistributionList'}}}}, '422': {$ref: '#/components/responses/Problem'} }
   /jobs/{jobId}/observations/stream:
     get:
       operationId: streamJobObservations
@@ -851,6 +857,12 @@ paths:
       operationId: reportMatrix
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/MatrixObservation'}}}}
       responses: {'202': {description: Structured matrix accepted}, '413': {$ref: '#/components/responses/Problem'}, '422': {$ref: '#/components/responses/Problem'}}
+  /job-context/distributions:
+    post:
+      security: [{bearerToken: []}]
+      operationId: reportDistribution
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DistributionObservationWrite'}}}}
+      responses: {'202': {description: Bounded distribution snapshot accepted}, '422': {$ref: '#/components/responses/Problem'}}
   /job-context/metrics:
     post:
       security: [{bearerToken: []}]
@@ -1316,7 +1328,7 @@ components:
       additionalProperties: false
       required: [kind, name]
       properties:
-        kind: {type: string, enum: [metric, resource, matrix, progress, log]}
+        kind: {type: string, enum: [metric, resource, distribution, matrix, progress, log]}
         name: {type: string, minLength: 1, maxLength: 128}
         role: {type: string, enum: [x, y]}
     DashboardWidgetAppearance:
@@ -1368,7 +1380,7 @@ components:
       required: [id, type, size, position, sources]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
-        type: {type: string, enum: [lineplot, barplot, scatterplot, starplot, confusion_matrix, progress, logs, kpi, gauge]}
+        type: {type: string, enum: [lineplot, barplot, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, progress, logs, kpi, gauge]}
         title: {type: string, maxLength: 120, description: Optional compact overlay title. An omitted or empty title reserves no plot space.}
         size:
           type: object
@@ -1384,6 +1396,7 @@ components:
         grid_columns: {type: integer, enum: [4, 12]}
         x_axis: {type: string, enum: [time, step]}
         time_range: {type: string, enum: [1h, 6h, 24h, 7d, all]}
+        histogram_bins: {type: integer, minimum: 2, maximum: 256, description: Omit for automatic bin selection.}
         gauge_max_mode: {type: string, enum: [historical, fixed]}
         gauge_max_value: {type: number, exclusiveMinimum: 0}
         scalar_aggregation: {type: string, enum: [last, min, max, avg]}
@@ -1411,7 +1424,7 @@ components:
         id: {type: string, minLength: 1, maxLength: 128}
         required_tags: {$ref: '#/components/schemas/SemanticMetricTags'}
         optional_tags: {$ref: '#/components/schemas/SemanticMetricTags'}
-        source_types: {type: array, minItems: 1, maxItems: 5, uniqueItems: true, items: {type: string, enum: [metric, resource, matrix, progress, log]}}
+        source_types: {type: array, minItems: 1, maxItems: 6, uniqueItems: true, items: {type: string, enum: [metric, resource, distribution, matrix, progress, log]}}
         cardinality: {$ref: '#/components/schemas/DashboardTemplateCardinality'}
         role: {type: string, enum: [x, y]}
         on_missing: {type: string, enum: [error, omit_slot, omit_widget]}
@@ -1422,7 +1435,7 @@ components:
       required: [id, type, size, position, slots]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
-        type: {type: string, enum: [lineplot, barplot, scatterplot, starplot, confusion_matrix, progress, logs, kpi, gauge]}
+        type: {type: string, enum: [lineplot, barplot, scatterplot, starplot, histogram, boxplot, violin, confusion_matrix, progress, logs, kpi, gauge]}
         title: {type: string, maxLength: 120}
         size:
           type: object
@@ -1936,6 +1949,55 @@ components:
       properties:
         attempt_id: {type: string, format: uuid}
         items: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/MatrixObservation'}}
+    DistributionObservationWrite:
+      allOf:
+        - {$ref: '#/components/schemas/ObservationContext'}
+        - type: object
+          required: [name, values]
+          properties:
+            name: {type: string, minLength: 1, maxLength: 128}
+            group: {type: string, minLength: 1, maxLength: 128, default: default}
+            unit: {type: string, minLength: 1, maxLength: 64}
+            values: {type: array, minItems: 1, maxItems: 4096, items: {type: number, format: double}}
+            scores: {type: object, maxProperties: 32, additionalProperties: {type: number, format: double}}
+            tags: {type: array, maxItems: 32, uniqueItems: true, items: {type: string}}
+    DistributionSummary:
+      type: object
+      required: [count, min, q1, median, q3, max, mean, whisker_low, whisker_high, outliers]
+      properties:
+        count: {type: integer, minimum: 1}
+        min: {type: number}
+        q1: {type: number}
+        median: {type: number}
+        q3: {type: number}
+        max: {type: number}
+        mean: {type: number}
+        whisker_low: {type: number}
+        whisker_high: {type: number}
+        outliers: {type: array, maxItems: 128, items: {type: number}}
+    DistributionView:
+      type: object
+      required: [id, name, group, samples, bins, density, summary]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        group: {type: string}
+        unit: {type: string}
+        step: {type: integer, format: int64}
+        timestamp: {type: string, format: date-time}
+        samples: {type: array, maxItems: 512, items: {type: number}}
+        bins: {type: array, maxItems: 256, items: {type: object, required: [lower, upper, count], properties: {lower: {type: number}, upper: {type: number}, count: {type: integer, minimum: 0}}}}
+        density: {type: array, maxItems: 256, items: {type: object, required: [x, density], properties: {x: {type: number}, density: {type: number, minimum: 0, maximum: 1}}}}
+        summary: {$ref: '#/components/schemas/DistributionSummary'}
+        scores: {type: object, additionalProperties: {type: number}}
+        tags: {type: array, items: {type: string}}
+        metadata: {$ref: '#/components/schemas/ObservationMetadata'}
+    DistributionList:
+      type: object
+      required: [attempt_id, items]
+      properties:
+        attempt_id: {type: string, format: uuid}
+        items: {type: array, maxItems: 512, items: {$ref: '#/components/schemas/DistributionView'}}
     ProgressState:
       type: object
       required: [attempt_id, milestones, reached]

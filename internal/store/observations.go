@@ -245,6 +245,92 @@ func (s *Store) Matrices(ctx context.Context, jobID, attemptID, name string, ste
 	return items, rows.Err()
 }
 
+func (s *Store) AppendDistribution(ctx context.Context, item domain.DistributionObservation) (domain.DistributionObservation, error) {
+	values, _ := json.Marshal(item.Values)
+	scores, _ := json.Marshal(item.Scores)
+	tags, _ := json.Marshal(item.Tags)
+	metadata, _ := json.Marshal(item.Metadata)
+	captured := time.Now().UTC()
+	if item.CapturedAt != nil {
+		captured = item.CapturedAt.UTC()
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return item, err
+	}
+	defer tx.Rollback()
+	if err = ensureDeclaredSourceType(ctx, tx, item.AttemptID, item.Name, "distribution"); err != nil {
+		return item, err
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO job_distribution_observations(job_id,attempt_id,name,group_name,unit,step,captured_at,values_json,scores_json,tags_json,metadata_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, item.JobID, item.AttemptID, item.Name, item.Group, nullableString(item.Unit), item.Step, captured.UnixMilli(), values, nullableJSON(scores, len(item.Scores)), nullableJSON(tags, len(item.Tags)), nullableJSON(metadata, len(item.Metadata)))
+	if err != nil {
+		return item, mapConstraint(err)
+	}
+	item.ID, _ = result.LastInsertId()
+	item.CapturedAt = &captured
+	if _, err = tx.ExecContext(ctx, `INSERT INTO job_rich_observable_descriptors(job_id,attempt_id,kind,name,created_at,updated_at) VALUES(?,?,'distribution',?,?,?) ON CONFLICT(job_id,attempt_id,kind,name) DO UPDATE SET updated_at=excluded.updated_at`, item.JobID, item.AttemptID, item.Name, captured.UnixMilli(), captured.UnixMilli()); err != nil {
+		return item, mapConstraint(err)
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO job_observation_updates(job_id,attempt_id,kind,observed_at) VALUES(?,?,'distribution',?)`, item.JobID, item.AttemptID, captured.UnixMilli()); err != nil {
+		return item, err
+	}
+	return item, tx.Commit()
+}
+
+func nullableJSON(value []byte, count int) any {
+	if count == 0 {
+		return nil
+	}
+	return value
+}
+
+func (s *Store) Distributions(ctx context.Context, jobID, attemptID, name, group string, limit int) ([]domain.DistributionObservation, error) {
+	args := []any{jobID, attemptID}
+	where := "job_id=? AND attempt_id=?"
+	if name != "" {
+		where += " AND name=?"
+		args = append(args, name)
+	}
+	if group != "" {
+		where += " AND group_name=?"
+		args = append(args, group)
+	}
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,group_name,COALESCE(unit,''),step,captured_at,values_json,COALESCE(scores_json,''),COALESCE(tags_json,''),COALESCE(metadata_json,'') FROM job_distribution_observations WHERE `+where+` ORDER BY captured_at DESC,id DESC LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []domain.DistributionObservation{}
+	for rows.Next() {
+		var item domain.DistributionObservation
+		var step sql.NullInt64
+		var captured int64
+		var values, scores, tags, metadata string
+		if err = rows.Scan(&item.ID, &item.Name, &item.Group, &item.Unit, &step, &captured, &values, &scores, &tags, &metadata); err != nil {
+			return nil, err
+		}
+		item.AttemptID = attemptID
+		at := time.UnixMilli(captured).UTC()
+		item.CapturedAt = &at
+		if step.Valid {
+			item.Step = &step.Int64
+		}
+		_ = json.Unmarshal([]byte(values), &item.Values)
+		if scores != "" {
+			_ = json.Unmarshal([]byte(scores), &item.Scores)
+		}
+		if tags != "" {
+			_ = json.Unmarshal([]byte(tags), &item.Tags)
+		}
+		if metadata != "" {
+			_ = json.Unmarshal([]byte(metadata), &item.Metadata)
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) ConfirmedCheckpoints(ctx context.Context, jobID, attemptID string, after int64, limit int) ([]domain.CheckpointSync, bool, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT rowid,id FROM checkpoint_syncs WHERE job_id=? AND attempt_id=? AND confirmed_at IS NOT NULL AND rowid>? ORDER BY rowid LIMIT ?`, jobID, attemptID, after, limit+1)
 	if err != nil {

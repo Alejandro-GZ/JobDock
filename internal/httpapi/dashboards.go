@@ -39,6 +39,7 @@ type dashboardWidget struct {
 	XAxis              string                     `json:"x_axis,omitempty"`
 	GridColumns        int                        `json:"grid_columns,omitempty"`
 	TimeRange          string                     `json:"time_range,omitempty"`
+	HistogramBins      int                        `json:"histogram_bins,omitempty"`
 	GaugeMaxMode       string                     `json:"gauge_max_mode,omitempty"`
 	GaugeMaxValue      *float64                   `json:"gauge_max_value,omitempty"`
 	ScalarAggregation  string                     `json:"scalar_aggregation,omitempty"`
@@ -457,6 +458,9 @@ func validateDashboardConfig(config dashboardConfig) error {
 		if widget.TimeRange != "" && widget.TimeRange != "1h" && widget.TimeRange != "6h" && widget.TimeRange != "24h" && widget.TimeRange != "7d" && widget.TimeRange != "all" {
 			return dashboardError("Widget time_range is invalid")
 		}
+		if widget.HistogramBins != 0 && (widget.Type != "histogram" || widget.HistogramBins < 2 || widget.HistogramBins > 256) {
+			return dashboardError("Histogram bins must be automatic or between 2 and 256")
+		}
 		if widget.GaugeMaxMode != "" && widget.GaugeMaxMode != "historical" && widget.GaugeMaxMode != "fixed" {
 			return dashboardError("Widget gauge_max_mode is invalid")
 		}
@@ -534,7 +538,7 @@ func validateDashboardWidgetAppearance(widget dashboardWidget) error {
 	if appearance.Legend != "" && appearance.Legend != "auto" && appearance.Legend != "hidden" && appearance.Legend != "open" {
 		return dashboardError("Widget appearance legend is invalid")
 	}
-	plot := widget.Type == "lineplot" || widget.Type == "barplot" || widget.Type == "scatterplot" || widget.Type == "starplot"
+	plot := widget.Type == "lineplot" || widget.Type == "barplot" || widget.Type == "scatterplot" || widget.Type == "starplot" || widget.Type == "histogram" || widget.Type == "boxplot" || widget.Type == "violin"
 	if len(appearance.Subtitle) > 160 {
 		return dashboardError("Widget appearance subtitle may contain at most 160 characters")
 	}
@@ -627,11 +631,11 @@ func validDashboardColor(value string) bool {
 }
 
 func supportedDashboardWidgetTypes() map[string]bool {
-	return map[string]bool{"lineplot": true, "barplot": true, "scatterplot": true, "starplot": true, "confusion_matrix": true, "progress": true, "logs": true, "kpi": true, "gauge": true}
+	return map[string]bool{"lineplot": true, "barplot": true, "scatterplot": true, "starplot": true, "histogram": true, "boxplot": true, "violin": true, "confusion_matrix": true, "progress": true, "logs": true, "kpi": true, "gauge": true}
 }
 
 func supportedDashboardSourceKinds() map[string]bool {
-	return map[string]bool{"metric": true, "resource": true, "matrix": true, "progress": true, "log": true}
+	return map[string]bool{"metric": true, "resource": true, "distribution": true, "matrix": true, "progress": true, "log": true}
 }
 
 type dashboardError string

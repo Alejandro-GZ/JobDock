@@ -16,7 +16,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
-from .observability import CheckpointObservation, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ObservabilityPhase, ProgressObservation
+from .observability import CheckpointObservation, DistributionObservation, JSONValue, MatrixObservation, Metric, Milestone, ObservableSource, ObservabilityManifest, ObservabilityPhase, ProgressObservation
 from . import __version__
 
 logger = logging.getLogger("jobdock")
@@ -39,6 +39,7 @@ class NoopJob:
     def milestone(self, name: str, *, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None: pass
     def matrix(self, observation: MatrixObservation) -> None: pass
     def confusion_matrix(self, name: str, values: Iterable[Iterable[float]], labels: Iterable[str], *, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None: pass
+    def distribution(self, observation: DistributionObservation) -> None: pass
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None: pass
     def metrics(self, items: Iterable[Metric]) -> None: pass
     def declare_observability(self, manifest: ObservabilityManifest) -> None: pass
@@ -109,6 +110,20 @@ class Job:
 
     def confusion_matrix(self, name: str, values: Iterable[Iterable[float]], labels: Iterable[str], *, step: int | None = None, timestamp: datetime | None = None, metadata: Mapping[str, JSONValue] | None = None) -> None:
         self.matrix(MatrixObservation(name, [list(row) for row in values], list(labels), step, timestamp, metadata))
+
+    def distribution(self, observation: DistributionObservation) -> None:
+        name, group = observation.name.strip(), observation.group.strip() or "default"
+        values = [float(value) for value in observation.values]
+        unit = observation.unit.strip() if observation.unit is not None else None
+        if not name or len(name) > 128 or len(group) > 128 or unit is not None and (not unit or len(unit) > 64):
+            raise ValueError("distribution name, group, and unit are invalid")
+        if not values or len(values) > 4096 or any(not math.isfinite(value) for value in values):
+            raise ValueError("distribution requires 1-4096 finite samples")
+        scores = dict(observation.scores or {})
+        if len(scores) > 32 or any(not key.strip() or len(key) > 128 or not math.isfinite(float(value)) for key, value in scores.items()):
+            raise ValueError("distribution scores must contain at most 32 named finite values")
+        payload = _observation_payload(observation, name=name, group=group, unit=unit, values=values, scores=scores or None, tags=_validated_semantic_tags(observation.tags))
+        self._enqueue("distributions", payload)
 
     def metric(self, name: str, value: float, step: int | None = None, *, timestamp: datetime | None = None, unit: str | None = None, metadata: Mapping[str, JSONValue] | None = None, tags: Iterable[str] | None = None) -> None:
         """Report one scalar metric while preserving the original call shape."""

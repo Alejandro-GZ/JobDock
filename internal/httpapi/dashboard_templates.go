@@ -32,6 +32,7 @@ type dashboardTemplateWidget struct {
 	XAxis              string                     `json:"x_axis,omitempty"`
 	GridColumns        int                        `json:"grid_columns,omitempty"`
 	TimeRange          string                     `json:"time_range,omitempty"`
+	HistogramBins      int                        `json:"histogram_bins,omitempty"`
 	GaugeMaxMode       string                     `json:"gauge_max_mode,omitempty"`
 	GaugeMaxValue      *float64                   `json:"gauge_max_value,omitempty"`
 	ScalarAggregation  string                     `json:"scalar_aggregation,omitempty"`
@@ -514,7 +515,7 @@ func resolveDashboardTemplateSlot(widgetID string, slot dashboardTemplateSlot, c
 }
 
 func templateWidget(item dashboardTemplateWidget, sources []dashboardWidgetSource) dashboardWidget {
-	return dashboardWidget{ID: item.ID, Type: item.Type, Title: item.Title, Size: item.Size, Position: item.Position, Sources: sources, XAxis: item.XAxis, GridColumns: item.GridColumns, TimeRange: item.TimeRange, GaugeMaxMode: item.GaugeMaxMode, GaugeMaxValue: item.GaugeMaxValue, ScalarAggregation: item.ScalarAggregation, GaugeStyle: item.GaugeStyle, TargetValue: item.TargetValue, WarningValue: item.WarningValue, CriticalValue: item.CriticalValue, DomainMin: item.DomainMin, DomainMax: item.DomainMax, ThresholdDirection: item.ThresholdDirection, ShowDelta: item.ShowDelta, Appearance: item.Appearance}
+	return dashboardWidget{ID: item.ID, Type: item.Type, Title: item.Title, Size: item.Size, Position: item.Position, Sources: sources, XAxis: item.XAxis, GridColumns: item.GridColumns, TimeRange: item.TimeRange, HistogramBins: item.HistogramBins, GaugeMaxMode: item.GaugeMaxMode, GaugeMaxValue: item.GaugeMaxValue, ScalarAggregation: item.ScalarAggregation, GaugeStyle: item.GaugeStyle, TargetValue: item.TargetValue, WarningValue: item.WarningValue, CriticalValue: item.CriticalValue, DomainMin: item.DomainMin, DomainMax: item.DomainMax, ThresholdDirection: item.ThresholdDirection, ShowDelta: item.ShowDelta, Appearance: item.Appearance}
 }
 
 func compatibleDashboardSourceKinds(widgetType string) map[string]bool {
@@ -525,6 +526,8 @@ func compatibleDashboardSourceKinds(widgetType string) map[string]bool {
 		return map[string]bool{"progress": true}
 	case "logs":
 		return map[string]bool{"log": true}
+	case "histogram", "boxplot", "violin":
+		return map[string]bool{"distribution": true}
 	default:
 		return map[string]bool{"metric": true, "resource": true}
 	}

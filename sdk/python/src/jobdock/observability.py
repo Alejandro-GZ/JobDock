@@ -87,3 +87,23 @@ class MatrixObservation:
     step: int | None = None
     timestamp: datetime | None = None
     metadata: Metadata | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DistributionObservation:
+    """Bounded samples for histogram, box, violin, and drift views.
+
+    ``group`` identifies explicit classes or populations such as ``baseline``
+    and ``current``. Optional scores are reported facts; JobDock never invents
+    a drift score.
+    """
+
+    name: str
+    values: Sequence[float]
+    group: str = "default"
+    unit: str | None = None
+    step: int | None = None
+    timestamp: datetime | None = None
+    scores: Mapping[str, float] | None = None
+    tags: SemanticTags | None = None
+    metadata: Metadata | None = None

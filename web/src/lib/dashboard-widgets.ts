@@ -1,6 +1,6 @@
-export type DashboardWidgetType = "lineplot" | "barplot" | "scatterplot" | "starplot" | "confusion_matrix" | "progress" | "logs" | "kpi" | "gauge";
+export type DashboardWidgetType = "lineplot" | "barplot" | "scatterplot" | "starplot" | "histogram" | "boxplot" | "violin" | "confusion_matrix" | "progress" | "logs" | "kpi" | "gauge";
 export type ScalarAggregation = "last" | "min" | "max" | "avg";
-export type DashboardSourceKind = "metric" | "resource" | "matrix" | "progress" | "log";
+export type DashboardSourceKind = "metric" | "resource" | "distribution" | "matrix" | "progress" | "log";
 export type DashboardSourceRole = "x" | "y";
 export type DashboardWidgetSource = { kind: DashboardSourceKind; name: string; role?: DashboardSourceRole };
 export type DashboardWidgetSize = { columns: number; rows: number };
@@ -41,6 +41,7 @@ export type DashboardWidget = {
   x_axis?: "time" | "step";
   grid_columns?: 4 | 12;
   time_range?: "1h" | "6h" | "24h" | "7d" | "all";
+  histogram_bins?: number;
   gauge_max_mode?: "historical" | "fixed";
   gauge_max_value?: number;
   scalar_aggregation?: ScalarAggregation;
@@ -102,6 +103,7 @@ export type DashboardSources = {
   metrics: string[];
   resources: string[];
   matrices: string[];
+  distributions?: string[];
   progress: boolean;
   logs?: boolean;
 };
@@ -113,6 +115,9 @@ export const widgetCatalog: ReadonlyArray<{ type: DashboardWidgetType; label: st
   { type: "barplot", label: "Bar plot", description: "Recent observations rendered as discrete bars.",category:"trends" },
   { type: "scatterplot", label: "Scatter plot", description: "Observations plotted by step or capture time.",category:"relationships" },
   { type: "starplot", label: "STAR plot", description: "Latest values compared across normalized radial axes.",category:"relationships" },
+  { type: "histogram", label: "Histogram", description: "Compare bounded feature, error, or drift distributions.",category:"diagnostics" },
+  { type: "boxplot", label: "Box plot", description: "Compare quartiles, whiskers, and bounded outliers by group.",category:"diagnostics" },
+  { type: "violin", label: "Violin plot", description: "Compare compact density summaries by group.",category:"diagnostics" },
   { type: "confusion_matrix", label: "Confusion matrix", description: "Absolute or normalized classification outcomes.",category:"diagnostics" },
   { type: "progress", label: "Progress", description: "Global progress, current stage and upcoming milestones.",category:"summaries" },
   { type: "logs", label: "Logs", description: "Live stdout, stderr, or both streams.",category:"operational" },
@@ -124,7 +129,7 @@ export const dashboardSchemaVersion=1;
 
 export function restoreDashboardWidgets(value:unknown):DashboardWidget[]|null{
   if(!Array.isArray(value)||value.length>64)return null;
-  const types=new Set(widgetCatalog.map(item=>item.type)),kinds=new Set<DashboardSourceKind>(["metric","resource","matrix","progress","log"]);
+  const types=new Set(widgetCatalog.map(item=>item.type)),kinds=new Set<DashboardSourceKind>(["metric","resource","distribution","matrix","progress","log"]);
   const widgets:DashboardWidget[]=[];
   for(const candidate of value){
     if(!candidate||typeof candidate!=="object")return null;const item=candidate as Partial<DashboardWidget>;
@@ -132,7 +137,7 @@ export function restoreDashboardWidgets(value:unknown):DashboardWidget[]|null{
     if(item.sources.some(source=>!source||!kinds.has(source.kind)||typeof source.name!=="string"||!source.name))return null;
     const factor=item.grid_columns===12?1:item.grid_columns===4?3:6;
     const scalar=item.type==="kpi"||item.type==="gauge";
-    widgets.push({id:item.id,type:item.type as DashboardWidgetType,title:typeof item.title==="string"?item.title.trim().slice(0,120):undefined,size:{columns:clampColumns(item.size.columns*factor),rows:clampRows(item.size.rows*factor)},position:{x:Math.max(0,Math.min(11,(item.position.x||0)*factor)),y:Math.max(0,(item.position.y||0)*factor)},sources:item.sources.map(source=>({...source})),x_axis:item.x_axis==="step"?"step":"time",grid_columns:12,time_range:validRange(item.time_range)?item.time_range:"all",gauge_max_mode:item.gauge_max_mode==="fixed"?"fixed":"historical",gauge_max_value:typeof item.gauge_max_value==="number"&&Number.isFinite(item.gauge_max_value)&&item.gauge_max_value>0?item.gauge_max_value:undefined,scalar_aggregation:scalar&&["last","min","max","avg"].includes(String(item.scalar_aggregation))?item.scalar_aggregation:"last",gauge_style:item.type==="gauge"&&item.gauge_style==="bullet"?"bullet":item.type==="gauge"?"gauge":undefined,target_value:scalar&&finite(item.target_value)?item.target_value:undefined,warning_value:scalar&&finite(item.warning_value)?item.warning_value:undefined,critical_value:scalar&&finite(item.critical_value)?item.critical_value:undefined,domain_min:scalar&&finite(item.domain_min)?item.domain_min:undefined,domain_max:scalar&&finite(item.domain_max)?item.domain_max:item.type==="gauge"&&item.gauge_max_mode==="fixed"&&finite(item.gauge_max_value)?item.gauge_max_value:undefined,threshold_direction:scalar&&item.threshold_direction==="lower_is_worse"?"lower_is_worse":scalar?"higher_is_worse":undefined,show_delta:item.type==="kpi"&&item.show_delta===true||undefined,appearance:restoreAppearance(item.type as DashboardWidgetType,item.appearance)});
+    widgets.push({id:item.id,type:item.type as DashboardWidgetType,title:typeof item.title==="string"?item.title.trim().slice(0,120):undefined,size:{columns:clampColumns(item.size.columns*factor),rows:clampRows(item.size.rows*factor)},position:{x:Math.max(0,Math.min(11,(item.position.x||0)*factor)),y:Math.max(0,(item.position.y||0)*factor)},sources:item.sources.map(source=>({...source})),x_axis:item.x_axis==="step"?"step":"time",grid_columns:12,time_range:validRange(item.time_range)?item.time_range:"all",histogram_bins:item.type==="histogram"&&finiteBetween(item.histogram_bins,2,256)?Math.round(item.histogram_bins):undefined,gauge_max_mode:item.gauge_max_mode==="fixed"?"fixed":"historical",gauge_max_value:typeof item.gauge_max_value==="number"&&Number.isFinite(item.gauge_max_value)&&item.gauge_max_value>0?item.gauge_max_value:undefined,scalar_aggregation:scalar&&["last","min","max","avg"].includes(String(item.scalar_aggregation))?item.scalar_aggregation:"last",gauge_style:item.type==="gauge"&&item.gauge_style==="bullet"?"bullet":item.type==="gauge"?"gauge":undefined,target_value:scalar&&finite(item.target_value)?item.target_value:undefined,warning_value:scalar&&finite(item.warning_value)?item.warning_value:undefined,critical_value:scalar&&finite(item.critical_value)?item.critical_value:undefined,domain_min:scalar&&finite(item.domain_min)?item.domain_min:undefined,domain_max:scalar&&finite(item.domain_max)?item.domain_max:item.type==="gauge"&&item.gauge_max_mode==="fixed"&&finite(item.gauge_max_value)?item.gauge_max_value:undefined,threshold_direction:scalar&&item.threshold_direction==="lower_is_worse"?"lower_is_worse":scalar?"higher_is_worse":undefined,show_delta:item.type==="kpi"&&item.show_delta===true||undefined,appearance:restoreAppearance(item.type as DashboardWidgetType,item.appearance)});
   }
   if(new Set(widgets.map(widget=>widget.id)).size!==widgets.length)return null;
   return layoutDashboardWidgets(widgets);
@@ -163,7 +168,7 @@ export function createDashboardWidget(type: DashboardWidgetType, sources: Dashbo
     type,
     size: { columns: type === "progress" || type === "logs" ? 12 : type==="kpi"?3:6, rows: type === "logs" ? 6 : type==="kpi"?2:3 },
     position: { x: 0, y: Number.MAX_SAFE_INTEGER },
-    sources: type==="logs"?[{kind:"log",name:"stdout"}]:type==="scatterplot"&&numeric.length?[{...numeric[0],role:"x"},{...(numeric[1]??numeric[0]),role:"y"}]:type==="starplot"?numeric.slice(0,Math.min(5,numeric.length)):source ? [source] : [],
+    sources: type==="logs"?[{kind:"log",name:"stdout"}]:type==="scatterplot"&&numeric.length?[{...numeric[0],role:"x"},{...(numeric[1]??numeric[0]),role:"y"}]:type==="starplot"?numeric.slice(0,Math.min(5,numeric.length)):type==="histogram"||type==="boxplot"||type==="violin"?(sources.distributions??[]).slice(0,16).map(name=>({kind:"distribution" as const,name})):source ? [source] : [],
     x_axis: "time",
     grid_columns:12,time_range:"all",gauge_max_mode:"historical",scalar_aggregation:"last",gauge_style:type==="gauge"?"gauge":undefined,threshold_direction:type==="kpi"||type==="gauge"?"higher_is_worse":undefined,
   };
@@ -206,12 +211,14 @@ export function compatibleSourceKinds(type: DashboardWidgetType): DashboardSourc
   if (type === "confusion_matrix") return ["matrix"];
   if (type === "progress") return ["progress"];
   if(type === "logs") return ["log"];
+  if(type==="histogram"||type==="boxplot"||type==="violin")return ["distribution"];
   return ["metric", "resource"];
 }
 
 function firstCompatibleSource(type: DashboardWidgetType, sources: DashboardSources): DashboardWidgetSource | undefined {
   if (type === "progress") return sources.progress ? { kind: "progress", name: "progress" } : undefined;
   if(type === "logs")return sources.logs?{kind:"log",name:"stdout"}:undefined;
+  if(type==="histogram"||type==="boxplot"||type==="violin")return sources.distributions?.[0]?{kind:"distribution",name:sources.distributions[0]}:undefined;
   if (type === "confusion_matrix") return sources.matrices[0] ? { kind: "matrix", name: sources.matrices[0] } : undefined;
   if (sources.metrics[0]) return { kind: "metric", name: sources.metrics[0] };
   if (sources.resources[0]) return { kind: "resource", name: sources.resources[0] };
@@ -227,7 +234,7 @@ function restoreAppearance(type:DashboardWidgetType,value:unknown):DashboardWidg
   if(!value||typeof value!=="object")return undefined;
   const item=value as Partial<DashboardWidgetAppearance>;
   if(item.schema_version!==1)return undefined;
-  const plot=type==="lineplot"||type==="barplot"||type==="scatterplot"||type==="starplot",appearance:DashboardWidgetAppearance={schema_version:1};
+  const plot=type==="lineplot"||type==="barplot"||type==="scatterplot"||type==="starplot"||type==="histogram"||type==="boxplot"||type==="violin",appearance:DashboardWidgetAppearance={schema_version:1};
   if(plot&&typeof item.subtitle==="string"&&item.subtitle.trim())appearance.subtitle=item.subtitle.trim().slice(0,160);
   if(plot&&["default","cool","warm","monochrome"].includes(String(item.color_scheme)))appearance.color_scheme=item.color_scheme;
   if(plot&&["auto","hidden","open"].includes(String(item.legend)))appearance.legend=item.legend;

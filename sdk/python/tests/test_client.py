@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from jobdock import CheckpointObservation, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, ObservabilityPhase, Phase, ProgressObservation, SEMANTIC_CATALOG_VERSION, current_job
+from jobdock import CheckpointObservation, DistributionObservation, Job, MatrixObservation, Metric, MetricRole, Milestone, NoopJob, ObservableSource, ObservabilityManifest, ObservabilityPhase, Phase, ProgressObservation, SEMANTIC_CATALOG_VERSION, current_job
 
 
 def test_current_job_is_noop_without_environment(monkeypatch):
@@ -19,6 +19,20 @@ def test_progress_validation(tmp_path: Path):
     job = Job("id", "http://127.0.0.1:1", "token", tmp_path)
     with pytest.raises(ValueError):
         job.progress(1.1)
+    job.close()
+
+
+def test_distribution_contract_is_bounded_grouped_and_semantic(tmp_path: Path, monkeypatch):
+    job = Job("id", "http://jobdock.test", "token", tmp_path)
+    queued = []
+    monkeypatch.setattr(job, "_enqueue", lambda endpoint, payload: queued.append((endpoint, payload)))
+    observed = datetime(2026, 8, 24, 12, tzinfo=timezone.utc)
+    job.distribution(DistributionObservation("residual", [1, 2, 3], group="baseline", unit="ms", timestamp=observed, scores={"psi": .12}, tags=["histogram:error"], metadata={"feature": "latency"}))
+    assert queued == [("distributions", {"name": "residual", "group": "baseline", "unit": "ms", "values": [1.0, 2.0, 3.0], "scores": {"psi": .12}, "tags": ["histogram:error"], "timestamp": "2026-08-24T12:00:00Z", "metadata": {"feature": "latency"}})]
+    with pytest.raises(ValueError, match="1-4096"):
+        job.distribution(DistributionObservation("too-large", range(4097)))
+    with pytest.raises(ValueError, match="finite"):
+        job.distribution(DistributionObservation("invalid", [float("nan")]))
     job.close()
 
 

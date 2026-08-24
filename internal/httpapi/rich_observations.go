@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 const maxMatrixDimension = 128
 const maxMatrixBytes = 1 << 20
+const maxDistributionSamples = 4096
 
 func observationTime(w http.ResponseWriter, timestamp *time.Time) (time.Time, bool) {
 	at := time.Now().UTC()
@@ -201,6 +203,209 @@ func (a *API) sdkMatrix(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, created)
+}
+
+func (a *API) sdkDistribution(w http.ResponseWriter, r *http.Request) {
+	job := jobContext(r)
+	var body domain.DistributionObservation
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	body.Name, body.Group, body.Unit = strings.TrimSpace(body.Name), strings.TrimSpace(body.Group), strings.TrimSpace(body.Unit)
+	if body.Group == "" {
+		body.Group = "default"
+	}
+	if job.AttemptID == "" || body.Name == "" || len(body.Name) > 128 || len(body.Group) > 128 || len(body.Unit) > 64 || len(body.Values) == 0 || len(body.Values) > maxDistributionSamples {
+		writeProblem(w, 422, "invalid_distribution", "Distributions require a name, group, optional unit, and 1-4096 samples")
+		return
+	}
+	for _, value := range body.Values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			writeProblem(w, 422, "invalid_distribution", "Distribution samples must be finite")
+			return
+		}
+	}
+	if len(body.Scores) > 32 {
+		writeProblem(w, 422, "invalid_distribution_scores", "A distribution may contain at most 32 summary scores")
+		return
+	}
+	for name, value := range body.Scores {
+		if strings.TrimSpace(name) == "" || len(name) > 128 || math.IsNaN(value) || math.IsInf(value, 0) {
+			writeProblem(w, 422, "invalid_distribution_scores", "Distribution score names and values must be portable and finite")
+			return
+		}
+	}
+	tags, err := normalizeMetricTags(body.Tags)
+	if err != nil {
+		writeProblem(w, 422, "invalid_distribution_tags", err.Error())
+		return
+	}
+	body.Tags = tags
+	if err = validateObservationMetadata(body.Metadata); err != nil {
+		writeProblem(w, 422, "invalid_distribution_metadata", err.Error())
+		return
+	}
+	at, ok := observationTime(w, body.CapturedAt)
+	if !ok {
+		return
+	}
+	body.JobID, body.AttemptID, body.CapturedAt = job.ID, job.AttemptID, &at
+	created, err := a.store.AppendDistribution(r.Context(), body)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, created)
+}
+
+type distributionBin struct {
+	Lower float64 `json:"lower"`
+	Upper float64 `json:"upper"`
+	Count int     `json:"count"`
+}
+type distributionSummary struct {
+	Count       int       `json:"count"`
+	Min         float64   `json:"min"`
+	Q1          float64   `json:"q1"`
+	Median      float64   `json:"median"`
+	Q3          float64   `json:"q3"`
+	Max         float64   `json:"max"`
+	Mean        float64   `json:"mean"`
+	WhiskerLow  float64   `json:"whisker_low"`
+	WhiskerHigh float64   `json:"whisker_high"`
+	Outliers    []float64 `json:"outliers"`
+}
+type distributionView struct {
+	ID         int64                `json:"id"`
+	Name       string               `json:"name"`
+	Group      string               `json:"group"`
+	Unit       string               `json:"unit,omitempty"`
+	Step       *int64               `json:"step,omitempty"`
+	CapturedAt *time.Time           `json:"timestamp,omitempty"`
+	Samples    []float64            `json:"samples"`
+	Bins       []distributionBin    `json:"bins"`
+	Density    []map[string]float64 `json:"density"`
+	Summary    distributionSummary  `json:"summary"`
+	Scores     map[string]float64   `json:"scores,omitempty"`
+	Tags       []string             `json:"tags,omitempty"`
+	Metadata   map[string]any       `json:"metadata,omitempty"`
+}
+
+func (a *API) jobDistributions(w http.ResponseWriter, r *http.Request) {
+	job, ok := a.authorizeJob(w, r)
+	if !ok {
+		return
+	}
+	attempt, ok := a.observationAttempt(w, r, job)
+	if !ok {
+		return
+	}
+	bins := 0
+	if raw := r.URL.Query().Get("bins"); raw != "" && raw != "auto" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 2 || value > 256 {
+			writeProblem(w, 422, "invalid_distribution_bins", "bins must be auto or an integer between 2 and 256")
+			return
+		}
+		bins = value
+	}
+	items, err := a.store.Distributions(r.Context(), job.ID, attempt, r.URL.Query().Get("name"), r.URL.Query().Get("group"), 512)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	latest := map[string]bool{}
+	views := []distributionView{}
+	for _, item := range items {
+		key := item.Name + "\x00" + item.Group
+		if latest[key] {
+			continue
+		}
+		latest[key] = true
+		views = append(views, buildDistributionView(item, bins))
+	}
+	writeJSON(w, 200, map[string]any{"attempt_id": attempt, "items": views})
+}
+
+func buildDistributionView(item domain.DistributionObservation, requestedBins int) distributionView {
+	values := append([]float64(nil), item.Values...)
+	sort.Float64s(values)
+	count := len(values)
+	sum := 0.0
+	for _, v := range values {
+		sum += v
+	}
+	q := func(p float64) float64 {
+		if count == 1 {
+			return values[0]
+		}
+		x := p * float64(count-1)
+		lo := int(math.Floor(x))
+		hi := int(math.Ceil(x))
+		return values[lo] + (values[hi]-values[lo])*(x-float64(lo))
+	}
+	s := distributionSummary{Count: count, Min: values[0], Q1: q(.25), Median: q(.5), Q3: q(.75), Max: values[count-1], Mean: sum / float64(count), Outliers: []float64{}}
+	iqr := s.Q3 - s.Q1
+	low, high := s.Q1-1.5*iqr, s.Q3+1.5*iqr
+	s.WhiskerLow, s.WhiskerHigh = s.Min, s.Max
+	for _, v := range values {
+		if v >= low {
+			s.WhiskerLow = v
+			break
+		}
+	}
+	for i := len(values) - 1; i >= 0; i-- {
+		if values[i] <= high {
+			s.WhiskerHigh = values[i]
+			break
+		}
+	}
+	for _, v := range values {
+		if (v < s.WhiskerLow || v > s.WhiskerHigh) && len(s.Outliers) < 128 {
+			s.Outliers = append(s.Outliers, v)
+		}
+	}
+	n := requestedBins
+	if n == 0 {
+		n = int(math.Ceil(math.Sqrt(float64(count))))
+		if n < 5 {
+			n = 5
+		}
+		if n > 64 {
+			n = 64
+		}
+	}
+	span := s.Max - s.Min
+	if span == 0 {
+		span = 1
+	}
+	bs := span / float64(n)
+	hist := make([]distributionBin, n)
+	for i := range hist {
+		hist[i] = distributionBin{Lower: s.Min + float64(i)*bs, Upper: s.Min + float64(i+1)*bs}
+	}
+	for _, v := range values {
+		i := int((v - s.Min) / span * float64(n))
+		if i >= n {
+			i = n - 1
+		}
+		hist[i].Count++
+	}
+	density := make([]map[string]float64, n)
+	maxCount := 1
+	for _, b := range hist {
+		if b.Count > maxCount {
+			maxCount = b.Count
+		}
+	}
+	for i, b := range hist {
+		density[i] = map[string]float64{"x": (b.Lower + b.Upper) / 2, "density": float64(b.Count) / float64(maxCount)}
+	}
+	samples := values
+	if len(samples) > 512 {
+		samples = append([]float64(nil), samples[:512]...)
+	}
+	return distributionView{ID: item.ID, Name: item.Name, Group: item.Group, Unit: item.Unit, Step: item.Step, CapturedAt: item.CapturedAt, Samples: samples, Bins: hist, Density: density, Summary: s, Scores: item.Scores, Tags: item.Tags, Metadata: item.Metadata}
 }
 
 func (a *API) observationAttempt(w http.ResponseWriter, r *http.Request, job domain.Job) (string, bool) {

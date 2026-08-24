@@ -37,3 +37,6 @@ export type Milestone={name:string;weight?:number;metadata?:ObservationMetadata}
 export type ProgressObservation={value:number;milestone?:string;step?:number;timestamp?:string;metadata?:ObservationMetadata};
 export type ProgressState={attempt_id:string;simple?:ProgressObservation;current?:ProgressObservation;milestones:Milestone[];reached:string[];global_progress?:number;updated_at?:string};
 export type MatrixObservation={id:number;attempt_id:string;name:string;values:number[][];labels:string[];step?:number;timestamp?:string;metadata?:ObservationMetadata};
+export type DistributionBin={lower:number;upper:number;count:number};
+export type DistributionSummary={count:number;min:number;q1:number;median:number;q3:number;max:number;mean:number;whisker_low:number;whisker_high:number;outliers:number[]};
+export type DistributionObservation={id:number;name:string;group:string;unit?:string;step?:number;timestamp?:string;samples:number[];bins:DistributionBin[];density:Array<{x:number;density:number}>;summary:DistributionSummary;scores?:Record<string,number>;tags?:string[];metadata?:ObservationMetadata};

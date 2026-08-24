@@ -75,7 +75,21 @@ func officialDashboardTemplates() []dashboardTemplate {
 	for index, spec := range specs {
 		result = append(result, buildOfficialTemplate(spec, index))
 	}
+	result = append(result,
+		distributionTemplate("residual-diagnostics", "Residual diagnostics", "Histogram, box, and density views for bounded error distributions.", "regression", nil),
+		distributionTemplate("feature-distributions", "Feature distributions", "Compare one or more bounded feature distributions and explicit groups.", "general", nil),
+		distributionTemplate("drift-distributions", "Drift distributions", "Compare identified reference and candidate populations without synthesizing a score.", "time-series-anomaly", nil),
+	)
 	return result
+}
+
+func distributionTemplate(id, name, description, category string, tags []string) dashboardTemplate {
+	slot := dashboardTemplateSlot{ID: "distributions", RequiredTags: tags, SourceTypes: []string{"distribution"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 8}, OnMissing: "error", OnAmbiguous: "error"}
+	return dashboardTemplate{ID: id, Name: name, Description: description, Category: category, SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{
+		{ID: "histogram", Type: "histogram", Size: dashboardWidgetSize{Columns: 12, Rows: 4}, Position: dashboardWidgetPosition{X: 0, Y: 0}, Slots: []dashboardTemplateSlot{slot}, HistogramBins: 32, GridColumns: 12, Appearance: &dashboardWidgetAppearance{SchemaVersion: 1, Legend: "auto"}},
+		{ID: "boxplot", Type: "boxplot", Size: dashboardWidgetSize{Columns: 6, Rows: 4}, Position: dashboardWidgetPosition{X: 0, Y: 4}, Slots: []dashboardTemplateSlot{slot}, GridColumns: 12, Appearance: &dashboardWidgetAppearance{SchemaVersion: 1, Legend: "auto"}},
+		{ID: "violin", Type: "violin", Size: dashboardWidgetSize{Columns: 6, Rows: 4}, Position: dashboardWidgetPosition{X: 6, Y: 4}, Slots: []dashboardTemplateSlot{slot}, GridColumns: 12, Appearance: &dashboardWidgetAppearance{SchemaVersion: 1, Legend: "auto"}},
+	}}
 }
 
 func officialTemplateByID(id string) dashboardTemplate {

@@ -412,6 +412,21 @@ type MatrixObservation struct {
 	ObservationContext
 }
 
+// DistributionObservation is a bounded statistical snapshot. Group identifies
+// a class, label, feature population, or comparison cohort such as baseline.
+type DistributionObservation struct {
+	ID        int64              `json:"id,omitempty"`
+	JobID     string             `json:"-"`
+	AttemptID string             `json:"attempt_id,omitempty"`
+	Name      string             `json:"name"`
+	Group     string             `json:"group,omitempty"`
+	Unit      string             `json:"unit,omitempty"`
+	Values    []float64          `json:"values"`
+	Scores    map[string]float64 `json:"scores,omitempty"`
+	Tags      []string           `json:"tags,omitempty"`
+	ObservationContext
+}
+
 type ProgressState struct {
 	AttemptID      string               `json:"attempt_id"`
 	Simple         *ProgressObservation `json:"simple,omitempty"`

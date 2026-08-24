@@ -81,6 +81,33 @@ func TestRichObservationsAreAttemptAwareIncrementalAndBounded(t *testing.T) {
 		t.Fatalf("matrix by step: %#v", matrices)
 	}
 
+	postJobContext(t, server.URL, token, "distributions", `{"name":"residual","group":"baseline","unit":"ms","values":[1,2,2,3,100],"scores":{"psi":0.12},"tags":["histogram:error"]}`, http.StatusAccepted)
+	postJobContext(t, server.URL, token, "distributions", `{"name":"residual","group":"current","unit":"ms","values":[2,3,3,4,5]}`, http.StatusAccepted)
+	postJobContext(t, server.URL, token, "distributions", `{"name":"broken","values":[]}`, http.StatusUnprocessableEntity)
+	var distributions struct {
+		AttemptID string `json:"attempt_id"`
+		Items     []struct {
+			Name    string               `json:"name"`
+			Group   string               `json:"group"`
+			Samples []float64            `json:"samples"`
+			Bins    []distributionBin    `json:"bins"`
+			Density []map[string]float64 `json:"density"`
+			Summary distributionSummary  `json:"summary"`
+			Scores  map[string]float64   `json:"scores"`
+		} `json:"items"`
+	}
+	getSeriesJSON(t, ownerClient, server.URL+"/api/v1/jobs/"+job.ID+"/distributions?attempt_id="+attemptID+"&name=residual&bins=8", &distributions)
+	if distributions.AttemptID != attemptID || len(distributions.Items) != 2 || len(distributions.Items[0].Bins) != 8 || len(distributions.Items[0].Density) != 8 || distributions.Items[0].Summary.Count != 5 {
+		t.Fatalf("distribution views: %#v", distributions)
+	}
+	groups := map[string]bool{}
+	for _, item := range distributions.Items {
+		groups[item.Group] = true
+	}
+	if !groups["baseline"] || !groups["current"] {
+		t.Fatalf("distribution populations lost: %#v", groups)
+	}
+
 	checkpointResponse := postJobContext(t, server.URL, token, "checkpoints", `{"label":"best model","step":6,"metadata":{"score":0.9}}`, http.StatusAccepted)
 	var checkpoint domain.CheckpointSync
 	if err = json.Unmarshal(checkpointResponse, &checkpoint); err != nil {
