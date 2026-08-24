@@ -69,6 +69,16 @@ dashboard; templates and users may instead select a fixed `zero_to_one` range
 or `manual` finite increasing limits. Missing observations are reported as
 partial axes and never synthesized as zero-valued telemetry.
 
+KPI/Scorecard and Gauge/Bullet widgets resolve exactly one numeric metric or
+resource source. Their `scalar_aggregation` is explicit (`last`, `min`, `max`,
+or `avg`); metric statistics are calculated by the server over the authorized
+window independently from the bounded/downsampled point response. KPI widgets
+may show a latest-value delta. Gauge widgets support radial and bullet
+presentations. Targets, warning/critical thresholds, direction, and domain
+bounds are versioned dashboard or template configuration and never alter the
+underlying telemetry. Missing observations render an empty state rather than a
+zero value.
+
 Manual ranges require finite increasing bounds. Logarithmic ranges must be
 positive, and logarithmic X axes are valid only for scatter plots or series
 using step as their horizontal axis. The dashboard editor enforces stable

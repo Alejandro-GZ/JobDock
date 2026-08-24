@@ -1247,7 +1247,7 @@ components:
         sample_count: {type: integer, format: int64, minimum: 1}
     MetricSeries:
       type: object
-      required: [name, points, last, min, max, sample_count]
+      required: [name, points, last, min, max, avg, sample_count]
       properties:
         name: {type: string}
         unit: {type: string, maxLength: 64}
@@ -1257,6 +1257,7 @@ components:
         last: {type: number, format: double}
         min: {type: number, format: double}
         max: {type: number, format: double}
+        avg: {type: number, format: double, description: Exact arithmetic mean over the authorized query window, independent of returned point downsampling.}
         sample_count: {type: integer, format: int64, minimum: 1}
     MetricSeriesResponse:
       type: object
@@ -1367,7 +1368,7 @@ components:
       required: [id, type, size, position, sources]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
-        type: {type: string, enum: [lineplot, barplot, scatterplot, starplot, confusion_matrix, progress, logs, gauge]}
+        type: {type: string, enum: [lineplot, barplot, scatterplot, starplot, confusion_matrix, progress, logs, kpi, gauge]}
         title: {type: string, maxLength: 120, description: Optional compact overlay title. An omitted or empty title reserves no plot space.}
         size:
           type: object
@@ -1385,6 +1386,15 @@ components:
         time_range: {type: string, enum: [1h, 6h, 24h, 7d, all]}
         gauge_max_mode: {type: string, enum: [historical, fixed]}
         gauge_max_value: {type: number, exclusiveMinimum: 0}
+        scalar_aggregation: {type: string, enum: [last, min, max, avg]}
+        gauge_style: {type: string, enum: [gauge, bullet]}
+        target_value: {type: number}
+        warning_value: {type: number}
+        critical_value: {type: number}
+        domain_min: {type: number}
+        domain_max: {type: number}
+        threshold_direction: {type: string, enum: [higher_is_worse, lower_is_worse]}
+        show_delta: {type: boolean}
         appearance: {$ref: '#/components/schemas/DashboardWidgetAppearance'}
     DashboardTemplateCardinality:
       type: object
@@ -1412,7 +1422,7 @@ components:
       required: [id, type, size, position, slots]
       properties:
         id: {type: string, minLength: 1, maxLength: 128}
-        type: {type: string, enum: [lineplot, barplot, scatterplot, starplot, confusion_matrix, progress, logs, gauge]}
+        type: {type: string, enum: [lineplot, barplot, scatterplot, starplot, confusion_matrix, progress, logs, kpi, gauge]}
         title: {type: string, maxLength: 120}
         size:
           type: object
@@ -1430,6 +1440,15 @@ components:
         time_range: {type: string, enum: [1h, 6h, 24h, 7d, all]}
         gauge_max_mode: {type: string, enum: [historical, fixed]}
         gauge_max_value: {type: number, exclusiveMinimum: 0}
+        scalar_aggregation: {type: string, enum: [last, min, max, avg]}
+        gauge_style: {type: string, enum: [gauge, bullet]}
+        target_value: {type: number}
+        warning_value: {type: number}
+        critical_value: {type: number}
+        domain_min: {type: number}
+        domain_max: {type: number}
+        threshold_direction: {type: string, enum: [higher_is_worse, lower_is_worse]}
+        show_delta: {type: boolean}
         appearance: {$ref: '#/components/schemas/DashboardWidgetAppearance'}
     DashboardTemplate:
       type: object

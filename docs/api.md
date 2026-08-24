@@ -51,6 +51,12 @@ Metric queries accept repeated `name` filters and
 validated against the job, which prevents series from different reruns being
 combined.
 
+The metric response includes exact `last`, `min`, `max`, `avg`, and
+`sample_count` summaries for each selected series. These summaries cover the
+authorized time window and remain independent of point downsampling and the
+bounded response limit, allowing scalar dashboard widgets to avoid downloading
+full histories.
+
 `GET /api/v1/jobs/{jobId}/metrics/catalog` discovers attempt-scoped metric
 sources from descriptors only. It returns `name`, `type`, `unit`, `tags`,
 bounded metadata, optional structural phase/milestone scope, and explicit

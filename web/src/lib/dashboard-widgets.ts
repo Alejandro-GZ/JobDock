@@ -1,4 +1,5 @@
-export type DashboardWidgetType = "lineplot" | "barplot" | "scatterplot" | "starplot" | "confusion_matrix" | "progress" | "logs" | "gauge";
+export type DashboardWidgetType = "lineplot" | "barplot" | "scatterplot" | "starplot" | "confusion_matrix" | "progress" | "logs" | "kpi" | "gauge";
+export type ScalarAggregation = "last" | "min" | "max" | "avg";
 export type DashboardSourceKind = "metric" | "resource" | "matrix" | "progress" | "log";
 export type DashboardSourceRole = "x" | "y";
 export type DashboardWidgetSource = { kind: DashboardSourceKind; name: string; role?: DashboardSourceRole };
@@ -42,6 +43,15 @@ export type DashboardWidget = {
   time_range?: "1h" | "6h" | "24h" | "7d" | "all";
   gauge_max_mode?: "historical" | "fixed";
   gauge_max_value?: number;
+  scalar_aggregation?: ScalarAggregation;
+  gauge_style?: "gauge" | "bullet";
+  target_value?: number;
+  warning_value?: number;
+  critical_value?: number;
+  domain_min?: number;
+  domain_max?: number;
+  threshold_direction?: "higher_is_worse" | "lower_is_worse";
+  show_delta?: boolean;
   appearance?: DashboardWidgetAppearance;
 };
 
@@ -106,7 +116,8 @@ export const widgetCatalog: ReadonlyArray<{ type: DashboardWidgetType; label: st
   { type: "confusion_matrix", label: "Confusion matrix", description: "Absolute or normalized classification outcomes.",category:"diagnostics" },
   { type: "progress", label: "Progress", description: "Global progress, current stage and upcoming milestones.",category:"summaries" },
   { type: "logs", label: "Logs", description: "Live stdout, stderr, or both streams.",category:"operational" },
-  { type: "gauge", label: "Gauge", description: "Current value against a fixed or historical maximum.",category:"summaries" },
+  { type: "kpi", label: "KPI / Scorecard", description: "A scalar summary with optional delta and threshold state.",category:"summaries" },
+  { type: "gauge", label: "Gauge / Bullet", description: "A scalar value against a target, thresholds, and configurable domain.",category:"summaries" },
 ];
 
 export const dashboardSchemaVersion=1;
@@ -120,7 +131,8 @@ export function restoreDashboardWidgets(value:unknown):DashboardWidget[]|null{
     if(typeof item.id!=="string"||!item.id||!types.has(item.type as DashboardWidgetType)||!item.size||!item.position||!Array.isArray(item.sources))return null;
     if(item.sources.some(source=>!source||!kinds.has(source.kind)||typeof source.name!=="string"||!source.name))return null;
     const factor=item.grid_columns===12?1:item.grid_columns===4?3:6;
-    widgets.push({id:item.id,type:item.type as DashboardWidgetType,title:typeof item.title==="string"?item.title.trim().slice(0,120):undefined,size:{columns:clampColumns(item.size.columns*factor),rows:clampRows(item.size.rows*factor)},position:{x:Math.max(0,Math.min(11,(item.position.x||0)*factor)),y:Math.max(0,(item.position.y||0)*factor)},sources:item.sources.map(source=>({...source})),x_axis:item.x_axis==="step"?"step":"time",grid_columns:12,time_range:validRange(item.time_range)?item.time_range:"all",gauge_max_mode:item.gauge_max_mode==="fixed"?"fixed":"historical",gauge_max_value:typeof item.gauge_max_value==="number"&&Number.isFinite(item.gauge_max_value)&&item.gauge_max_value>0?item.gauge_max_value:undefined,appearance:restoreAppearance(item.type as DashboardWidgetType,item.appearance)});
+    const scalar=item.type==="kpi"||item.type==="gauge";
+    widgets.push({id:item.id,type:item.type as DashboardWidgetType,title:typeof item.title==="string"?item.title.trim().slice(0,120):undefined,size:{columns:clampColumns(item.size.columns*factor),rows:clampRows(item.size.rows*factor)},position:{x:Math.max(0,Math.min(11,(item.position.x||0)*factor)),y:Math.max(0,(item.position.y||0)*factor)},sources:item.sources.map(source=>({...source})),x_axis:item.x_axis==="step"?"step":"time",grid_columns:12,time_range:validRange(item.time_range)?item.time_range:"all",gauge_max_mode:item.gauge_max_mode==="fixed"?"fixed":"historical",gauge_max_value:typeof item.gauge_max_value==="number"&&Number.isFinite(item.gauge_max_value)&&item.gauge_max_value>0?item.gauge_max_value:undefined,scalar_aggregation:scalar&&["last","min","max","avg"].includes(String(item.scalar_aggregation))?item.scalar_aggregation:"last",gauge_style:item.type==="gauge"&&item.gauge_style==="bullet"?"bullet":item.type==="gauge"?"gauge":undefined,target_value:scalar&&finite(item.target_value)?item.target_value:undefined,warning_value:scalar&&finite(item.warning_value)?item.warning_value:undefined,critical_value:scalar&&finite(item.critical_value)?item.critical_value:undefined,domain_min:scalar&&finite(item.domain_min)?item.domain_min:undefined,domain_max:scalar&&finite(item.domain_max)?item.domain_max:item.type==="gauge"&&item.gauge_max_mode==="fixed"&&finite(item.gauge_max_value)?item.gauge_max_value:undefined,threshold_direction:scalar&&item.threshold_direction==="lower_is_worse"?"lower_is_worse":scalar?"higher_is_worse":undefined,show_delta:item.type==="kpi"&&item.show_delta===true||undefined,appearance:restoreAppearance(item.type as DashboardWidgetType,item.appearance)});
   }
   if(new Set(widgets.map(widget=>widget.id)).size!==widgets.length)return null;
   return layoutDashboardWidgets(widgets);
@@ -149,11 +161,11 @@ export function createDashboardWidget(type: DashboardWidgetType, sources: Dashbo
   return {
     id,
     type,
-    size: { columns: type === "progress" || type === "logs" ? 12 : 6, rows: type === "logs" ? 6 : 3 },
+    size: { columns: type === "progress" || type === "logs" ? 12 : type==="kpi"?3:6, rows: type === "logs" ? 6 : type==="kpi"?2:3 },
     position: { x: 0, y: Number.MAX_SAFE_INTEGER },
     sources: type==="logs"?[{kind:"log",name:"stdout"}]:type==="scatterplot"&&numeric.length?[{...numeric[0],role:"x"},{...(numeric[1]??numeric[0]),role:"y"}]:type==="starplot"?numeric.slice(0,Math.min(5,numeric.length)):source ? [source] : [],
     x_axis: "time",
-    grid_columns:12,time_range:"all",gauge_max_mode:"historical",
+    grid_columns:12,time_range:"all",gauge_max_mode:"historical",scalar_aggregation:"last",gauge_style:type==="gauge"?"gauge":undefined,threshold_direction:type==="kpi"||type==="gauge"?"higher_is_worse":undefined,
   };
 }
 
@@ -232,5 +244,6 @@ function restoreAppearance(type:DashboardWidgetType,value:unknown):DashboardWidg
 function restoreAxis(value:unknown):DashboardAxisAppearance|undefined{if(!value||typeof value!=="object")return undefined;const item=value as DashboardAxisAppearance,result:DashboardAxisAppearance={};if(typeof item.label==="string"&&item.label.trim())result.label=item.label.trim().slice(0,80);if(typeof item.unit==="string"&&item.unit.trim())result.unit=item.unit.trim().slice(0,64);if(item.scale==="linear"||item.scale==="log")result.scale=item.scale;if(item.range==="auto")result.range="auto";if(item.range==="manual"&&Number.isFinite(item.min)&&Number.isFinite(item.max)&&item.min!<item.max!){result.range="manual";result.min=item.min;result.max=item.max}return Object.keys(result).length?result:undefined}
 function restoreSeries(value:unknown,star=false):Record<string,DashboardSeriesAppearance>|undefined{if(!value||typeof value!=="object"||Array.isArray(value))return undefined;const entries=Object.entries(value).slice(0,64),result:Record<string,DashboardSeriesAppearance>={};for(const [key,raw] of entries){if(!key||key.length>260||!raw||typeof raw!=="object")continue;const item=raw as DashboardSeriesAppearance,next:DashboardSeriesAppearance={};if(typeof item.label==="string"&&item.label.trim())next.label=item.label.trim().slice(0,120);if(typeof item.unit==="string"&&item.unit.trim())next.unit=item.unit.trim().slice(0,64);if(typeof item.color==="string"&&/^#[0-9a-f]{6}$/i.test(item.color))next.color=item.color.toLowerCase();if(star&&["historical","manual","zero_to_one"].includes(String(item.normalization)))next.normalization=item.normalization;if(star&&item.normalization==="manual"&&Number.isFinite(item.min)&&Number.isFinite(item.max)&&item.min!<item.max!){next.min=item.min;next.max=item.max}if(Object.keys(next).length)result[key]=next}return Object.keys(result).length?result:undefined}
 function finiteBetween(value:unknown,min:number,max:number):value is number{return typeof value==="number"&&Number.isFinite(value)&&value>=min&&value<=max}
+function finite(value:unknown):value is number{return typeof value==="number"&&Number.isFinite(value)}
 function fits(occupied:Set<string>,x:number,y:number,columns:number,rows:number){for(let row=y;row<y+rows;row++)for(let column=x;column<x+columns;column++)if(occupied.has(`${column}:${row}`))return false;return true}
 function occupy(occupied:Set<string>,x:number,y:number,columns:number,rows:number){for(let row=y;row<y+rows;row++)for(let column=x;column<x+columns;column++)occupied.add(`${column}:${row}`)}

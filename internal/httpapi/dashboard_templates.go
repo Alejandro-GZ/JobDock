@@ -23,18 +23,27 @@ type dashboardTemplate struct {
 }
 
 type dashboardTemplateWidget struct {
-	ID            string                     `json:"id"`
-	Type          string                     `json:"type"`
-	Title         string                     `json:"title,omitempty"`
-	Size          dashboardWidgetSize        `json:"size"`
-	Position      dashboardWidgetPosition    `json:"position"`
-	Slots         []dashboardTemplateSlot    `json:"slots"`
-	XAxis         string                     `json:"x_axis,omitempty"`
-	GridColumns   int                        `json:"grid_columns,omitempty"`
-	TimeRange     string                     `json:"time_range,omitempty"`
-	GaugeMaxMode  string                     `json:"gauge_max_mode,omitempty"`
-	GaugeMaxValue *float64                   `json:"gauge_max_value,omitempty"`
-	Appearance    *dashboardWidgetAppearance `json:"appearance,omitempty"`
+	ID                 string                     `json:"id"`
+	Type               string                     `json:"type"`
+	Title              string                     `json:"title,omitempty"`
+	Size               dashboardWidgetSize        `json:"size"`
+	Position           dashboardWidgetPosition    `json:"position"`
+	Slots              []dashboardTemplateSlot    `json:"slots"`
+	XAxis              string                     `json:"x_axis,omitempty"`
+	GridColumns        int                        `json:"grid_columns,omitempty"`
+	TimeRange          string                     `json:"time_range,omitempty"`
+	GaugeMaxMode       string                     `json:"gauge_max_mode,omitempty"`
+	GaugeMaxValue      *float64                   `json:"gauge_max_value,omitempty"`
+	ScalarAggregation  string                     `json:"scalar_aggregation,omitempty"`
+	GaugeStyle         string                     `json:"gauge_style,omitempty"`
+	TargetValue        *float64                   `json:"target_value,omitempty"`
+	WarningValue       *float64                   `json:"warning_value,omitempty"`
+	CriticalValue      *float64                   `json:"critical_value,omitempty"`
+	DomainMin          *float64                   `json:"domain_min,omitempty"`
+	DomainMax          *float64                   `json:"domain_max,omitempty"`
+	ThresholdDirection string                     `json:"threshold_direction,omitempty"`
+	ShowDelta          bool                       `json:"show_delta,omitempty"`
+	Appearance         *dashboardWidgetAppearance `json:"appearance,omitempty"`
 }
 
 type dashboardTemplateSlot struct {
@@ -505,7 +514,7 @@ func resolveDashboardTemplateSlot(widgetID string, slot dashboardTemplateSlot, c
 }
 
 func templateWidget(item dashboardTemplateWidget, sources []dashboardWidgetSource) dashboardWidget {
-	return dashboardWidget{ID: item.ID, Type: item.Type, Title: item.Title, Size: item.Size, Position: item.Position, Sources: sources, XAxis: item.XAxis, GridColumns: item.GridColumns, TimeRange: item.TimeRange, GaugeMaxMode: item.GaugeMaxMode, GaugeMaxValue: item.GaugeMaxValue, Appearance: item.Appearance}
+	return dashboardWidget{ID: item.ID, Type: item.Type, Title: item.Title, Size: item.Size, Position: item.Position, Sources: sources, XAxis: item.XAxis, GridColumns: item.GridColumns, TimeRange: item.TimeRange, GaugeMaxMode: item.GaugeMaxMode, GaugeMaxValue: item.GaugeMaxValue, ScalarAggregation: item.ScalarAggregation, GaugeStyle: item.GaugeStyle, TargetValue: item.TargetValue, WarningValue: item.WarningValue, CriticalValue: item.CriticalValue, DomainMin: item.DomainMin, DomainMax: item.DomainMax, ThresholdDirection: item.ThresholdDirection, ShowDelta: item.ShowDelta, Appearance: item.Appearance}
 }
 
 func compatibleDashboardSourceKinds(widgetType string) map[string]bool {

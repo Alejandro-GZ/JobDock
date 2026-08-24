@@ -111,6 +111,25 @@ func TestDashboardTemplateResolverMaterializesStarPlotSources(t *testing.T) {
 	}
 }
 
+func TestDashboardTemplateResolverPreservesScalarSummaryConfiguration(t *testing.T) {
+	target, warning, critical, minimum, maximum := .9, .8, .6, 0.0, 1.0
+	template := semanticTemplate(templateSlot("quality", []string{"metric:model_score"}, 1, 1))
+	template.Widgets[0].Type = "gauge"
+	template.Widgets[0].ScalarAggregation = "avg"
+	template.Widgets[0].GaugeStyle = "bullet"
+	template.Widgets[0].TargetValue, template.Widgets[0].WarningValue, template.Widgets[0].CriticalValue = &target, &warning, &critical
+	template.Widgets[0].DomainMin, template.Widgets[0].DomainMax = &minimum, &maximum
+	template.Widgets[0].ThresholdDirection = "lower_is_worse"
+	result := resolveDashboardTemplate(template, []observableSource{{Kind: "metric", Name: "quality", Tags: []string{"metric:model_score"}}})
+	if result.Compatibility != "compatible" || len(result.Widgets) != 1 {
+		t.Fatalf("scalar summary resolution: %#v", result)
+	}
+	widget := result.Widgets[0]
+	if widget.Type != "gauge" || widget.ScalarAggregation != "avg" || widget.GaugeStyle != "bullet" || widget.TargetValue == nil || *widget.TargetValue != target || widget.ThresholdDirection != "lower_is_worse" {
+		t.Fatalf("scalar summary template configuration was lost: %#v", widget)
+	}
+}
+
 func TestDashboardTemplateResolverAppliesValidatedManualAmbiguityOverride(t *testing.T) {
 	template := semanticTemplate(templateSlot("loss", []string{"metric:loss"}, 1, 1))
 	catalog := []observableSource{{Kind: "metric", Name: "objective_a", Tags: []string{"metric:loss"}}, {Kind: "metric", Name: "objective_b", Tags: []string{"metric:loss"}}}

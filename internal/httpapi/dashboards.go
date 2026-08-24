@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -29,18 +30,27 @@ type dashboardTemplateMaterialization struct {
 	AppliedAt       time.Time `json:"applied_at"`
 }
 type dashboardWidget struct {
-	ID            string                     `json:"id"`
-	Type          string                     `json:"type"`
-	Title         string                     `json:"title,omitempty"`
-	Size          dashboardWidgetSize        `json:"size"`
-	Position      dashboardWidgetPosition    `json:"position"`
-	Sources       []dashboardWidgetSource    `json:"sources"`
-	XAxis         string                     `json:"x_axis,omitempty"`
-	GridColumns   int                        `json:"grid_columns,omitempty"`
-	TimeRange     string                     `json:"time_range,omitempty"`
-	GaugeMaxMode  string                     `json:"gauge_max_mode,omitempty"`
-	GaugeMaxValue *float64                   `json:"gauge_max_value,omitempty"`
-	Appearance    *dashboardWidgetAppearance `json:"appearance,omitempty"`
+	ID                 string                     `json:"id"`
+	Type               string                     `json:"type"`
+	Title              string                     `json:"title,omitempty"`
+	Size               dashboardWidgetSize        `json:"size"`
+	Position           dashboardWidgetPosition    `json:"position"`
+	Sources            []dashboardWidgetSource    `json:"sources"`
+	XAxis              string                     `json:"x_axis,omitempty"`
+	GridColumns        int                        `json:"grid_columns,omitempty"`
+	TimeRange          string                     `json:"time_range,omitempty"`
+	GaugeMaxMode       string                     `json:"gauge_max_mode,omitempty"`
+	GaugeMaxValue      *float64                   `json:"gauge_max_value,omitempty"`
+	ScalarAggregation  string                     `json:"scalar_aggregation,omitempty"`
+	GaugeStyle         string                     `json:"gauge_style,omitempty"`
+	TargetValue        *float64                   `json:"target_value,omitempty"`
+	WarningValue       *float64                   `json:"warning_value,omitempty"`
+	CriticalValue      *float64                   `json:"critical_value,omitempty"`
+	DomainMin          *float64                   `json:"domain_min,omitempty"`
+	DomainMax          *float64                   `json:"domain_max,omitempty"`
+	ThresholdDirection string                     `json:"threshold_direction,omitempty"`
+	ShowDelta          bool                       `json:"show_delta,omitempty"`
+	Appearance         *dashboardWidgetAppearance `json:"appearance,omitempty"`
 }
 type dashboardWidgetAppearance struct {
 	SchemaVersion int                                  `json:"schema_version"`
@@ -456,6 +466,36 @@ func validateDashboardConfig(config dashboardConfig) error {
 		if widget.Type == "gauge" && widget.GaugeMaxMode == "fixed" && widget.GaugeMaxValue == nil {
 			return dashboardError("A gauge with a fixed maximum requires gauge_max_value")
 		}
+		scalar := widget.Type == "kpi" || widget.Type == "gauge"
+		if widget.ScalarAggregation != "" && widget.ScalarAggregation != "last" && widget.ScalarAggregation != "min" && widget.ScalarAggregation != "max" && widget.ScalarAggregation != "avg" {
+			return dashboardError("Widget scalar_aggregation is invalid")
+		}
+		if !scalar && (widget.ScalarAggregation != "" || widget.GaugeStyle != "" || widget.TargetValue != nil || widget.WarningValue != nil || widget.CriticalValue != nil || widget.DomainMin != nil || widget.DomainMax != nil || widget.ThresholdDirection != "" || widget.ShowDelta) {
+			return dashboardError("Scalar summary configuration is only valid for KPI and Gauge widgets")
+		}
+		if widget.GaugeStyle != "" && (widget.Type != "gauge" || widget.GaugeStyle != "gauge" && widget.GaugeStyle != "bullet") {
+			return dashboardError("Widget gauge_style is invalid")
+		}
+		if widget.ShowDelta && widget.Type != "kpi" {
+			return dashboardError("Widget show_delta is only valid for KPI widgets")
+		}
+		if widget.ThresholdDirection != "" && widget.ThresholdDirection != "higher_is_worse" && widget.ThresholdDirection != "lower_is_worse" {
+			return dashboardError("Widget threshold_direction is invalid")
+		}
+		for _, value := range []*float64{widget.TargetValue, widget.WarningValue, widget.CriticalValue, widget.DomainMin, widget.DomainMax} {
+			if value != nil && (math.IsNaN(*value) || math.IsInf(*value, 0)) {
+				return dashboardError("Scalar summary values must be finite")
+			}
+		}
+		if widget.DomainMin != nil && widget.DomainMax != nil && *widget.DomainMin >= *widget.DomainMax {
+			return dashboardError("Scalar summary domain requires increasing bounds")
+		}
+		if widget.WarningValue != nil && widget.CriticalValue != nil {
+			lowerWorse := widget.ThresholdDirection == "lower_is_worse"
+			if lowerWorse && *widget.WarningValue <= *widget.CriticalValue || !lowerWorse && *widget.WarningValue >= *widget.CriticalValue {
+				return dashboardError("Scalar summary warning and critical thresholds are not ordered")
+			}
+		}
 		if err := validateDashboardWidgetAppearance(widget); err != nil {
 			return err
 		}
@@ -464,6 +504,9 @@ func validateDashboardConfig(config dashboardConfig) error {
 		}
 		if widget.Type == "starplot" && len(widget.Sources) > 16 {
 			return dashboardError("A STAR plot may contain at most 16 radial axes")
+		}
+		if (widget.Type == "kpi" || widget.Type == "gauge") && len(widget.Sources) > 1 {
+			return dashboardError("Scalar summary widgets accept at most one source")
 		}
 		for _, source := range widget.Sources {
 			if !validKinds[source.Kind] || len(strings.TrimSpace(source.Name)) < 1 || len(source.Name) > 128 {
@@ -584,7 +627,7 @@ func validDashboardColor(value string) bool {
 }
 
 func supportedDashboardWidgetTypes() map[string]bool {
-	return map[string]bool{"lineplot": true, "barplot": true, "scatterplot": true, "starplot": true, "confusion_matrix": true, "progress": true, "logs": true, "gauge": true}
+	return map[string]bool{"lineplot": true, "barplot": true, "scatterplot": true, "starplot": true, "confusion_matrix": true, "progress": true, "logs": true, "kpi": true, "gauge": true}
 }
 
 func supportedDashboardSourceKinds() map[string]bool {

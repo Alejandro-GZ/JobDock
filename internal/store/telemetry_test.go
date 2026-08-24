@@ -105,7 +105,7 @@ func TestMetricSeriesAreAttemptAwareBoundedAndAggregated(t *testing.T) {
 	if err != nil || truncated || len(series) != 1 || len(series[0].Points) != 1 {
 		t.Fatalf("metric series: %#v truncated=%v err=%v", series, truncated, err)
 	}
-	if series[0].Points[0].Value != 3 || series[0].Points[0].SampleCount != 2 || series[0].Last != 2 || series[0].Min != 2 || series[0].Max != 4 || series[0].SampleCount != 2 {
+	if series[0].Points[0].Value != 3 || series[0].Points[0].SampleCount != 2 || series[0].Last != 2 || series[0].Min != 2 || series[0].Max != 4 || series[0].Avg != 3 || series[0].SampleCount != 2 {
 		t.Fatalf("metric aggregation or statistics are wrong: %#v", series[0])
 	}
 	if series[0].Unit != "ratio" || series[0].Metadata["split"] != "train" || !reflect.DeepEqual(series[0].Tags, []string{"metric:loss", "phase:train"}) {

@@ -26,9 +26,9 @@ export function resourcePoints(points: ResourcePoint[], selector: (point: Resour
 
 export function numericSummary(points: SeriesPoint[]) {
   if (points.length === 0) return null;
-  let min = points[0].value, max = points[0].value;
-  for (const point of points) { min = Math.min(min, point.value); max = Math.max(max, point.value); }
-  return { min, max, last: points[points.length - 1].value };
+  let min = points[0].value, max = points[0].value, weightedTotal=0, sampleCount=0;
+  for (const point of points) {const weight=Math.max(1,point.sampleCount??1);min = Math.min(min, point.value); max = Math.max(max, point.value);weightedTotal+=point.value*weight;sampleCount+=weight}
+  return { min, max, avg:weightedTotal/sampleCount, last: points[points.length - 1].value };
 }
 
 export function zoomDomain(domain: [number, number], factor: number, anchor = .5, minimumWidth = 1000): [number, number] {
@@ -51,8 +51,8 @@ export function appendMetricUpdate(current: MetricSeriesResponse | undefined, up
 	  if (sample.tags !== undefined) series.tags = sample.tags;
       series.points.push(point);
       if (series.points.length > livePointLimit) series.points.splice(0, series.points.length-livePointLimit);
-      series.last=sample.value;series.min=Math.min(series.min,sample.value);series.max=Math.max(series.max,sample.value);series.sample_count+=1;
-    } else byName.set(sample.name,{name:sample.name,unit:sample.unit,tags:sample.tags,metadata:sample.metadata,points:[point],last:sample.value,min:sample.value,max:sample.value,sample_count:1});
+      series.avg=((series.avg??series.last)*series.sample_count+sample.value)/(series.sample_count+1);series.last=sample.value;series.min=Math.min(series.min,sample.value);series.max=Math.max(series.max,sample.value);series.sample_count+=1;
+    } else byName.set(sample.name,{name:sample.name,unit:sample.unit,tags:sample.tags,metadata:sample.metadata,points:[point],last:sample.value,min:sample.value,max:sample.value,avg:sample.value,sample_count:1});
   }
   return {...current,cursor:update.cursor,to:new Date(Math.max(Date.parse(current.to),Date.parse(update.captured_at))).toISOString(),series:[...byName.values()]};
 }

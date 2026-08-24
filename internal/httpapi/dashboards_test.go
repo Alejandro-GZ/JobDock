@@ -329,6 +329,25 @@ func TestDashboardValidationRequiresFixedGaugeMaximum(t *testing.T) {
 	}
 }
 
+func TestDashboardValidationSupportsKPIAndBulletThresholds(t *testing.T) {
+	domainMin, domainMax, target, warning, critical := 0.0, 100.0, 75.0, 80.0, 90.0
+	config := dashboardConfig{Widgets: []dashboardWidget{{ID: "score", Type: "kpi", Size: dashboardWidgetSize{Columns: 3, Rows: 2}, Sources: []dashboardWidgetSource{{Kind: "metric", Name: "accuracy"}}, ScalarAggregation: "avg", TargetValue: &target, WarningValue: &warning, CriticalValue: &critical, DomainMin: &domainMin, DomainMax: &domainMax, ThresholdDirection: "higher_is_worse", ShowDelta: true}, {ID: "bullet", Type: "gauge", Size: dashboardWidgetSize{Columns: 6, Rows: 2}, Sources: []dashboardWidgetSource{{Kind: "resource", Name: "gpu-utilization"}}, ScalarAggregation: "max", GaugeStyle: "bullet", TargetValue: &target, WarningValue: &warning, CriticalValue: &critical, DomainMin: &domainMin, DomainMax: &domainMax}}}
+	if err := validateDashboardConfig(config); err != nil {
+		t.Fatalf("valid scalar summary widgets were rejected: %v", err)
+	}
+	invalid := config
+	invalid.Widgets = append([]dashboardWidget(nil), config.Widgets...)
+	invalid.Widgets[0].WarningValue, invalid.Widgets[0].CriticalValue = &critical, &warning
+	if err := validateDashboardConfig(invalid); err == nil {
+		t.Fatal("misordered KPI thresholds were accepted")
+	}
+	invalid.Widgets[0] = config.Widgets[0]
+	invalid.Widgets[0].Sources = append(invalid.Widgets[0].Sources, dashboardWidgetSource{Kind: "metric", Name: "loss"})
+	if err := validateDashboardConfig(invalid); err == nil {
+		t.Fatal("a KPI with multiple scalar sources was accepted")
+	}
+}
+
 func TestDashboardValidationSupportsBoundedStarPlotAxes(t *testing.T) {
 	minimum, maximum := 0.0, 100.0
 	config := dashboardConfig{Widgets: []dashboardWidget{{ID: "star", Type: "starplot", Size: dashboardWidgetSize{Columns: 6, Rows: 4}, Sources: []dashboardWidgetSource{{Kind: "metric", Name: "accuracy"}, {Kind: "metric", Name: "latency"}, {Kind: "resource", Name: "gpu"}}, Appearance: &dashboardWidgetAppearance{SchemaVersion: 1, ColorScheme: "cool", Series: map[string]dashboardSeriesAppearance{"metric:accuracy": {Label: "Quality", Unit: "%", Normalization: "manual", Min: &minimum, Max: &maximum}}}}}}

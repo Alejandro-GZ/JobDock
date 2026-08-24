@@ -352,6 +352,7 @@ type MetricSeries struct {
 	Last        float64        `json:"last"`
 	Min         float64        `json:"min"`
 	Max         float64        `json:"max"`
+	Avg         float64        `json:"avg"`
 	SampleCount int64          `json:"sample_count"`
 }
 

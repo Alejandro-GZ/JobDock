@@ -14,14 +14,15 @@ describe("dashboard widget model",()=>{
   });
 
   it("supports the complete catalog without mutating telemetry or existing widgets",()=>{
-    expect(widgetCatalog.map(item=>item.type)).toEqual(["lineplot","barplot","scatterplot","starplot","confusion_matrix","progress","logs","gauge"]);
+    expect(widgetCatalog.map(item=>item.type)).toEqual(["lineplot","barplot","scatterplot","starplot","confusion_matrix","progress","logs","kpi","gauge"]);
     expect(new Set(widgetCatalog.map(item=>item.category))).toEqual(new Set(["trends","relationships","summaries","diagnostics","operational"]));
     const original=defaultDashboardWidgets(sources),snapshot=structuredClone(original);
     const added=widgetCatalog.map((item,index)=>createDashboardWidget(item.type,sources,`new-${index}`));
-    expect(added.map(widget=>widget.sources[0]?.kind)).toEqual(["metric","metric","metric","metric","matrix","progress","log","metric"]);
+    expect(added.map(widget=>widget.sources[0]?.kind)).toEqual(["metric","metric","metric","metric","matrix","progress","log","metric","metric"]);
     expect(added[2].sources.map(source=>source.role)).toEqual(["x","y"]);
     expect(added[3]).toMatchObject({type:"starplot",sources:[{kind:"metric",name:"loss"},{kind:"metric",name:"accuracy"},{kind:"resource",name:"cpu"}]});
-    expect(added[7]).toMatchObject({type:"gauge",gauge_max_mode:"historical"});
+    expect(added[7]).toMatchObject({type:"kpi",scalar_aggregation:"last"});
+    expect(added[8]).toMatchObject({type:"gauge",gauge_style:"gauge",scalar_aggregation:"last"});
     const removed=removeDashboardWidget(original,original[1].id);
     expect(original).toEqual(snapshot);
     expect(removed).toHaveLength(original.length-1);
@@ -47,6 +48,7 @@ describe("dashboard widget model",()=>{
     expect(restored?.[0].size.columns).toBe(12);
     expect(restoreDashboardWidgets([{id:"future-style",type:"lineplot",size:{columns:1,rows:1},position:{x:0,y:0},sources:[],appearance:{schema_version:2,color_scheme:"future"}}])?.[0].appearance).toBeUndefined();
     expect(restoreDashboardWidgets([{id:"star",type:"starplot",size:{columns:6,rows:4},position:{x:0,y:0},sources:[{kind:"metric",name:"loss"},{kind:"metric",name:"accuracy"},{kind:"resource",name:"cpu"}],appearance:{schema_version:1,series:{"metric:loss":{normalization:"manual",min:0,max:10},"metric:accuracy":{normalization:"zero_to_one"}}}}])?.[0].appearance?.series).toEqual({"metric:loss":{normalization:"manual",min:0,max:10},"metric:accuracy":{normalization:"zero_to_one"}});
+    expect(restoreDashboardWidgets([{id:"score",type:"kpi",title:"Validation score",size:{columns:3,rows:2},position:{x:0,y:0},sources:[{kind:"metric",name:"score"}],scalar_aggregation:"avg",target_value:.9,warning_value:.7,critical_value:.5,threshold_direction:"lower_is_worse",show_delta:true}])?.[0]).toMatchObject({type:"kpi",scalar_aggregation:"avg",target_value:.9,warning_value:.7,critical_value:.5,threshold_direction:"lower_is_worse",show_delta:true});
     expect(restoreDashboardWidgets([{id:"bad",type:"future-widget",size:{columns:1,rows:1},position:{x:0,y:0},sources:[]}])).toBeNull();
   });
 });

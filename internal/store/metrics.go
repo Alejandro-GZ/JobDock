@@ -300,8 +300,8 @@ func (s *Store) metricSeries(ctx context.Context, jobID, attemptID string, names
 		if maxCursor != nil {
 			statsArguments = append(statsArguments, *maxCursor)
 		}
-		statsQuery := `SELECT MIN(value),MAX(value),COUNT(*),(SELECT value FROM job_metric_samples latest WHERE latest.job_id=? AND latest.attempt_id=? AND latest.name=? AND latest.captured_at>=? AND latest.captured_at<=?` + statsCursorClause + ` ORDER BY latest.captured_at DESC,latest.id DESC LIMIT 1) FROM job_metric_samples WHERE job_id=? AND attempt_id=? AND name=? AND captured_at>=? AND captured_at<=?` + statsCursorClause
-		if err = s.db.QueryRowContext(ctx, statsQuery, statsArguments...).Scan(&item.Min, &item.Max, &item.SampleCount, &item.Last); err != nil {
+		statsQuery := `SELECT MIN(value),MAX(value),AVG(value),COUNT(*),(SELECT value FROM job_metric_samples latest WHERE latest.job_id=? AND latest.attempt_id=? AND latest.name=? AND latest.captured_at>=? AND latest.captured_at<=?` + statsCursorClause + ` ORDER BY latest.captured_at DESC,latest.id DESC LIMIT 1) FROM job_metric_samples WHERE job_id=? AND attempt_id=? AND name=? AND captured_at>=? AND captured_at<=?` + statsCursorClause
+		if err = s.db.QueryRowContext(ctx, statsQuery, statsArguments...).Scan(&item.Min, &item.Max, &item.Avg, &item.SampleCount, &item.Last); err != nil {
 			return nil, false, fmt.Errorf("metric statistics: %w", err)
 		}
 		result = append(result, *item)
