@@ -21,6 +21,7 @@ export function MetricsPanel({ job, editMode=false,templateOpen=false,onTemplate
   const pendingSave=useRef<{jobID:string;dashboardID:string;widgets:DashboardWidget[];appearance?:DashboardAppearance}|undefined>(undefined);
   const currentWidgets=useRef<DashboardWidget[]>([]);
   const currentAppearance=useRef<DashboardAppearance|undefined>(undefined);
+  const hydratedDashboard=useRef("");
   const [activeDashboardID,setActiveDashboardID]=useState("");
   const [dashboardWidgets,setDashboardWidgets]=useState<DashboardWidget[]|null|undefined>(undefined);
   const [dashboardAppearance,setDashboardAppearance]=useState<DashboardAppearance|undefined>(undefined);
@@ -31,7 +32,7 @@ export function MetricsPanel({ job, editMode=false,templateOpen=false,onTemplate
   const dashboard=useQuery({queryKey:["job-dashboard",job.id,activeDashboardID],queryFn:()=>api.dashboardByID(job.id,activeDashboardID),enabled:!!activeDashboardID});
   const catalog=useQuery({queryKey:["job-metric-catalog",job.id,job.attempt_id],queryFn:()=>api.metricCatalog(job.id,job.attempt_id),enabled:dashboard.isSuccess});
   const observableCatalog=useQuery({queryKey:["job-observability-catalog",job.id,job.attempt_id],queryFn:()=>api.observabilityCatalog(job.id,job.attempt_id),enabled:dashboard.isSuccess});
-  useEffect(()=>{setDashboardWidgets(dashboard.data?.widgets);setDashboardAppearance(dashboard.data?.appearance);currentAppearance.current=dashboard.data?.appearance;currentWidgets.current=[];setReplacement(undefined)},[activeDashboardID,dashboard.data]);
+  useEffect(()=>{const key=`${job.id}:${activeDashboardID}`;if(!dashboard.data||!activeDashboardID||hydratedDashboard.current===key)return;hydratedDashboard.current=key;setDashboardWidgets(dashboard.data.widgets);setDashboardAppearance(dashboard.data.appearance);currentAppearance.current=dashboard.data.appearance;currentWidgets.current=structuredClone(dashboard.data.widgets??[]);setReplacement(undefined)},[job.id,activeDashboardID,dashboard.data]);
   const effectiveWidgets=dashboardWidgets===undefined?dashboard.data?.widgets:dashboardWidgets;
   const configuredNames=useMemo(()=>effectiveWidgets==null?null:[...new Set(effectiveWidgets.flatMap(widget=>widget.sources.filter(source=>source.kind==="metric").map(source=>source.name)))],[effectiveWidgets]);
   const snapshotAt=useMemo(()=>Date.now(),[job.id,job.attempt_id,job.started_at,job.finished_at]);
