@@ -16,7 +16,7 @@ export const dashboardPalettes:readonly DashboardPalette[]=[
 
 export const quickColors=["#2563eb","#7c3aed","#0891b2","#16a34a","#f59e0b","#ea580c","#dc2626","#db2777","#64748b","#111827"] as const;
 export function paletteByRef(ref?:DashboardPaletteRef){return ref?dashboardPalettes.find(item=>item.id===ref.id):undefined}
-export function effectiveColors(dashboard?:DashboardAppearance,widget?:DashboardWidgetAppearance){return paletteByRef(widget?.palette)?.colors??paletteByRef(dashboard?.palette)?.colors??dashboardPalettes[3].colors}
+export function effectiveColors(dashboard?:DashboardAppearance,widget?:DashboardWidgetAppearance){if(widget?.accent_color){const gradient=gradientFromColor(widget.accent_color);return[widget.accent_color,gradient[0].color,gradient[2].color]}return paletteByRef(widget?.palette)?.colors??paletteByRef(dashboard?.palette)?.colors??dashboardPalettes[3].colors}
 export function supportsGradient(type:DashboardWidgetType){return type==="gauge"||type==="progress"||type==="heatmap"||type==="correlation_heatmap"}
 export function gradientFromColors(colors:readonly string[]){const middle=Math.floor((colors.length-1)/2);return[colors[0],colors[middle],colors.at(-1)!].map((color,index)=>({offset:index/2,color}))}
 export function gradientFromColor(color:string){return[{offset:0,color:mixHex(color,"#ffffff",.42)},{offset:.5,color},{offset:1,color:mixHex(color,"#000000",.28)}]}

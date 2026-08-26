@@ -3,9 +3,9 @@ import {useQuery} from "@tanstack/react-query";
 import {api} from "@/api";
 import type {DashboardWidget} from "@/lib/dashboard-widgets";
 
-const colors=["#2563eb","#dc2626","#16a34a","#9333ea","#ea580c","#0891b2"];
+const defaultColors=["#2563eb","#dc2626","#16a34a","#9333ea","#ea580c","#0891b2"];
 
-export function RegressionDiagnosticsWidget({jobID,attemptID,widget}:{jobID:string;attemptID:string;widget:DashboardWidget}){
+export function RegressionDiagnosticsWidget({jobID,attemptID,widget,colors=defaultColors}:{jobID:string;attemptID:string;widget:DashboardWidget;colors?:readonly string[]}){
   const host=useRef<HTMLElement>(null),[size,setSize]=useState({width:620,height:350}),source=widget.sources.find(item=>item.kind==="table"),query=useQuery({queryKey:["job-table",jobID,attemptID,source?.name,"regression-diagnostics"],queryFn:()=>api.table(jobID,attemptID,source!.name,"limit=500"),enabled:!!source,staleTime:10_000}),table=query.data;
   useEffect(()=>{const element=host.current;if(!element||typeof ResizeObserver==="undefined")return;const resize=()=>{const bounds=element.getBoundingClientRect(),width=Math.max(120,Math.round(bounds.width)),height=Math.max(90,Math.round(bounds.height));setSize(current=>current.width===width&&current.height===height?current:{width,height})};resize();const observer=new ResizeObserver(resize);observer.observe(element);return()=>observer.disconnect()},[query.isLoading]);
   if(query.isLoading)return <div className="h-full animate-pulse rounded-md border bg-muted/20"/>;

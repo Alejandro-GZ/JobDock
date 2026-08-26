@@ -11,6 +11,7 @@ describe("dashboard appearance catalog",()=>{
   });
   it("uses non-destructive widget over dashboard precedence",()=>{
     expect(effectiveColors({schema_version:1,palette:{id:"midnight",version:1}},{schema_version:1,palette:{id:"warm",version:1}})).toEqual(paletteByRef({id:"warm",version:1})?.colors);
+    expect(effectiveColors({schema_version:1,palette:{id:"midnight",version:1}},{schema_version:1,palette:{id:"warm",version:1},accent_color:"#2563eb"})).toEqual(["#2563eb","#81a5f3","#1b47a9"]);
   });
   it("assigns every widget type its own icon",()=>{
     const icons=widgetCatalog.map(item=>widgetIcons[item.type]);

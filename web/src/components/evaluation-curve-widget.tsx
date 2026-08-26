@@ -4,9 +4,9 @@ import type {DashboardWidget} from "@/lib/dashboard-widgets";
 import type {TablePage} from "@/types";
 
 type CurveType="roc_curve"|"precision_recall_curve"|"calibration_curve";
-const colors=["#2563eb","#dc2626","#16a34a","#9333ea","#ea580c","#0891b2"];
+const defaultColors=["#2563eb","#dc2626","#16a34a","#9333ea","#ea580c","#0891b2"];
 
-export function EvaluationCurveWidget({jobID,attemptID,widget}:{jobID:string;attemptID:string;widget:DashboardWidget}){
+export function EvaluationCurveWidget({jobID,attemptID,widget,colors=defaultColors}:{jobID:string;attemptID:string;widget:DashboardWidget;colors?:readonly string[]}){
   const type=widget.type as CurveType,sources=widget.sources.filter(source=>source.kind==="table").slice(0,8),queries=useQueries({queries:sources.map(source=>({queryKey:["job-table",jobID,attemptID,source.name,"curve"],queryFn:()=>api.table(jobID,attemptID,source.name,"limit=500"),staleTime:10_000}))}),tables=queries.flatMap(query=>query.data?[query.data]:[]),definition=curveDefinition(type);
   if(queries.some(query=>query.isLoading))return <div className="h-full animate-pulse rounded-md border bg-muted/20"/>;
   if(!tables.length)return <div role="status" className="grid h-full place-items-center rounded-md border text-xs text-muted-foreground">No compatible curve points.</div>;
@@ -14,10 +14,10 @@ export function EvaluationCurveWidget({jobID,attemptID,widget}:{jobID:string;att
     <svg className="h-full w-full" viewBox="0 0 620 360" preserveAspectRatio="xMidYMid meet" role="img">
       <line x1="55" y1="315" x2="590" y2="315" className="stroke-border"/><line x1="55" y1="25" x2="55" y2="315" className="stroke-border"/>
       {type!=="precision_recall_curve"&&<line x1="55" y1="315" x2="590" y2="25" stroke="var(--muted-foreground)" strokeDasharray="5 5" opacity=".5"/>}
-      {tables.map((table,index)=><Curve key={table.name} table={table} x={definition.x} y={definition.y} color={colors[index%colors.length]}/>) }
+      {tables.map((table,index)=><Curve key={table.name} table={table} x={definition.x} y={definition.y} color={widget.appearance?.series?.[`table:${table.name}`]?.color??colors[index%colors.length]}/>) }
       <text x="322" y="350" textAnchor="middle" className="fill-muted-foreground text-[10px]">{definition.xLabel}</text><text x="15" y="170" textAnchor="middle" transform="rotate(-90 15 170)" className="fill-muted-foreground text-[10px]">{definition.yLabel}</text>
     </svg>
-    <div className="absolute bottom-6 left-1/2 flex max-w-[85%] -translate-x-1/2 flex-wrap justify-center gap-2 rounded bg-background/85 px-2 py-1 text-[9px] backdrop-blur">{tables.map((table,index)=><span key={table.name} className="flex items-center gap-1"><i className="size-2 rounded-full" style={{background:colors[index%colors.length]}}/>{String(table.metadata?.model??table.name)}{summary(table)}</span>)}</div>
+    <div className="absolute bottom-6 left-1/2 flex max-w-[85%] -translate-x-1/2 flex-wrap justify-center gap-2 rounded bg-background/85 px-2 py-1 text-[9px] backdrop-blur">{tables.map((table,index)=><span key={table.name} className="flex items-center gap-1"><i className="size-2 rounded-full" style={{background:widget.appearance?.series?.[`table:${table.name}`]?.color??colors[index%colors.length]}}/>{String(table.metadata?.model??table.name)}{summary(table)}</span>)}</div>
   </section>
 }
 

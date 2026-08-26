@@ -180,7 +180,7 @@ function DashboardWidgetView({ jobID, attemptID, widget, numericSources, sourceO
         host.style.removeProperty(property); }; }, [dashboardAppearance, widget]);
     const source = widget.sources[0];
     const option = sourceOptions.find(item => source && item.kind === source.kind && item.name === source.name);
-    const colors=effectiveColors(dashboardAppearance,widget.appearance),inheritedGradient=!widget.appearance?.gradient&&(widget.appearance?.palette||dashboardAppearance?.palette)&&supportsGradient(widget.type)?gradientFromColors(colors):undefined,effectiveAppearance=inheritedGradient?{schema_version:1 as const,...widget.appearance,gradient:inheritedGradient}:widget.appearance;
+    const colors=effectiveColors(dashboardAppearance,widget.appearance),inheritedGradient=!widget.appearance?.gradient&&(widget.appearance?.palette||dashboardAppearance?.palette)&&supportsGradient(widget.type)?gradientFromColors(colors):undefined,effectiveAppearance=inheritedGradient?{schema_version:1 as const,...widget.appearance,gradient:inheritedGradient}:widget.appearance,resolvedWidget={...widget,appearance:{schema_version:1 as const,...effectiveAppearance,accent_color:effectiveAppearance?.accent_color??colors[0]}};
     if (option?.declared && option.observed === false)
         return <UnavailableWidget type={widget.type} sourceKind={source?.kind} waiting phase={option.phase}/>;
     if (widget.type === "logs") {
@@ -191,19 +191,19 @@ function DashboardWidgetView({ jobID, attemptID, widget, numericSources, sourceO
     if (widget.type === "data_grid" && source?.kind === "table")
         return <DataGridWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
     if ((widget.type === "roc_curve" || widget.type === "precision_recall_curve" || widget.type === "calibration_curve") && source?.kind === "table")
-        return <EvaluationCurveWidget jobID={jobID} attemptID={attemptID} widget={widget}/>;
+        return <EvaluationCurveWidget jobID={jobID} attemptID={attemptID} widget={widget} colors={colors}/>;
     if ((widget.type === "prediction_vs_actual" || widget.type === "residual_plot") && source?.kind === "table")
-        return <RegressionDiagnosticsWidget jobID={jobID} attemptID={attemptID} widget={widget}/>;
+        return <RegressionDiagnosticsWidget jobID={jobID} attemptID={attemptID} widget={widget} colors={colors}/>;
     if (widget.type === "feature_importance" && source?.kind === "table")
-        return <FeatureImportanceWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
+        return <FeatureImportanceWidget jobID={jobID} attemptID={attemptID} widget={widget} colors={colors} onUpdate={onUpdate}/>;
     if (widget.type === "shap_summary" && source?.kind === "table")
-        return <ShapSummaryWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
+        return <ShapSummaryWidget jobID={jobID} attemptID={attemptID} widget={widget} colors={colors} onUpdate={onUpdate}/>;
     if (widget.type === "partial_dependence" && source?.kind === "table")
-        return <PartialDependenceWidget jobID={jobID} attemptID={attemptID} widget={widget}/>;
+        return <PartialDependenceWidget jobID={jobID} attemptID={attemptID} widget={resolvedWidget}/>;
     if ((widget.type === "embedding_scatter" || widget.type === "cluster_scatter") && source?.kind === "table")
-        return <ProjectionScatterWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
+        return <ProjectionScatterWidget jobID={jobID} attemptID={attemptID} widget={widget} colors={colors} onUpdate={onUpdate}/>;
     if ((widget.type === "bubble_chart" || widget.type === "parallel_coordinates" || widget.type === "pie_chart" || widget.type === "donut_chart" || widget.type === "treemap" || widget.type === "waterfall") && source?.kind === "table")
-        return <TabularChartWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
+        return <TabularChartWidget jobID={jobID} attemptID={attemptID} widget={widget} colors={colors} onUpdate={onUpdate}/>;
     if (widget.type === "progress" && progress && hasProgress(progress))
         return <ProgressWidget state={progress} appearance={effectiveAppearance}/>;
     if (widget.type === "confusion_matrix" && source) {
@@ -219,9 +219,9 @@ function DashboardWidgetView({ jobID, attemptID, widget, numericSources, sourceO
     if (widget.type === "histogram" || widget.type === "boxplot" || widget.type === "violin") {
         const names = new Set(widget.sources.filter(item => item.kind === "distribution").map(item => item.name)), items = distributions.filter(item => names.has(item.name));
         if (items.length)
-            return <DistributionWidget type={widget.type} title={widget.title} items={items}/>;
+            return <DistributionWidget type={widget.type} title={widget.title} items={items} appearance={effectiveAppearance} colors={colors}/>;
     }
-    const paletteActive=!!(widget.appearance?.palette||dashboardAppearance?.palette),numeric = widget.sources.flatMap((reference, index) => { const item = numericSources.find(candidate => candidate.kind === reference.kind && candidate.name === reference.name); return item ? [{ ...item, id: sourceKey(item), role: reference.role, color: effectiveAppearance?.series?.[sourceKey(reference)]?.color ?? (paletteActive?colors[index % colors.length]:item.color??colors[index % colors.length]) }] : []; }), widgetMarkers = widget.sources.some(item => item.kind === "metric") ? markers : [];
+    const paletteActive=!!(widget.appearance?.accent_color||widget.appearance?.palette||dashboardAppearance?.palette),numeric = widget.sources.flatMap((reference, index) => { const item = numericSources.find(candidate => candidate.kind === reference.kind && candidate.name === reference.name); return item ? [{ ...item, id: sourceKey(item), role: reference.role, color: effectiveAppearance?.series?.[sourceKey(reference)]?.color ?? (paletteActive?colors[index % colors.length]:item.color??colors[index % colors.length]) }] : []; }), widgetMarkers = widget.sources.some(item => item.kind === "metric") ? markers : [];
     const waiting = !!option?.declared && !hasWidgetData(widget, numeric, progress, matrices);
     if (waiting)
         return <UnavailableWidget type={widget.type} sourceKind={source?.kind} waiting phase={option?.phase}/>;
