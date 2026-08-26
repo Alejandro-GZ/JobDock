@@ -57,7 +57,7 @@ describe("MetricsPanel live updates",()=>{
     const user=userEvent.setup(),training=await screen.findByRole("tab",{name:"Training"}),validation=screen.getByRole("tab",{name:"Validation"});await waitFor(()=>expect(metricRequests).toBe(1));expect(training.getAttribute("aria-selected")).toBe("true");training.focus();await user.keyboard("[ArrowDown]");await waitFor(()=>expect(patches).toHaveLength(1));expect(validation.getAttribute("aria-selected")).toBe("true");expect(document.activeElement).toBe(validation);expect(metricRequests).toBe(1);
     expect(screen.queryByRole("button",{name:/dashboard rail/i})).toBeNull();expect(screen.getByLabelText("Training is default")).toBeTruthy();
     await user.click(validation);expect(await screen.findByRole("menuitem",{name:"Rename"})).toBeTruthy();await user.keyboard("{Escape}");
-    await user.click(screen.getByRole("button",{name:"Create dashboard"}));expect(await screen.findByRole("heading",{name:"Create dashboard"})).toBeTruthy();
+    await user.click(screen.getByRole("button",{name:"Create dashboard"}));expect(await screen.findByRole("heading",{name:"Create dashboard"})).toBeTruthy();expect(screen.getByRole("button",{name:"From template"})).toBeTruthy();expect(screen.getByRole("button",{name:"Create blank"})).toBeTruthy();
   });
 });
 

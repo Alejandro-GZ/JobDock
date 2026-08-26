@@ -67,7 +67,20 @@ describe("DashboardTemplatePicker",()=>{
     await user.click(screen.getByRole("button",{name:"Applicable"}));expect(screen.queryByText("Object detection")).toBeNull();
     await user.click(screen.getByRole("button",{name:"Applicable"}));await user.type(screen.getByRole("textbox",{name:"Search templates"}),"detection");expect((await screen.findAllByText("Object detection")).length).toBeGreaterThan(0);expect(screen.queryByText("Training",{selector:"button span"})).toBeNull();
   });
+  it("creates a new dashboard with the selected template name by default",async()=>{
+    vi.spyOn(api,"dashboardTemplates").mockResolvedValue([template]);
+    vi.spyOn(api,"dashboardTemplateMatches").mockResolvedValue([{template_id:"training",compatibility:"compatible",applicable:true,missing_required:0,ambiguous_sources:0}]);
+    vi.spyOn(api,"resolveDashboardTemplate").mockResolvedValue(resolution(true));
+    const onCreate=vi.fn(async()=>undefined),client=new QueryClient({defaultOptions:{queries:{retry:false}}}),user=userEvent.setup();
+    render(<QueryClientProvider client={client}><CreateHarness onCreate={onCreate}/></QueryClientProvider>);
+    await user.click(screen.getByRole("button",{name:"Create from template"}));
+    const name=await screen.findByRole("textbox",{name:"Dashboard name"});
+    await waitFor(()=>expect((name as HTMLInputElement).value).toBe("Training"));
+    await user.click(screen.getByRole("button",{name:"Create dashboard"}));
+    await waitFor(()=>expect(onCreate).toHaveBeenCalledWith("Training",applied,{template_id:"training",template_version:3,schema_version:1}));
+  });
 });
 
 function Harness({onApply}:{onApply:(widgets:DashboardWidget[],materializedFrom:DashboardTemplateReference|null)=>Promise<void>}){const[open,setOpen]=useState(false);return <><Button onClick={()=>setOpen(true)}>Open templates</Button><DashboardTemplatePicker open={open} onOpenChange={setOpen} jobID="job" attemptID="attempt" currentWidgets={previous} onApply={onApply}/></>}
+function CreateHarness({onCreate}:{onCreate:(name:string,widgets:DashboardWidget[],materializedFrom:DashboardTemplateReference)=>Promise<void>}){const[open,setOpen]=useState(false);return <><Button onClick={()=>setOpen(true)}>Create from template</Button><DashboardTemplatePicker open={open} onOpenChange={setOpen} jobID="job" attemptID="attempt" mode="create" onCreate={onCreate}/></>}
 function resolution(overridden:boolean):DashboardTemplateResolution{return{template_id:"training",schema_version:1,template_version:3,attempt_id:"attempt",compatibility:overridden?"compatible":"incompatible",widgets:overridden?applied:[],widget_results:[{widget_id:"loss",status:overridden?"resolved":"unresolved"}],slot_results:[{widget_id:"loss",slot_id:"loss",status:overridden?"resolved":"ambiguous",candidates:[{kind:"metric",name:"objective_a"},{kind:"metric",name:"objective_b"}],selected:overridden?[{kind:"metric",name:"objective_b"}]:[]}]}}
