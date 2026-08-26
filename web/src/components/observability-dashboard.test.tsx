@@ -39,6 +39,10 @@ describe("ObservabilityDashboard",()=>{
     await user.click(screen.getByRole("button",{name:"Configure widget data"}));expect(screen.getByRole("combobox",{name:"Source"}).textContent).toContain("validation · validation_confusion");
     await user.click(screen.getByRole("button",{name:"Cancel"}));rerender(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready numericSources={[]} observableSources={descriptors} matrices={[]} markers={[]} initialWidgets={saved}/>));expect(await screen.findByText("Waiting for data")).toBeTruthy();
   });
+  it("does not query declared table sources until an observation exists",async()=>{
+    const fetchMock=vi.fn();vi.stubGlobal("fetch",fetchMock);const descriptors=[{name:"category_snapshot",type:"table",phase:"evaluation",declared:true,observed:false,tags:["table:categorical"]}],saved=[{id:"pie",type:"pie_chart" as const,size:{columns:6,rows:4},position:{x:0,y:0},sources:[{kind:"table" as const,name:"category_snapshot"}],grid_columns:12 as const}];
+    render(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready numericSources={[]} observableSources={descriptors} matrices={[]} markers={[]} initialWidgets={saved}/>));expect(await screen.findByText("Waiting for data")).toBeTruthy();expect(screen.getByText("Phase: evaluation")).toBeTruthy();expect(fetchMock).not.toHaveBeenCalled();
+  });
   it("materializes a template replacement as an ordinary editable dashboard",async()=>{
     const source={kind:"metric" as const,name:"loss",title:"loss",unit:"ratio",points:[]},saved=[{id:"logs",type:"logs" as const,size:{columns:4,rows:2},position:{x:0,y:0},sources:[{kind:"log" as const,name:"stdout"}],grid_columns:4 as const}],replacement=[{id:"loss",type:"lineplot" as const,size:{columns:2,rows:1},position:{x:0,y:0},sources:[{kind:"metric" as const,name:"loss"}],grid_columns:4 as const}],changed=vi.fn();
     const {rerender}=render(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready editMode numericSources={[source]} matrices={[]} markers={[]} initialWidgets={saved} onWidgetsChange={changed}/>));

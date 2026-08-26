@@ -24,6 +24,8 @@ describe("dashboard widget model",()=>{
     expect(added.find(widget=>widget.type==="starplot")).toMatchObject({sources:[{kind:"metric",name:"loss"},{kind:"metric",name:"accuracy"},{kind:"resource",name:"cpu"}]});
     expect(added.find(widget=>widget.type==="kpi")).toMatchObject({scalar_aggregation:"last"});
     expect(added.find(widget=>widget.type==="gauge")).toMatchObject({gauge_style:"gauge",scalar_aggregation:"last"});
+    expect(added.find(widget=>widget.type==="scatterplot")).not.toHaveProperty("scalar_aggregation");
+    expect(added.find(widget=>widget.type==="lineplot")).not.toHaveProperty("gauge_max_mode");
     const removed=removeDashboardWidget(original,original[1].id);
     expect(original).toEqual(snapshot);
     expect(removed).toHaveLength(original.length-1);

@@ -221,6 +221,7 @@ export function defaultDashboardWidgets(sources: DashboardSources): DashboardWid
 export function createDashboardWidget(type: DashboardWidgetType, sources: DashboardSources, id = newWidgetID()): DashboardWidget {
   const source = firstCompatibleSource(type, sources);
   const numeric=[...sources.metrics.map(name=>({kind:"metric" as const,name})),...sources.resources.map(name=>({kind:"resource" as const,name}))];
+  const scalar=type==="kpi"||type==="gauge";
   return {
     id,
     type,
@@ -228,7 +229,9 @@ export function createDashboardWidget(type: DashboardWidgetType, sources: Dashbo
     position: { x: 0, y: Number.MAX_SAFE_INTEGER },
     sources: type==="logs"?[{kind:"log",name:"stdout"}]:type==="scatterplot"&&numeric.length?[{...numeric[0],role:"x"},{...(numeric[1]??numeric[0]),role:"y"}]:type==="starplot"?numeric.slice(0,Math.min(5,numeric.length)):type==="histogram"||type==="boxplot"||type==="violin"?(sources.distributions??[]).slice(0,16).map(name=>({kind:"distribution" as const,name})):source ? [source] : [],
     x_axis: "time",
-    grid_columns:12,time_range:"all",gauge_max_mode:"historical",scalar_aggregation:"last",gauge_style:type==="gauge"?"gauge":undefined,threshold_direction:type==="kpi"||type==="gauge"?"higher_is_worse":undefined,
+    grid_columns:12,time_range:"all",
+    ...(scalar?{scalar_aggregation:"last" as const,threshold_direction:"higher_is_worse" as const}:{}),
+    ...(type==="gauge"?{gauge_max_mode:"historical" as const,gauge_style:"gauge" as const}:{}),
   };
 }
 

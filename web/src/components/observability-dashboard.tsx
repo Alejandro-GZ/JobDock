@@ -69,6 +69,8 @@ export function ObservabilityDashboard({jobID,attemptID,ready,numericSources,obs
 
 function DashboardWidgetView({jobID,attemptID,widget,numericSources,sourceOptions,progress,matrices,distributions,markers,onUpdate}:{jobID:string;attemptID:string;widget:DashboardWidget;numericSources:NumericWidgetSource[];sourceOptions:WidgetSourceOption[];progress?:ProgressState;matrices:MatrixObservation[];distributions:DistributionObservation[];markers:ChartMarker[];onUpdate:(widget:DashboardWidget)=>void}){
   const source=widget.sources[0];
+  const option=sourceOptions.find(item=>source&&item.kind===source.kind&&item.name===source.name);
+  if(option?.declared&&option.observed===false)return <UnavailableWidget type={widget.type} sourceKind={source?.kind} waiting phase={option.phase}/>;
   if(widget.type==="logs"){const streams=widget.sources.filter(item=>item.kind==="log"&&(item.name==="stdout"||item.name==="stderr")).map(item=>item.name as StreamName);return <LiveLogs jobId={jobID} attemptId={attemptID} streams={streams.length?streams:["stdout"]} embedded actions={<ConfigureWidget widget={widget} sources={sourceOptions} onUpdate={onUpdate}/>}/>}
   if(widget.type==="data_grid"&&source?.kind==="table")return <DataGridWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
   if((widget.type==="roc_curve"||widget.type==="precision_recall_curve"||widget.type==="calibration_curve")&&source?.kind==="table")return <EvaluationCurveWidget jobID={jobID} attemptID={attemptID} widget={widget}/>;
@@ -83,7 +85,7 @@ function DashboardWidgetView({jobID,attemptID,widget,numericSources,sourceOption
   if((widget.type==="heatmap"||widget.type==="correlation_heatmap")&&source){const matrix=matrices.find(item=>item.name===source.name);if(matrix&&(widget.type==="heatmap"&&matrix.matrix_type==="heatmap"||widget.type==="correlation_heatmap"&&matrix.matrix_type==="correlation"))return <HeatmapWidget matrix={matrix} correlation={widget.type==="correlation_heatmap"} appearance={widget.appearance}/>}
   if(widget.type==="histogram"||widget.type==="boxplot"||widget.type==="violin"){const names=new Set(widget.sources.filter(item=>item.kind==="distribution").map(item=>item.name)),items=distributions.filter(item=>names.has(item.name));if(items.length)return <DistributionWidget type={widget.type} title={widget.title} items={items}/>}
   const numeric=widget.sources.flatMap(reference=>{const item=numericSources.find(candidate=>candidate.kind===reference.kind&&candidate.name===reference.name);return item?[{...item,id:sourceKey(item),role:reference.role}]:[]}),widgetMarkers=widget.sources.some(item=>item.kind==="metric")?markers:[];
-  const option=sourceOptions.find(item=>source&&item.kind===source.kind&&item.name===source.name),waiting=!!option?.declared&&!hasWidgetData(widget,numeric,progress,matrices);
+  const waiting=!!option?.declared&&!hasWidgetData(widget,numeric,progress,matrices);
   if(waiting)return <UnavailableWidget type={widget.type} sourceKind={source?.kind} waiting phase={option?.phase}/>;
   if(numeric.length===1&&(widget.type==="kpi"||widget.type==="gauge"))return <ScalarSummaryWidget widget={widget} source={numeric[0]}/>;
   if(numeric.length>0&&widget.type==="anomaly_timeline")return <AnomalyTimeline widget={widget} series={numeric} markers={widgetMarkers}/>;
