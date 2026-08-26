@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import {QueryClient,QueryClientProvider} from "@tanstack/react-query";
-import {render,screen} from "@testing-library/react";
+import {render,screen,waitFor} from "@testing-library/react";
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import {api} from "@/api";
 import {DataGridWidget} from "@/components/data-grid-widget";
 import {EvaluationCurveWidget} from "@/components/evaluation-curve-widget";
+import {ProjectionScatterWidget} from "@/components/projection-scatter-widget";
+import {RegressionDiagnosticsWidget} from "@/components/regression-diagnostics-widget";
 import {TabularChartWidget} from "@/components/tabular-chart-widget";
 import type {DashboardWidget} from "@/lib/dashboard-widgets";
 import type {TablePage} from "@/types";
@@ -51,5 +53,29 @@ describe("tabular observability widgets",()=>{
     expect(await screen.findByLabelText("Bubble Chart")).toBeTruthy();
     expect(screen.getByLabelText("Color or group")).toBeTruthy();
     expect(api.table).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps embedding scatter geometry square inside a wide tile",async()=>{
+    vi.mocked(api.table).mockResolvedValueOnce({...page,subtype:"projection",items:[{cursor:1,timestamp:"2026-08-24T12:00:00Z",values:{sample_id:"a",x:0,y:0,label:"A"}},{cursor:2,timestamp:"2026-08-24T12:00:01Z",values:{sample_id:"b",x:1,y:1,label:"B"}}]});
+    const bounds=vi.spyOn(HTMLElement.prototype,"getBoundingClientRect").mockReturnValue({width:900,height:240,top:0,left:0,right:900,bottom:240,x:0,y:0,toJSON:()=>({})});
+    vi.stubGlobal("ResizeObserver",class{constructor(private callback:ResizeObserverCallback){}observe(){this.callback([],this as unknown as ResizeObserver)}disconnect(){}unobserve(){}});
+    const widget:DashboardWidget={id:"projection",type:"embedding_scatter",size:{columns:12,rows:3},position:{x:0,y:0},sources:[{kind:"table",name:"observations"}]};
+    view(<ProjectionScatterWidget jobID="job" attemptID="attempt" widget={widget} onUpdate={()=>{}}/>);
+    const plot=await screen.findByRole("img",{name:"Embedding scatter with 2 points"});
+    await waitFor(()=>expect(plot.getAttribute("width")).toBe("900"));
+    expect(plot.getAttribute("height")).toBe("240");expect(plot.getAttribute("data-plot-size")).toBe("176x176");expect(plot.hasAttribute("preserveAspectRatio")).toBe(false);
+    bounds.mockRestore();vi.unstubAllGlobals();
+  });
+
+  it("preserves equal axes for prediction scatter in a wide tile",async()=>{
+    vi.mocked(api.table).mockResolvedValueOnce({...page,subtype:"regression_diagnostics",columns:[{name:"actual",type:"number",unit:"score"},{name:"prediction",type:"number",unit:"score"}],items:[{cursor:1,timestamp:"2026-08-24T12:00:00Z",values:{actual:0,prediction:.1}},{cursor:2,timestamp:"2026-08-24T12:00:01Z",values:{actual:1,prediction:.9}}]});
+    const bounds=vi.spyOn(HTMLElement.prototype,"getBoundingClientRect").mockReturnValue({width:900,height:240,top:0,left:0,right:900,bottom:240,x:0,y:0,toJSON:()=>({})});
+    vi.stubGlobal("ResizeObserver",class{constructor(private callback:ResizeObserverCallback){}observe(){this.callback([],this as unknown as ResizeObserver)}disconnect(){}unobserve(){}});
+    const widget:DashboardWidget={id:"regression",type:"prediction_vs_actual",size:{columns:12,rows:3},position:{x:0,y:0},sources:[{kind:"table",name:"observations"}]};
+    view(<RegressionDiagnosticsWidget jobID="job" attemptID="attempt" widget={widget}/>);
+    const plot=await screen.findByRole("img",{name:"Prediction versus actual scatter with 2 points"});
+    await waitFor(()=>expect(plot.getAttribute("width")).toBe("900"));
+    expect(plot.getAttribute("height")).toBe("240");expect(plot.getAttribute("data-plot-size")).toBe("168x168");expect(plot.hasAttribute("preserveAspectRatio")).toBe(false);
+    bounds.mockRestore();vi.unstubAllGlobals();
   });
 });
