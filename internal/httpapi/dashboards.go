@@ -16,7 +16,16 @@ import (
 const dashboardSchemaVersion = 1
 
 type dashboardConfig struct {
-	Widgets []dashboardWidget `json:"widgets"`
+	Widgets    []dashboardWidget    `json:"widgets"`
+	Appearance *dashboardAppearance `json:"appearance,omitempty"`
+}
+type dashboardPaletteRef struct {
+	ID      string `json:"id"`
+	Version int    `json:"version"`
+}
+type dashboardAppearance struct {
+	SchemaVersion int                  `json:"schema_version"`
+	Palette       *dashboardPaletteRef `json:"palette,omitempty"`
 }
 type dashboardTemplateReference struct {
 	TemplateID      string `json:"template_id"`
@@ -66,25 +75,45 @@ type dashboardWidget struct {
 	Appearance         *dashboardWidgetAppearance `json:"appearance,omitempty"`
 }
 type dashboardWidgetAppearance struct {
-	SchemaVersion  int                                  `json:"schema_version"`
-	Subtitle       string                               `json:"subtitle,omitempty"`
-	ColorScheme    string                               `json:"color_scheme,omitempty"`
-	Series         map[string]dashboardSeriesAppearance `json:"series,omitempty"`
-	Legend         string                               `json:"legend,omitempty"`
-	ShowGrid       *bool                                `json:"show_grid,omitempty"`
-	XAxis          *dashboardAxisAppearance             `json:"x_axis,omitempty"`
-	YAxis          *dashboardAxisAppearance             `json:"y_axis,omitempty"`
-	LineStyle      string                               `json:"line_style,omitempty"`
-	LineWidth      *float64                             `json:"line_width,omitempty"`
-	ShowPoints     *bool                                `json:"show_points,omitempty"`
-	PointSize      *float64                             `json:"point_size,omitempty"`
-	Opacity        *float64                             `json:"opacity,omitempty"`
-	MatrixMode     string                               `json:"matrix_mode,omitempty"`
-	StackMode      string                               `json:"stack_mode,omitempty"`
-	HeatmapScale   string                               `json:"heatmap_scale,omitempty"`
-	HeatmapMin     *float64                             `json:"heatmap_min,omitempty"`
-	HeatmapMax     *float64                             `json:"heatmap_max,omitempty"`
-	HeatmapPalette string                               `json:"heatmap_palette,omitempty"`
+	SchemaVersion   int                                  `json:"schema_version"`
+	Subtitle        string                               `json:"subtitle,omitempty"`
+	ColorScheme     string                               `json:"color_scheme,omitempty"`
+	Series          map[string]dashboardSeriesAppearance `json:"series,omitempty"`
+	Legend          string                               `json:"legend,omitempty"`
+	ShowGrid        *bool                                `json:"show_grid,omitempty"`
+	XAxis           *dashboardAxisAppearance             `json:"x_axis,omitempty"`
+	YAxis           *dashboardAxisAppearance             `json:"y_axis,omitempty"`
+	LineStyle       string                               `json:"line_style,omitempty"`
+	LineWidth       *float64                             `json:"line_width,omitempty"`
+	ShowPoints      *bool                                `json:"show_points,omitempty"`
+	PointSize       *float64                             `json:"point_size,omitempty"`
+	Opacity         *float64                             `json:"opacity,omitempty"`
+	MatrixMode      string                               `json:"matrix_mode,omitempty"`
+	StackMode       string                               `json:"stack_mode,omitempty"`
+	HeatmapScale    string                               `json:"heatmap_scale,omitempty"`
+	HeatmapMin      *float64                             `json:"heatmap_min,omitempty"`
+	HeatmapMax      *float64                             `json:"heatmap_max,omitempty"`
+	HeatmapPalette  string                               `json:"heatmap_palette,omitempty"`
+	Palette         *dashboardPaletteRef                 `json:"palette,omitempty"`
+	BackgroundColor string                               `json:"background_color,omitempty"`
+	BorderColor     string                               `json:"border_color,omitempty"`
+	TextColor       string                               `json:"text_color,omitempty"`
+	AccentColor     string                               `json:"accent_color,omitempty"`
+	Padding         string                               `json:"padding,omitempty"`
+	ShowLabels      *bool                                `json:"show_labels,omitempty"`
+	ShowValues      *bool                                `json:"show_values,omitempty"`
+	CellGap         *float64                             `json:"cell_gap,omitempty"`
+	Gradient        []dashboardGradientStop              `json:"gradient,omitempty"`
+	FontSize        *float64                             `json:"font_size,omitempty"`
+	WrapLines       *bool                                `json:"wrap_lines,omitempty"`
+	StdoutColor     string                               `json:"stdout_color,omitempty"`
+	StderrColor     string                               `json:"stderr_color,omitempty"`
+	Density         string                               `json:"density,omitempty"`
+	StripedRows     *bool                                `json:"striped_rows,omitempty"`
+}
+type dashboardGradientStop struct {
+	Offset float64 `json:"offset"`
+	Color  string  `json:"color"`
 }
 type dashboardAxisAppearance struct {
 	Label string   `json:"label,omitempty"`
@@ -152,7 +181,7 @@ func writeDashboardStatus(w http.ResponseWriter, status int, item store.Dashboar
 		return
 	}
 	config, compatibility, reason := restoreDashboardConfig(item.ConfigJSON)
-	response := map[string]any{"id": item.ID, "name": item.Name, "schema_version": item.SchemaVersion, "widgets": config.Widgets, "sort_order": item.SortOrder, "is_default": item.IsDefault, "compatibility": compatibility, "created_at": item.CreatedAt, "updated_at": item.UpdatedAt, "materialized_from": dashboardMaterialization(item)}
+	response := map[string]any{"id": item.ID, "name": item.Name, "schema_version": item.SchemaVersion, "widgets": config.Widgets, "appearance": config.Appearance, "sort_order": item.SortOrder, "is_default": item.IsDefault, "compatibility": compatibility, "created_at": item.CreatedAt, "updated_at": item.UpdatedAt, "materialized_from": dashboardMaterialization(item)}
 	if reason != "" {
 		response["fallback_reason"] = reason
 	}
@@ -334,6 +363,7 @@ func (a *API) putDashboard(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		SchemaVersion    int               `json:"schema_version"`
 		Widgets          []dashboardWidget `json:"widgets"`
+		Appearance       json.RawMessage   `json:"appearance"`
 		MaterializedFrom json.RawMessage   `json:"materialized_from"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
@@ -350,18 +380,32 @@ func (a *API) putDashboard(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusConflict, "unsupported_dashboard_schema", "Only dashboard schema version 1 is supported")
 		return
 	}
-	config := dashboardConfig{Widgets: body.Widgets}
+	item, existingErr := a.dashboardForRequest(r)
+	if existingErr != nil {
+		writeStoreError(w, existingErr)
+		return
+	}
+	existing, _, _ := restoreDashboardConfig(item.ConfigJSON)
+	appearance := existing.Appearance
+	if body.Appearance != nil {
+		if bytes.Equal(bytes.TrimSpace(body.Appearance), []byte("null")) {
+			appearance = nil
+		} else {
+			var decoded dashboardAppearance
+			if json.Unmarshal(body.Appearance, &decoded) != nil {
+				writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard", "Dashboard appearance is invalid")
+				return
+			}
+			appearance = &decoded
+		}
+	}
+	config := dashboardConfig{Widgets: body.Widgets, Appearance: appearance}
 	if err := validateDashboardConfig(config); err != nil {
 		writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard", err.Error())
 		return
 	}
 	encoded, _ := json.Marshal(config)
 	now := time.Now().UTC()
-	item, existingErr := a.dashboardForRequest(r)
-	if existingErr != nil {
-		writeStoreError(w, existingErr)
-		return
-	}
 	item.SchemaVersion, item.ConfigJSON, item.UpdatedAt = body.SchemaVersion, encoded, now
 	applied := false
 	if body.MaterializedFrom != nil {
@@ -392,13 +436,18 @@ func restoreDashboardConfig(data []byte) (dashboardConfig, string, string) {
 		return dashboardConfig{Widgets: nil}, "compatible", ""
 	}
 	var raw struct {
-		Widgets []json.RawMessage `json:"widgets"`
+		Widgets    []json.RawMessage    `json:"widgets"`
+		Appearance *dashboardAppearance `json:"appearance"`
 	}
 	if json.Unmarshal(data, &raw) != nil || raw.Widgets == nil || len(raw.Widgets) > 64 {
 		return dashboardConfig{Widgets: nil}, "incompatible", "invalid_saved_configuration"
 	}
-	config := dashboardConfig{Widgets: make([]dashboardWidget, 0, len(raw.Widgets))}
+	config := dashboardConfig{Widgets: make([]dashboardWidget, 0, len(raw.Widgets)), Appearance: raw.Appearance}
 	seen, omitted, degraded := map[string]bool{}, 0, 0
+	if config.Appearance != nil && (config.Appearance.SchemaVersion != 1 || config.Appearance.Palette != nil && !validDashboardPalette(*config.Appearance.Palette, true)) {
+		config.Appearance = nil
+		degraded++
+	}
 	for _, encoded := range raw.Widgets {
 		var widget dashboardWidget
 		if json.Unmarshal(encoded, &widget) != nil || seen[widget.ID] {
@@ -443,6 +492,11 @@ func dashboardMaterialization(item store.DashboardPreference) *dashboardTemplate
 }
 
 func validateDashboardConfig(config dashboardConfig) error {
+	if config.Appearance != nil {
+		if config.Appearance.SchemaVersion != 1 || config.Appearance.Palette != nil && !validDashboardPalette(*config.Appearance.Palette, true) {
+			return dashboardError("Dashboard appearance is invalid")
+		}
+	}
 	if len(config.Widgets) > 64 {
 		return dashboardError("A dashboard may contain at most 64 widgets")
 	}
@@ -585,6 +639,38 @@ func validateDashboardWidgetAppearance(widget dashboardWidget) error {
 	if appearance.SchemaVersion != 1 {
 		return dashboardError("Widget appearance schema version is not supported")
 	}
+	if appearance.Palette != nil && !validDashboardPalette(*appearance.Palette, false) {
+		return dashboardError("Widget appearance palette is invalid")
+	}
+	for _, color := range []string{appearance.BackgroundColor, appearance.BorderColor, appearance.TextColor, appearance.AccentColor, appearance.StdoutColor, appearance.StderrColor} {
+		if color != "" && !validDashboardColor(color) {
+			return dashboardError("Widget appearance color is invalid")
+		}
+	}
+	if appearance.Padding != "" && appearance.Padding != "none" && appearance.Padding != "compact" && appearance.Padding != "normal" {
+		return dashboardError("Widget appearance padding is invalid")
+	}
+	if appearance.Density != "" && appearance.Density != "compact" && appearance.Density != "normal" && appearance.Density != "comfortable" {
+		return dashboardError("Widget appearance density is invalid")
+	}
+	if appearance.CellGap != nil && (*appearance.CellGap < 0 || *appearance.CellGap > 8) {
+		return dashboardError("Widget appearance cell gap is invalid")
+	}
+	if appearance.FontSize != nil && (*appearance.FontSize < 8 || *appearance.FontSize > 24) {
+		return dashboardError("Widget appearance font size is invalid")
+	}
+	if len(appearance.Gradient) > 0 {
+		if widget.Type != "gauge" || len(appearance.Gradient) < 2 || len(appearance.Gradient) > 5 {
+			return dashboardError("Widget appearance gradient is invalid")
+		}
+		last := -1.0
+		for _, stop := range appearance.Gradient {
+			if stop.Offset < 0 || stop.Offset > 1 || stop.Offset < last || !validDashboardColor(stop.Color) {
+				return dashboardError("Widget appearance gradient is invalid")
+			}
+			last = stop.Offset
+		}
+	}
 	if appearance.ColorScheme != "" && appearance.ColorScheme != "default" && appearance.ColorScheme != "cool" && appearance.ColorScheme != "warm" && appearance.ColorScheme != "monochrome" {
 		return dashboardError("Widget appearance color_scheme is invalid")
 	}
@@ -624,7 +710,7 @@ func validateDashboardWidgetAppearance(widget dashboardWidget) error {
 	if err := validateDashboardAxisAppearance(appearance.YAxis); err != nil {
 		return err
 	}
-	if !plot && (appearance.Subtitle != "" || appearance.ColorScheme != "" || len(appearance.Series) > 0 || appearance.Legend != "" || appearance.ShowGrid != nil || appearance.XAxis != nil || appearance.YAxis != nil || appearance.LineWidth != nil || appearance.PointSize != nil || appearance.Opacity != nil) {
+	if !plot && (appearance.ColorScheme != "" || appearance.Legend != "" || appearance.ShowGrid != nil || appearance.XAxis != nil || appearance.YAxis != nil || appearance.LineWidth != nil || appearance.PointSize != nil || appearance.Opacity != nil) {
 		return dashboardError("Widget appearance contains plot-only properties")
 	}
 	line := widget.Type == "lineplot" || widget.Type == "loss_curve" || widget.Type == "learning_curve"
@@ -667,6 +753,22 @@ func validateDashboardWidgetAppearance(widget dashboardWidget) error {
 		return dashboardError("Manual heatmap color scale requires minimum and maximum")
 	}
 	return nil
+}
+
+func validDashboardPalette(palette dashboardPaletteRef, dashboard bool) bool {
+	if palette.Version != 1 || len(palette.ID) < 1 || len(palette.ID) > 64 {
+		return false
+	}
+	values := []string{"categorical", "cool", "warm", "diverging", "sequential", "monochrome"}
+	if dashboard {
+		values = []string{"jobdock", "midnight", "accessible"}
+	}
+	for _, value := range values {
+		if palette.ID == value {
+			return true
+		}
+	}
+	return false
 }
 
 func validateDashboardAxisAppearance(axis *dashboardAxisAppearance) error {

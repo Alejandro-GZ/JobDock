@@ -23,6 +23,21 @@ import (
 	"github.com/jobdock/jobdock/internal/store"
 )
 
+func TestDashboardAppearanceValidationAndCompatibility(t *testing.T) {
+	valid := dashboardConfig{Widgets: []dashboardWidget{}, Appearance: &dashboardAppearance{SchemaVersion: 1, Palette: &dashboardPaletteRef{ID: "midnight", Version: 1}}}
+	if err := validateDashboardConfig(valid); err != nil {
+		t.Fatalf("valid dashboard appearance: %v", err)
+	}
+	invalid := dashboardConfig{Widgets: []dashboardWidget{}, Appearance: &dashboardAppearance{SchemaVersion: 1, Palette: &dashboardPaletteRef{ID: "unknown", Version: 1}}}
+	if err := validateDashboardConfig(invalid); err == nil {
+		t.Fatal("unknown dashboard palette was accepted")
+	}
+	config, compatibility, reason := restoreDashboardConfig([]byte(`{"widgets":[],"appearance":{"schema_version":1,"palette":{"id":"midnight","version":1}}}`))
+	if compatibility != "compatible" || reason != "" || config.Appearance == nil || config.Appearance.Palette.ID != "midnight" {
+		t.Fatalf("restored appearance: %#v %s %s", config.Appearance, compatibility, reason)
+	}
+}
+
 func TestDashboardConfigurationPersistsAndFallsBackSafely(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

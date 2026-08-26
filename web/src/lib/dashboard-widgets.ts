@@ -14,6 +14,8 @@ export type DashboardAxisAppearance = {
   max?: number;
 };
 export type DashboardSeriesAppearance = { label?: string; unit?: string; color?: string; normalization?: "historical"|"manual"|"zero_to_one"; min?:number;max?:number };
+export type DashboardPaletteRef = { id: string; version: 1 };
+export type DashboardAppearance = { schema_version: 1; palette?: DashboardPaletteRef };
 export type DashboardWidgetAppearance = {
   schema_version: 1;
   subtitle?: string;
@@ -34,6 +36,22 @@ export type DashboardWidgetAppearance = {
   heatmap_min?: number;
   heatmap_max?: number;
   heatmap_palette?: "sequential" | "diverging";
+  palette?: DashboardPaletteRef;
+  background_color?: string;
+  border_color?: string;
+  text_color?: string;
+  accent_color?: string;
+  padding?: "none" | "compact" | "normal";
+  show_labels?: boolean;
+  show_values?: boolean;
+  cell_gap?: number;
+  gradient?: Array<{offset:number;color:string}>;
+  font_size?: number;
+  wrap_lines?: boolean;
+  stdout_color?: string;
+  stderr_color?: string;
+  density?: "compact" | "normal" | "comfortable";
+  striped_rows?: boolean;
 };
 
 export type DashboardWidget = {
@@ -112,7 +130,7 @@ export type DashboardTemplateReference = { template_id: string; template_version
 export type DashboardTemplateMaterialization = DashboardTemplateReference & { applied_at: string };
 export type DashboardSummary = {id:string;name:string;sort_order:number;is_default:boolean;created_at:string;updated_at:string};
 export type DashboardList = {items:DashboardSummary[];active_dashboard_id:string;default_dashboard_id:string};
-export type DashboardPreference = DashboardSummary & { schema_version: number; widgets: DashboardWidget[] | null; compatibility: DashboardCompatibility; materialized_from?: DashboardTemplateMaterialization | null; fallback_reason?: "unsupported_schema_version" | "invalid_saved_configuration" | "unsupported_widgets_omitted" | "unsupported_widget_appearance_omitted" };
+export type DashboardPreference = DashboardSummary & { schema_version: number; widgets: DashboardWidget[] | null; appearance?:DashboardAppearance; compatibility: DashboardCompatibility; materialized_from?: DashboardTemplateMaterialization | null; fallback_reason?: "unsupported_schema_version" | "invalid_saved_configuration" | "unsupported_widgets_omitted" | "unsupported_widget_appearance_omitted" };
 
 export const dashboardTemplateSchemaVersion=1;
 
@@ -305,11 +323,22 @@ function restoreAppearance(type:DashboardWidgetType,value:unknown):DashboardWidg
   const item=value as Partial<DashboardWidgetAppearance>;
   if(item.schema_version!==1)return undefined;
   const plot=type==="lineplot"||type==="loss_curve"||type==="learning_curve"||type==="anomaly_timeline"||type==="barplot"||type==="area_chart"||type==="stacked_bar"||type==="scatterplot"||type==="starplot"||type==="histogram"||type==="boxplot"||type==="violin",appearance:DashboardWidgetAppearance={schema_version:1};
-  if(plot&&typeof item.subtitle==="string"&&item.subtitle.trim())appearance.subtitle=item.subtitle.trim().slice(0,160);
+  if(typeof item.subtitle==="string"&&item.subtitle.trim())appearance.subtitle=item.subtitle.trim().slice(0,160);
+  if(item.palette&&typeof item.palette.id==="string"&&item.palette.version===1)appearance.palette={id:item.palette.id.slice(0,64),version:1};
+  for(const key of ["background_color","border_color","text_color","accent_color","stdout_color","stderr_color"] as const)if(typeof item[key]==="string"&&/^#[0-9a-f]{6}$/i.test(item[key]!))appearance[key]=item[key]!.toLowerCase();
+  if(["none","compact","normal"].includes(String(item.padding)))appearance.padding=item.padding;
+  if(typeof item.show_labels==="boolean")appearance.show_labels=item.show_labels;
+  if(typeof item.show_values==="boolean")appearance.show_values=item.show_values;
+  if(finiteBetween(item.cell_gap,0,8))appearance.cell_gap=item.cell_gap;
+  if(finiteBetween(item.font_size,8,24))appearance.font_size=item.font_size;
+  if(typeof item.wrap_lines==="boolean")appearance.wrap_lines=item.wrap_lines;
+  if(["compact","normal","comfortable"].includes(String(item.density)))appearance.density=item.density;
+  if(typeof item.striped_rows==="boolean")appearance.striped_rows=item.striped_rows;
+  if(Array.isArray(item.gradient)){const stops=item.gradient.slice(0,5).flatMap(stop=>stop&&finiteBetween(stop.offset,0,1)&&typeof stop.color==="string"&&/^#[0-9a-f]{6}$/i.test(stop.color)?[{offset:stop.offset,color:stop.color.toLowerCase()}]:[]);if(stops.length>=2)appearance.gradient=stops.sort((a,b)=>a.offset-b.offset)}
   if(plot&&["default","cool","warm","monochrome"].includes(String(item.color_scheme)))appearance.color_scheme=item.color_scheme;
   if(plot&&["auto","hidden","open"].includes(String(item.legend)))appearance.legend=item.legend;
   if(plot&&typeof item.show_grid==="boolean")appearance.show_grid=item.show_grid;
-  if(plot){const x=restoreAxis(item.x_axis),y=restoreAxis(item.y_axis),series=restoreSeries(item.series,type==="starplot");if(x&&type!=="starplot")appearance.x_axis=x;if(y&&type!=="starplot")appearance.y_axis=y;if(series)appearance.series=series}
+  {const x=restoreAxis(item.x_axis),y=restoreAxis(item.y_axis),series=restoreSeries(item.series,type==="starplot");if(plot&&x&&type!=="starplot")appearance.x_axis=x;if(plot&&y&&type!=="starplot")appearance.y_axis=y;if(series)appearance.series=series}
   if((type==="lineplot"||type==="loss_curve"||type==="learning_curve")&&["solid","dashed","dotted"].includes(String(item.line_style)))appearance.line_style=item.line_style;
   if((type==="lineplot"||type==="loss_curve"||type==="learning_curve")&&finiteBetween(item.line_width,.5,12))appearance.line_width=item.line_width;
   if((type==="lineplot"||type==="loss_curve"||type==="learning_curve"||type==="scatterplot")&&typeof item.show_points==="boolean")appearance.show_points=item.show_points;

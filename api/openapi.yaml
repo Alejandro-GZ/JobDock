@@ -1390,6 +1390,43 @@ components:
         heatmap_max: {type: number, description: Manual heatmap domain maximum.}
         heatmap_palette: {type: string, enum: [sequential, diverging], description: Heatmap color palette.}
         stack_mode: {type: string, enum: [overlap, stacked], description: Area chart composition. Overlap leaves missing categories as gaps; stacked treats them as zero and requires compatible units.}
+        palette: {$ref: '#/components/schemas/DashboardPaletteReference'}
+        background_color: {type: string, pattern: '^#[0-9A-Fa-f]{6}$'}
+        border_color: {type: string, pattern: '^#[0-9A-Fa-f]{6}$'}
+        text_color: {type: string, pattern: '^#[0-9A-Fa-f]{6}$'}
+        accent_color: {type: string, pattern: '^#[0-9A-Fa-f]{6}$'}
+        padding: {type: string, enum: [none, compact, normal]}
+        show_labels: {type: boolean}
+        show_values: {type: boolean}
+        cell_gap: {type: number, minimum: 0, maximum: 8}
+        gradient: {type: array, minItems: 2, maxItems: 5, items: {$ref: '#/components/schemas/DashboardGradientStop'}}
+        font_size: {type: number, minimum: 8, maximum: 24}
+        wrap_lines: {type: boolean}
+        stdout_color: {type: string, pattern: '^#[0-9A-Fa-f]{6}$'}
+        stderr_color: {type: string, pattern: '^#[0-9A-Fa-f]{6}$'}
+        density: {type: string, enum: [compact, normal, comfortable]}
+        striped_rows: {type: boolean}
+    DashboardPaletteReference:
+      type: object
+      additionalProperties: false
+      required: [id, version]
+      properties:
+        id: {type: string, enum: [jobdock, midnight, accessible, categorical, cool, warm, diverging, sequential, monochrome]}
+        version: {type: integer, const: 1}
+    DashboardGradientStop:
+      type: object
+      additionalProperties: false
+      required: [offset, color]
+      properties:
+        offset: {type: number, minimum: 0, maximum: 1}
+        color: {type: string, pattern: '^#[0-9A-Fa-f]{6}$'}
+    DashboardAppearance:
+      type: object
+      additionalProperties: false
+      required: [schema_version]
+      properties:
+        schema_version: {type: integer, const: 1}
+        palette: {$ref: '#/components/schemas/DashboardPaletteReference'}
     DashboardAxisAppearance:
       type: object
       additionalProperties: false
@@ -1591,6 +1628,11 @@ components:
         compatibility: {type: string, enum: [compatible, partially_compatible, incompatible]}
         fallback_reason: {type: string, enum: [unsupported_schema_version, unsupported_widget_type, unsupported_widget_appearance_version]}
         widgets: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/DashboardWidget'}}
+        appearance:
+          oneOf:
+            - {$ref: '#/components/schemas/DashboardAppearance'}
+            - {type: 'null'}
+          description: Omit to preserve the saved dashboard appearance; send null to reset it.
         widget_results:
           type: array
           maxItems: 64
@@ -1673,6 +1715,7 @@ components:
         name: {type: string, minLength: 1, maxLength: 128}
         schema_version: {type: integer, const: 1}
         widgets: {oneOf: [{type: array, maxItems: 64, items: {$ref: '#/components/schemas/DashboardWidget'}}, {type: 'null'}]}
+        appearance: {oneOf: [{$ref: '#/components/schemas/DashboardAppearance'}, {type: 'null'}]}
         sort_order: {type: integer, minimum: 0}
         is_default: {type: boolean}
         compatibility: {type: string, enum: [compatible, partially_compatible, incompatible]}
