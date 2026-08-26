@@ -36,6 +36,13 @@ func TestDashboardAppearanceValidationAndCompatibility(t *testing.T) {
 	if compatibility != "compatible" || reason != "" || config.Appearance == nil || config.Appearance.Palette.ID != "midnight" {
 		t.Fatalf("restored appearance: %#v %s %s", config.Appearance, compatibility, reason)
 	}
+	gradient := []dashboardGradientStop{{Offset: 0, Color: "#16a34a"}, {Offset: .5, Color: "#f59e0b"}, {Offset: 1, Color: "#dc2626"}}
+	for _, widgetType := range []string{"gauge", "progress", "heatmap", "correlation_heatmap"} {
+		widget := dashboardWidget{ID: widgetType, Type: widgetType, Size: dashboardWidgetSize{Columns: 2, Rows: 2}, Sources: []dashboardWidgetSource{{Kind: "progress", Name: "progress"}}, Appearance: &dashboardWidgetAppearance{SchemaVersion: 1, Gradient: gradient}}
+		if err := validateDashboardWidgetAppearance(widget); err != nil {
+			t.Fatalf("gradient for %s: %v", widgetType, err)
+		}
+	}
 }
 
 func TestDashboardConfigurationPersistsAndFallsBackSafely(t *testing.T) {

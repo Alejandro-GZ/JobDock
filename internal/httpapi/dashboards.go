@@ -660,7 +660,7 @@ func validateDashboardWidgetAppearance(widget dashboardWidget) error {
 		return dashboardError("Widget appearance font size is invalid")
 	}
 	if len(appearance.Gradient) > 0 {
-		if widget.Type != "gauge" || len(appearance.Gradient) < 2 || len(appearance.Gradient) > 5 {
+		if !dashboardWidgetSupportsGradient(widget.Type) || len(appearance.Gradient) < 2 || len(appearance.Gradient) > 5 {
 			return dashboardError("Widget appearance gradient is invalid")
 		}
 		last := -1.0
@@ -753,6 +753,10 @@ func validateDashboardWidgetAppearance(widget dashboardWidget) error {
 		return dashboardError("Manual heatmap color scale requires minimum and maximum")
 	}
 	return nil
+}
+
+func dashboardWidgetSupportsGradient(widgetType string) bool {
+	return widgetType == "gauge" || widgetType == "progress" || widgetType == "heatmap" || widgetType == "correlation_heatmap"
 }
 
 func validDashboardPalette(palette dashboardPaletteRef, dashboard bool) bool {

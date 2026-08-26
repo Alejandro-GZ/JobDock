@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { ChevronLeft, ChevronRight, GripVertical, Maximize2, Paintbrush, Plus, Settings2, Terminal, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, GripVertical, Maximize2, PaintBucket, Paintbrush, Plus, Settings2, Terminal, Trash2 } from "lucide-react";
 import { createContext, useContext } from "react";
 import { ConfusionMatrixWidget } from "@/components/confusion-matrix-widget";
 import { DistributionWidget } from "@/components/distribution-widget";
@@ -25,7 +25,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { compatibleSourceKinds, createDashboardWidget, defaultDashboardWidgets, layoutDashboardWidgets, moveDashboardWidget, removeDashboardWidget, resizeDashboardWidget, restoreDashboardWidgets, widgetCatalog, widgetCategoryLabels, type DashboardAppearance, type DashboardSourceKind, type DashboardSources, type DashboardWidget, type DashboardWidgetSize, type DashboardWidgetType, type WidgetCatalogCategory } from "@/lib/dashboard-widgets";
-import { dashboardPalettes, effectiveColors, paletteByRef, quickColors } from "@/lib/dashboard-palettes";
+import { dashboardPalettes, effectiveColors, gradientFromColor, gradientFromColors, paletteByRef, quickColors, supportsGradient } from "@/lib/dashboard-palettes";
 import { widgetIcons } from "@/lib/widget-icons";
 import type { SeriesPoint } from "@/lib/series";
 import type { DistributionObservation, MatrixObservation, ObservableSourceDescriptor, ProgressState } from "@/types";
@@ -82,8 +82,10 @@ type Props = {
     editMode?: boolean;
 };
 const DashboardAppearanceContext = createContext<DashboardAppearance | undefined>(undefined);
+type AppearanceDragState={kind:"dashboard"|"palette"|"color";value:string};
+type PaintTarget={widgetID:string;seriesKey?:string};
 export function ObservabilityDashboard({ jobID, attemptID, ready, numericSources, observableSources = [], progress, matrices, distributions = [], markers, initialWidgets = null, dashboardAppearance, onDashboardAppearanceChange, onWidgetsChange, onWidgetsReady, replacement, editMode = false }: Props) {
-    const [widgets, setWidgets] = useState<DashboardWidget[]>([]), [preview, setPreview] = useState<DashboardWidget[] | null>(null), [dragging, setDragging] = useState(""), [panelOpen, setPanelOpen] = useState(true), [appearancePanelOpen, setAppearancePanelOpen] = useState(true), [selectedWidget, setSelectedWidget] = useState(""), initialized = useRef(""), appliedReplacement = useRef(""), hydrating = useRef(false), observedWidgets = useRef(widgets), palette = useRef<DashboardWidget | undefined>(undefined);
+    const [widgets, setWidgets] = useState<DashboardWidget[]>([]), [preview, setPreview] = useState<DashboardWidget[] | null>(null), [dragging, setDragging] = useState(""), [panelOpen, setPanelOpen] = useState(true), [appearancePanelOpen, setAppearancePanelOpen] = useState(true), [selectedWidget, setSelectedWidget] = useState(""), [appearanceDrag,setAppearanceDrag]=useState<AppearanceDragState>(),[paintTarget,setPaintTarget]=useState<PaintTarget>(), initialized = useRef(""), appliedReplacement = useRef(""), hydrating = useRef(false), observedWidgets = useRef(widgets), palette = useRef<DashboardWidget | undefined>(undefined);
     const sourceOptions = useMemo<WidgetSourceOption[]>(() => {
         const options: WidgetSourceOption[] = [...numericSources];
         for (const descriptor of observableSources) {
@@ -121,7 +123,7 @@ export function ObservabilityDashboard({ jobID, attemptID, ready, numericSources
     } }, [editMode]);
     const displayed = preview ?? widgets, ordered = [...displayed].sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x);
     const update = (next: DashboardWidget) => setWidgets(current => current.map(item => item.id === next.id ? next : item));
-    const finishDrag = () => { setPreview(null); setDragging(""); palette.current = undefined; };
+    const finishDrag = () => { setPreview(null); setDragging(""); setAppearanceDrag(undefined); setPaintTarget(undefined); palette.current = undefined; };
     const previewOver = (event: DragEvent, target?: string) => { event.preventDefault(); if (palette.current) {
         const added = layoutDashboardWidgets([...widgets, palette.current]);
         setPreview(target ? moveDashboardWidget(added, palette.current.id, target) : added);
@@ -138,23 +140,25 @@ export function ObservabilityDashboard({ jobID, attemptID, ready, numericSources
     return <DashboardAppearanceContext.Provider value={dashboardAppearance}><section aria-label="Metrics dashboard" className="h-full min-h-0">
     {!ready ? <div className="h-full animate-pulse rounded-md border bg-muted/30"/> : <div className="flex h-full min-h-0 overflow-hidden rounded-md border bg-muted/10">
       {editMode && <WidgetPalette open={panelOpen} onToggle={() => setPanelOpen(value => !value)} onDragStart={(event, type) => { const item = createDashboardWidget(type, sources); palette.current = item; setDragging(item.id); event.dataTransfer.effectAllowed = "copy"; event.dataTransfer.setData("text/jobdock-widget-type", type); }} onDragEnd={finishDrag}/>}
-      <div className={cn("relative min-w-0 flex-1 overflow-auto p-2", editMode && "bg-[linear-gradient(to_right,hsl(var(--border)/.22)_1px,transparent_1px),linear-gradient(to_bottom,hsl(var(--border)/.22)_1px,transparent_1px)] bg-[size:8.333%_8.333%]")} style={{backgroundColor:paletteByRef(dashboardAppearance?.palette)?.surface?.background}} onDragOver={event => { if (event.dataTransfer.types.includes("text/jobdock-dashboard-palette")) {
+      <div className={cn("relative min-w-0 flex-1 overflow-auto p-2", editMode && "bg-[linear-gradient(to_right,hsl(var(--border)/.22)_1px,transparent_1px),linear-gradient(to_bottom,hsl(var(--border)/.22)_1px,transparent_1px)] bg-[size:8.333%_8.333%]")} style={{background:paintTarget?.widgetID==="dashboard"&&appearanceDrag?appearancePreview(appearanceDrag):paletteByRef(dashboardAppearance?.palette)?.surface?.background}} onDragOver={event => { if (event.dataTransfer.types.includes("text/jobdock-dashboard-palette")) {
             event.preventDefault();
+            setPaintTarget({widgetID:"dashboard"});
             return;
-        } previewOver(event); }} onDrop={drop}>
+        } previewOver(event); }} onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node))setPaintTarget(undefined)}} onDrop={event=>{drop(event);setPaintTarget(undefined)}}>
         {editMode && <div className={cn("pointer-events-none absolute inset-2 rounded-md border-2 border-dashed transition-colors", dragging ? "border-primary/50" : "border-transparent")} aria-hidden/>}
-        {ordered.length === 0 ? <EmptyDashboard editing={editMode}/> : <div className="grid h-full min-h-0 grid-cols-12 grid-rows-12 auto-rows-fr gap-1">{ordered.map(widget => <div key={widget.id} data-widget-id={widget.id} data-widget-type={widget.type} data-position={`${widget.position.x},${widget.position.y}`} data-size={`${widget.size.columns}x${widget.size.rows}`} style={{ gridColumn: `span ${widget.size.columns}`, gridRow: `span ${widget.size.rows}` }} className={cn("min-h-0 min-w-0 transition-[opacity,transform]", dragging === widget.id && "opacity-45")} onDragOver={event => { event.stopPropagation(); if (event.dataTransfer.types.some(type => type.startsWith("text/jobdock-appearance")))
-            event.preventDefault();
+        {ordered.length === 0 ? <EmptyDashboard editing={editMode}/> : <div className="grid h-full min-h-0 grid-cols-12 grid-rows-12 auto-rows-fr gap-1">{ordered.map(widget => <div key={widget.id} data-widget-id={widget.id} data-widget-type={widget.type} data-position={`${widget.position.x},${widget.position.y}`} data-size={`${widget.size.columns}x${widget.size.rows}`} style={{ gridColumn: `span ${widget.size.columns}`, gridRow: `span ${widget.size.rows}` }} className={cn("relative min-h-0 min-w-0 transition-[opacity,transform]", dragging === widget.id && "opacity-45")} onDragOver={event => { event.stopPropagation(); if(event.dataTransfer.types.includes("text/jobdock-dashboard-palette")){event.preventDefault();setPaintTarget({widgetID:"dashboard"});}
+        else if (event.dataTransfer.types.some(type => type.startsWith("text/jobdock-appearance"))){
+            event.preventDefault();setPaintTarget({widgetID:widget.id});}
         else
-            previewOver(event, widget.id); }} onDrop={event => { event.stopPropagation(); const paletteID = event.dataTransfer.getData("text/jobdock-appearance-palette"), color = event.dataTransfer.getData("text/jobdock-appearance-color"); if (paletteID || color) {
-            update({ ...widget, appearance: { schema_version: 1, ...widget.appearance, ...(paletteID ? { palette: { id: paletteID, version: 1 as const } } : { accent_color: color }) } });
+            previewOver(event, widget.id); }} onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node))setPaintTarget(undefined)}} onDrop={event => { event.stopPropagation(); const paletteID = event.dataTransfer.getData("text/jobdock-appearance-palette"), color = event.dataTransfer.getData("text/jobdock-appearance-color"); if (paletteID || color) {
+            update(applyAppearance(widget,paletteID?{kind:"palette",value:paletteID}:{kind:"color",value:color}));setPaintTarget(undefined);
             return;
-        } drop(event); }}>{editMode ? <EditWidgetShell widget={widget} selected={selectedWidget === widget.id} onSelect={() => setSelectedWidget(widget.id)} onDragStart={event => { if ((event.target as HTMLElement).closest("button") || (event.target as HTMLElement).closest("[data-series-target]")) {
+        } drop(event); }}>{editMode&&paintTarget?.widgetID===widget.id&&!paintTarget.seriesKey&&appearanceDrag&&<div data-paint-preview="widget" className="pointer-events-none absolute inset-0 z-30 grid place-items-center rounded-md border-2 border-current text-foreground shadow-inner" style={{background:appearancePreview(appearanceDrag)}}><span className="rounded-full bg-background/85 p-2 shadow"><PaintBucket className="size-5"/></span></div>}{editMode ? <EditWidgetShell widget={widget} selected={selectedWidget === widget.id} appearanceDrag={appearanceDrag} paintTarget={paintTarget} onPaintTarget={setPaintTarget} onSelect={() => setSelectedWidget(widget.id)} onDragStart={event => { if ((event.target as HTMLElement).closest("button") || (event.target as HTMLElement).closest("[data-series-target]")) {
             event.preventDefault();
             return;
         } event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/jobdock-widget", widget.id); setDragging(widget.id); }} onDragEnd={finishDrag} onConfigure={update} sourceOptions={sourceOptions} onRemove={() => setWidgets(current => removeDashboardWidget(current, widget.id))} onResizePreview={size => setPreview(resizeDashboardWidget(widgets, widget.id, size))} onResizeCommit={size => { setWidgets(resizeDashboardWidget(widgets, widget.id, size)); setPreview(null); }}/> : <DashboardWidgetView jobID={jobID} attemptID={attemptID} widget={widget} numericSources={numericSources} sourceOptions={sourceOptions} progress={progress} matrices={matrices} distributions={distributions} markers={markers} onUpdate={update}/>}</div>)}</div>}
       </div>
-      {editMode && <AppearancePalette open={appearancePanelOpen} onToggle={() => setAppearancePanelOpen(value => !value)} selected={widgets.find(item => item.id === selectedWidget)} onUpdate={update} dashboardAppearance={dashboardAppearance} onDashboardAppearanceChange={onDashboardAppearanceChange}/>}
+      {editMode && <AppearancePalette open={appearancePanelOpen} onToggle={() => setAppearancePanelOpen(value => !value)} selected={widgets.find(item => item.id === selectedWidget)} onUpdate={update} dashboardAppearance={dashboardAppearance} onDashboardAppearanceChange={onDashboardAppearanceChange} onDragState={setAppearanceDrag} onDragEnd={finishDrag}/>}
     </div>}
   </section></DashboardAppearanceContext.Provider>;
 }
@@ -176,11 +180,13 @@ function DashboardWidgetView({ jobID, attemptID, widget, numericSources, sourceO
         host.style.removeProperty(property); }; }, [dashboardAppearance, widget]);
     const source = widget.sources[0];
     const option = sourceOptions.find(item => source && item.kind === source.kind && item.name === source.name);
+    const colors=effectiveColors(dashboardAppearance,widget.appearance),inheritedGradient=!widget.appearance?.gradient&&(widget.appearance?.palette||dashboardAppearance?.palette)&&supportsGradient(widget.type)?gradientFromColors(colors):undefined,effectiveAppearance=inheritedGradient?{schema_version:1 as const,...widget.appearance,gradient:inheritedGradient}:widget.appearance;
     if (option?.declared && option.observed === false)
         return <UnavailableWidget type={widget.type} sourceKind={source?.kind} waiting phase={option.phase}/>;
     if (widget.type === "logs") {
         const streams = widget.sources.filter(item => item.kind === "log" && (item.name === "stdout" || item.name === "stderr")).map(item => item.name as StreamName);
-        return <LiveLogs jobId={jobID} attemptId={attemptID} streams={streams.length ? streams : ["stdout"]} embedded appearance={widget.appearance} actions={<ConfigureWidget widget={widget} sources={sourceOptions} onUpdate={onUpdate}/>}/>;
+        const logAppearance={schema_version:1 as const,...effectiveAppearance,series:{...effectiveAppearance?.series,"log:stdout":{...effectiveAppearance?.series?.["log:stdout"],color:effectiveAppearance?.series?.["log:stdout"]?.color??colors[0]},"log:stderr":{...effectiveAppearance?.series?.["log:stderr"],color:effectiveAppearance?.series?.["log:stderr"]?.color??colors[1]}}};
+        return <LiveLogs jobId={jobID} attemptId={attemptID} streams={streams.length ? streams : ["stdout"]} embedded appearance={logAppearance} actions={<ConfigureWidget widget={widget} sources={sourceOptions} onUpdate={onUpdate}/>}/>;
     }
     if (widget.type === "data_grid" && source?.kind === "table")
         return <DataGridWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
@@ -199,28 +205,28 @@ function DashboardWidgetView({ jobID, attemptID, widget, numericSources, sourceO
     if ((widget.type === "bubble_chart" || widget.type === "parallel_coordinates" || widget.type === "pie_chart" || widget.type === "donut_chart" || widget.type === "treemap" || widget.type === "waterfall") && source?.kind === "table")
         return <TabularChartWidget jobID={jobID} attemptID={attemptID} widget={widget} onUpdate={onUpdate}/>;
     if (widget.type === "progress" && progress && hasProgress(progress))
-        return <ProgressWidget state={progress} appearance={widget.appearance}/>;
+        return <ProgressWidget state={progress} appearance={effectiveAppearance}/>;
     if (widget.type === "confusion_matrix" && source) {
         const matrix = matrices.find(item => item.name === source.name);
         if (matrix)
-            return <ConfusionMatrixWidget matrix={matrix} initialMode={widget.appearance?.matrix_mode} appearance={widget.appearance}/>;
+            return <ConfusionMatrixWidget matrix={matrix} initialMode={effectiveAppearance?.matrix_mode} appearance={effectiveAppearance}/>;
     }
     if ((widget.type === "heatmap" || widget.type === "correlation_heatmap") && source) {
         const matrix = matrices.find(item => item.name === source.name);
         if (matrix && (widget.type === "heatmap" && matrix.matrix_type === "heatmap" || widget.type === "correlation_heatmap" && matrix.matrix_type === "correlation"))
-            return <HeatmapWidget matrix={matrix} correlation={widget.type === "correlation_heatmap"} appearance={widget.appearance}/>;
+            return <HeatmapWidget matrix={matrix} correlation={widget.type === "correlation_heatmap"} appearance={effectiveAppearance}/>;
     }
     if (widget.type === "histogram" || widget.type === "boxplot" || widget.type === "violin") {
         const names = new Set(widget.sources.filter(item => item.kind === "distribution").map(item => item.name)), items = distributions.filter(item => names.has(item.name));
         if (items.length)
             return <DistributionWidget type={widget.type} title={widget.title} items={items}/>;
     }
-    const colors = effectiveColors(dashboardAppearance, widget.appearance), numeric = widget.sources.flatMap((reference, index) => { const item = numericSources.find(candidate => candidate.kind === reference.kind && candidate.name === reference.name); return item ? [{ ...item, id: sourceKey(item), role: reference.role, color: widget.appearance?.series?.[sourceKey(reference)]?.color ?? item.color ?? colors[index % colors.length] }] : []; }), widgetMarkers = widget.sources.some(item => item.kind === "metric") ? markers : [];
+    const paletteActive=!!(widget.appearance?.palette||dashboardAppearance?.palette),numeric = widget.sources.flatMap((reference, index) => { const item = numericSources.find(candidate => candidate.kind === reference.kind && candidate.name === reference.name); return item ? [{ ...item, id: sourceKey(item), role: reference.role, color: effectiveAppearance?.series?.[sourceKey(reference)]?.color ?? (paletteActive?colors[index % colors.length]:item.color??colors[index % colors.length]) }] : []; }), widgetMarkers = widget.sources.some(item => item.kind === "metric") ? markers : [];
     const waiting = !!option?.declared && !hasWidgetData(widget, numeric, progress, matrices);
     if (waiting)
         return <UnavailableWidget type={widget.type} sourceKind={source?.kind} waiting phase={option?.phase}/>;
     if (numeric.length === 1 && (widget.type === "kpi" || widget.type === "gauge"))
-        return <ScalarSummaryWidget widget={widget} source={numeric[0]}/>;
+        return <ScalarSummaryWidget widget={{...widget,appearance:effectiveAppearance}} source={numeric[0]}/>;
     if (numeric.length > 0 && widget.type === "anomaly_timeline")
         return <AnomalyTimeline widget={widget} series={numeric} markers={widgetMarkers}/>;
     if (numeric.length >= 3 && widget.type === "starplot")
@@ -253,9 +259,12 @@ function WidgetPalette({ open, onToggle, onDragStart, onDragEnd }: {
     onDragStart: (event: DragEvent<HTMLElement>, type: DashboardWidgetType) => void;
     onDragEnd: () => void;
 }) { const categories = (Object.keys(widgetCategoryLabels) as WidgetCatalogCategory[]).filter(category => widgetCatalog.some(item => item.category === category)); return <aside className={cn("relative z-10 shrink-0 border-r bg-background transition-[width]", open ? "w-64" : "w-11")} aria-label="Widget library"><Button variant="ghost" size="icon" className="absolute right-3 top-3 size-8" onClick={onToggle} aria-label={open ? "Collapse widget library" : "Expand widget library"}>{open ? <ChevronLeft className="size-4"/> : <ChevronRight className="size-4"/>}</Button>{open && <div className="h-full overflow-y-auto p-3"><p className="mb-3 flex h-8 items-center pr-10 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Widgets</p><div className="space-y-5">{categories.map(category => <section key={category} aria-labelledby={`widget-category-${category}`}><h3 id={`widget-category-${category}`} className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{widgetCategoryLabels[category]}</h3><div className="space-y-1.5">{widgetCatalog.filter(item => item.category === category).map(item => { const Icon = widgetIcon(item.type); return <div key={item.type} draggable onDragStart={event => onDragStart(event, item.type)} onDragEnd={onDragEnd} className="cursor-grab rounded-md border bg-card p-2.5 active:cursor-grabbing"><div className="flex items-center gap-2 text-sm font-medium"><Icon className="size-4"/>{item.label}</div><p className="mt-1 text-xs leading-snug text-muted-foreground">{item.description}</p></div>; })}</div></section>)}</div></div>}</aside>; }
-function EditWidgetShell({ widget, selected, onSelect, onDragStart, onDragEnd, onConfigure, sourceOptions, onRemove, onResizePreview, onResizeCommit }: {
+function EditWidgetShell({ widget, selected, appearanceDrag, paintTarget, onPaintTarget, onSelect, onDragStart, onDragEnd, onConfigure, sourceOptions, onRemove, onResizePreview, onResizeCommit }: {
     widget: DashboardWidget;
     selected: boolean;
+    appearanceDrag?:AppearanceDragState;
+    paintTarget?:PaintTarget;
+    onPaintTarget:(target?:PaintTarget)=>void;
     onSelect: () => void;
     onDragStart: (event: DragEvent<HTMLElement>) => void;
     onDragEnd: () => void;
@@ -280,38 +289,46 @@ function EditWidgetShell({ widget, selected, onSelect, onDragStart, onDragEnd, o
     const start = (event: ReactPointerEvent<HTMLButtonElement>) => { event.preventDefault(); event.stopPropagation(); const tile = event.currentTarget.closest("section")!.getBoundingClientRect(); origin.current = { x: event.clientX, y: event.clientY, columnUnit: tile.width / widget.size.columns || 100, rowUnit: tile.height / widget.size.rows || 80, size: widget.size }; latest.current = widget.size; document.body.style.userSelect = "none"; window.addEventListener("pointermove", moveResize, true); window.addEventListener("pointerup", finishResize, true); window.addEventListener("pointercancel", finishResize, true); };
     const Icon = widgetIcon(widget.type);
     const setSeriesColor = (key: string, color: string) => onConfigure({ ...widget, appearance: { schema_version: 1, ...widget.appearance, series: { ...widget.appearance?.series, [key]: { ...widget.appearance?.series?.[key], color } } } });
-    return <section draggable={!origin.current} onClick={onSelect} onDragStart={onDragStart} onDragEnd={onDragEnd} className={cn("relative flex h-full min-h-0 min-w-0 cursor-grab flex-col overflow-hidden rounded-md border-2 border-dashed bg-card/90 p-3 shadow-sm active:cursor-grabbing", selected ? "border-primary" : "border-primary/30")}><div className="flex min-w-0 items-start gap-3"><Icon className="mt-0.5 size-5 shrink-0 text-foreground/55"/><div className="min-w-0"><h3 className="truncate font-medium">{label}</h3></div><GripVertical className="ml-auto size-4 shrink-0 text-muted-foreground"/></div><div className="absolute inset-x-10 top-1/2 flex -translate-y-1/2 flex-wrap items-center justify-center gap-1.5">{widget.sources.length ? widget.sources.map(source => { const key = sourceKey(source), color = widget.appearance?.series?.[key]?.color; return <button type="button" data-series-target key={`${key}:${source.role ?? ""}`} className="flex max-w-[12rem] items-center gap-1.5 rounded-full border bg-background/90 px-2 py-1 text-[10px] shadow-sm" style={{ borderColor: color }} onDragOver={event => { if (event.dataTransfer.types.includes("text/jobdock-appearance-color")) {
+    return <section draggable={!origin.current} onClick={onSelect} onDragStart={onDragStart} onDragEnd={onDragEnd} className={cn("relative flex h-full min-h-0 min-w-0 cursor-grab flex-col overflow-hidden rounded-md border-2 border-dashed bg-card/90 p-3 shadow-sm active:cursor-grabbing", selected ? "border-primary" : "border-primary/30")}><div className="flex min-w-0 items-start gap-3"><Icon className="mt-0.5 size-5 shrink-0 text-foreground/55"/><div className="min-w-0"><h3 className="truncate font-medium">{label}</h3></div><GripVertical className="ml-auto size-4 shrink-0 text-muted-foreground"/></div><div className="absolute inset-x-10 top-1/2 flex -translate-y-1/2 flex-wrap items-center justify-center gap-1.5">{widget.sources.length ? widget.sources.map(source => { const key = sourceKey(source), color = widget.appearance?.series?.[key]?.color,painting=paintTarget?.widgetID===widget.id&&paintTarget.seriesKey===key&&appearanceDrag; return <button type="button" data-series-target data-paint-preview={painting?"series":undefined} key={`${key}:${source.role ?? ""}`} className="flex max-w-[12rem] items-center gap-1.5 rounded-full border bg-background/90 px-2 py-1 text-[10px] shadow-sm transition-colors" style={{ borderColor: color,background:painting?appearancePreview(appearanceDrag):undefined }} onDragOver={event => { if (event.dataTransfer.types.includes("text/jobdock-appearance-color")||event.dataTransfer.types.includes("text/jobdock-appearance-palette")) {
         event.preventDefault();
         event.stopPropagation();
-    } }} onDrop={event => { const next = event.dataTransfer.getData("text/jobdock-appearance-color"); if (next) {
+        onPaintTarget({widgetID:widget.id,seriesKey:key});
+    } }} onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node))onPaintTarget(undefined)}} onDrop={event => { const direct = event.dataTransfer.getData("text/jobdock-appearance-color"),paletteID=event.dataTransfer.getData("text/jobdock-appearance-palette"),next=direct||paletteByRef(paletteID?{id:paletteID,version:1}:undefined)?.colors[0]; if (next) {
         event.preventDefault();
         event.stopPropagation();
         setSeriesColor(key, next);
+        onPaintTarget(undefined);
         } }}><i className="size-2 rounded-full" style={{ background: color ?? "var(--muted-foreground)" }}/><span className="truncate">{source.role ? `${source.role}: ` : ""}{source.kind} / {source.name}</span></button>; }) : <span className="text-xs text-muted-foreground">No data source</span>}</div><div className="mt-auto flex min-w-0 items-center gap-1 pt-2"><span className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">{widget.size.rows}×{widget.size.columns}</span><div className="absolute bottom-2 left-1/2 flex -translate-x-1/2 rounded-md border bg-background/90 shadow-sm"><ConfigureWidget widget={widget} sources={sourceOptions} onUpdate={onConfigure}/><AppearanceWidget widget={widget} sources={sourceOptions} onUpdate={onConfigure}/><Button variant="ghost" size="icon" className="size-7" aria-label="Remove widget" onClick={onRemove}><Trash2 className="size-3.5"/></Button></div></div><Button variant="ghost" size="icon" className="absolute bottom-0 right-0 size-8 cursor-nwse-resize touch-none" aria-label="Drag to resize widget" onPointerDown={start}><Maximize2 className="size-3.5"/></Button></section>;
 }
-function AppearancePalette({ open, onToggle, selected, onUpdate, dashboardAppearance, onDashboardAppearanceChange }: {
+function AppearancePalette({ open, onToggle, selected, onUpdate, dashboardAppearance, onDashboardAppearanceChange,onDragState,onDragEnd }: {
     open: boolean;
     onToggle: () => void;
     selected?: DashboardWidget;
     onUpdate: (widget: DashboardWidget) => void;
     dashboardAppearance?: DashboardAppearance;
     onDashboardAppearanceChange?: (appearance?: DashboardAppearance) => void;
+    onDragState:(state?:AppearanceDragState)=>void;
+    onDragEnd:()=>void;
 }) {
-    const drag = (event: DragEvent<HTMLElement>, kind: "dashboard" | "palette" | "color", value: string) => { event.dataTransfer.effectAllowed = "copy"; event.dataTransfer.setData(kind === "dashboard" ? "text/jobdock-dashboard-palette" : kind === "palette" ? "text/jobdock-appearance-palette" : "text/jobdock-appearance-color", value); setAppearanceDragImage(event, kind === "color" ? value : undefined); };
-    const applyPalette = (id: string) => selected && onUpdate({ ...selected, appearance: { schema_version: 1, ...selected.appearance, palette: { id, version: 1 }, ...(selected.type === "gauge" ? { gradient: (dashboardPalettes.find(item => item.id === id)?.colors.slice(0, 5) ?? []).map((color, index, array) => ({ offset: index / Math.max(1, array.length - 1), color })) } : {}) } });
-    return <aside className={cn("relative z-10 shrink-0 border-l bg-background transition-[width]", open ? "w-64" : "w-11")} aria-label="Appearance library"><Button variant="ghost" size="icon" className="absolute left-1.5 top-3 size-8" onClick={onToggle} aria-label={open ? "Collapse appearance library" : "Expand appearance library"}>{open ? <ChevronRight className="size-4"/> : <ChevronLeft className="size-4"/>}</Button>{open && <div className="h-full overflow-y-auto p-3"><p className="mb-3 flex h-8 items-center pl-10 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Appearance</p><PaletteSection title="Dashboard palettes">{dashboardPalettes.filter(item => item.scope === "dashboard").map(item => <PaletteButton key={item.id} item={item} active={dashboardAppearance?.palette?.id === item.id} onDragStart={event => drag(event, "dashboard", item.id)} onClick={() => onDashboardAppearanceChange?.({ schema_version: 1, palette: { id: item.id, version: 1 } })}/>)}</PaletteSection><PaletteSection title="Widget palettes">{dashboardPalettes.filter(item => item.scope === "widget").map(item => <PaletteButton key={item.id} item={item} active={selected?.appearance?.palette?.id === item.id} onDragStart={event => drag(event, "palette", item.id)} onClick={() => applyPalette(item.id)}/>)}</PaletteSection><PaletteSection title="Quick colors"><div className="grid grid-cols-5 gap-2">{quickColors.map(color => <button key={color} draggable aria-label={`Apply ${color}`} className="size-8 rounded-md border shadow-sm" style={{ background: color }} onDragStart={event => drag(event, "color", color)} onClick={() => selected && onUpdate({ ...selected, appearance: { schema_version: 1, ...selected.appearance, accent_color: color } })}/>)}</div><label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">Custom<input type="color" className="h-8 min-w-0 flex-1 rounded border bg-transparent" value={selected?.appearance?.accent_color ?? "#2563eb"} onChange={event => selected && onUpdate({ ...selected, appearance: { schema_version: 1, ...selected.appearance, accent_color: event.target.value } })}/></label></PaletteSection>{dashboardAppearance && <Button variant="ghost" size="sm" className="mt-4 w-full" onClick={() => onDashboardAppearanceChange?.(undefined)}>Reset dashboard palette</Button>}</div>}</aside>;
+    const drag = (event: DragEvent<HTMLElement>, kind: "dashboard" | "palette" | "color", value: string) => { event.dataTransfer.effectAllowed = "copy"; event.dataTransfer.setData(kind === "dashboard" ? "text/jobdock-dashboard-palette" : kind === "palette" ? "text/jobdock-appearance-palette" : "text/jobdock-appearance-color", value);onDragState({kind,value}); setAppearanceDragImage(event, kind === "color" ? value : undefined); };
+    const applyPalette = (id: string) => selected && onUpdate(applyAppearance(selected,{kind:"palette",value:id}));
+    const applyColor=(color:string)=>selected&&onUpdate(applyAppearance(selected,{kind:"color",value:color}));
+    return <aside className={cn("relative z-10 shrink-0 border-l bg-background transition-[width]", open ? "w-64" : "w-11")} aria-label="Appearance library"><Button variant="ghost" size="icon" className="absolute left-1.5 top-3 size-8" onClick={onToggle} aria-label={open ? "Collapse appearance library" : "Expand appearance library"}>{open ? <ChevronRight className="size-4"/> : <ChevronLeft className="size-4"/>}</Button>{open && <div className="h-full overflow-y-auto p-3"><p className="mb-3 flex h-8 items-center pl-10 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Appearance</p><PaletteSection title="Dashboard palettes">{dashboardPalettes.filter(item => item.scope === "dashboard").map(item => <PaletteButton key={item.id} item={item} active={dashboardAppearance?.palette?.id === item.id} onDragStart={event => drag(event, "dashboard", item.id)} onDragEnd={onDragEnd} onClick={() => onDashboardAppearanceChange?.({ schema_version: 1, palette: { id: item.id, version: 1 } })}/>)}</PaletteSection><PaletteSection title="Widget palettes">{dashboardPalettes.filter(item => item.scope === "widget").map(item => <PaletteButton key={item.id} item={item} active={selected?.appearance?.palette?.id === item.id} onDragStart={event => drag(event, "palette", item.id)} onDragEnd={onDragEnd} onClick={() => applyPalette(item.id)}/>)}</PaletteSection><PaletteSection title="Quick colors"><div className="grid grid-cols-5 gap-2">{quickColors.map(color => <button key={color} draggable aria-label={`Apply ${color}`} className="size-8 rounded-md border shadow-sm" style={{ background: color }} onDragStart={event => drag(event, "color", color)} onDragEnd={onDragEnd} onClick={() => applyColor(color)}/>)}</div><label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">Custom<input type="color" className="h-8 min-w-0 flex-1 rounded border bg-transparent" value={selected?.appearance?.accent_color ?? "#2563eb"} onChange={event => applyColor(event.target.value)}/></label></PaletteSection>{dashboardAppearance && <Button variant="ghost" size="sm" className="mt-4 w-full" onClick={() => onDashboardAppearanceChange?.(undefined)}>Reset dashboard palette</Button>}</div>}</aside>;
 }
 function PaletteSection({ title, children }: {
     title: string;
     children: import("react").ReactNode;
 }) { return <section className="mb-5"><h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</h3><div className="space-y-1.5">{children}</div></section>; }
-function PaletteButton({ item, active, onDragStart, onClick }: {
+function PaletteButton({ item, active, onDragStart, onDragEnd, onClick }: {
     item: (typeof dashboardPalettes)[number];
     active: boolean;
     onDragStart: (event: DragEvent<HTMLButtonElement>) => void;
+    onDragEnd:()=>void;
     onClick: () => void;
-}) { return <button type="button" draggable onDragStart={onDragStart} onClick={onClick} className={cn("flex w-full items-center gap-2 rounded-md border p-2 text-left text-xs", active && "border-primary ring-1 ring-primary/30")}><span className="flex overflow-hidden rounded">{item.colors.slice(0, 5).map(color => <i key={color} className="h-4 w-3" style={{ background: color }}/>)}</span><span className="truncate">{item.name}</span></button>; }
+}) { return <button type="button" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={onClick} className={cn("flex w-full items-center gap-2 rounded-md border p-2 text-left text-xs", active && "border-primary ring-1 ring-primary/30")}><span className="flex overflow-hidden rounded">{item.colors.slice(0, 5).map(color => <i key={color} className="h-4 w-3" style={{ background: color }}/>)}</span><span className="truncate">{item.name}</span></button>; }
 function setAppearanceDragImage(event: DragEvent<HTMLElement>, color?: string) { const node = document.createElement("div"); node.style.cssText = `position:fixed;left:-1000px;top:-1000px;display:flex;align-items:center;gap:6px;padding:7px 9px;border-radius:8px;background:#fff;color:#111827;border:1px solid #cbd5e1;box-shadow:0 8px 24px #0003`; node.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${color ?? "#7c3aed"}" stroke-width="2"><path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2a2 2 0 0 0 2.8 0Z"/><path d="m5 2 5 5"/><path d="M2 13h15"/></svg>${color ? `<i style="width:18px;height:18px;border-radius:50%;background:${color}"></i>` : `<i style="width:28px;height:12px;border-radius:4px;background:linear-gradient(90deg,#2563eb,#7c3aed,#16a34a,#f59e0b,#dc2626)"></i>`}`; document.body.appendChild(node); event.dataTransfer.setDragImage(node, 12, 12); setTimeout(() => node.remove()); }
+function applyAppearance(widget:DashboardWidget,drag:AppearanceDragState){const palette=drag.kind==="palette"?paletteByRef({id:drag.value,version:1}):undefined,gradient=supportsGradient(widget.type)?drag.kind==="color"?gradientFromColor(drag.value):palette?gradientFromColors(palette.colors):undefined:undefined;return{...widget,appearance:{schema_version:1 as const,...widget.appearance,...(palette?{palette:{id:palette.id,version:1 as const}}:drag.kind==="color"?(widget.type==="logs"?{background_color:drag.value}:{accent_color:drag.value}):{}),...(gradient?{gradient}:{})}}}
+function appearancePreview(drag:AppearanceDragState){if(drag.kind==="color")return`color-mix(in srgb, ${drag.value} 42%, transparent)`;const palette=paletteByRef({id:drag.value,version:1});return palette?`linear-gradient(135deg,${gradientFromColors(palette.colors).map(stop=>`${stop.color} ${stop.offset*100}%`).join(",")})`:"transparent"}
 function ConfigureWidget({ widget, sources, onUpdate }: {
     widget: DashboardWidget;
     sources: WidgetSourceOption[];

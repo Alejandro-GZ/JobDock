@@ -15,6 +15,9 @@ describe("rich observability widgets", () => {
     expect(screen.getByText("prepare")).toBeTruthy();
     expect(screen.getByText("evaluate")).toBeTruthy();
   });
+  it("renders a configured three-color progress gradient",()=>{
+    render(<ProgressWidget state={{attempt_id:"attempt-1",global_progress:.6,milestones:[],reached:[]}} appearance={{schema_version:1,gradient:[{offset:0,color:"#16a34a"},{offset:.5,color:"#f59e0b"},{offset:1,color:"#dc2626"}]}}/>);expect((screen.getByLabelText("Global progress").firstElementChild as HTMLElement).style.background).toContain("linear-gradient");
+  });
 
   it("switches a confusion matrix between absolute and row-normalized values", async () => {
     const user = userEvent.setup();

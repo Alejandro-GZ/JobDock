@@ -1399,7 +1399,7 @@ components:
         show_labels: {type: boolean}
         show_values: {type: boolean}
         cell_gap: {type: number, minimum: 0, maximum: 8}
-        gradient: {type: array, minItems: 2, maxItems: 5, items: {$ref: '#/components/schemas/DashboardGradientStop'}}
+        gradient: {type: array, minItems: 2, maxItems: 5, description: Supported by gauges, progress widgets, and heatmaps., items: {$ref: '#/components/schemas/DashboardGradientStop'}}
         font_size: {type: number, minimum: 8, maximum: 24}
         wrap_lines: {type: boolean}
         stdout_color: {type: string, pattern: '^#[0-9A-Fa-f]{6}$'}

@@ -11,7 +11,7 @@ describe("HeatmapWidget",()=>{
     const {container}=render(<HeatmapWidget matrix={matrix}/>);
     expect(screen.getByRole("img",{name:"attention heatmap with 2 rows and 2 columns"})).toBeTruthy();
     expect(container.querySelectorAll('rect[data-null="true"]')).toHaveLength(1);
-    expect(container.querySelector("title")?.textContent).toContain("query-a × key-a: 0 score");
+    expect(container.querySelector("title")?.textContent).toContain("query-a × key-a: 0 · score");
   });
 
   it("uses the full correlation domain unless a manual domain is configured",()=>{

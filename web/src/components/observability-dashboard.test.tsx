@@ -87,6 +87,10 @@ describe("ObservabilityDashboard", () => {
         fireEvent.drop(tiles()[0], { dataTransfer: transfer });
         expect(tiles().map(tile => tile.dataset.widgetId)).toEqual(["second", "first"]);
     });
+    it("previews paint targets and creates three-stop gradients from quick colors",async()=>{
+        const changed=vi.fn(),source={kind:"metric" as const,name:"temperature",title:"Temperature",unit:"°C",points:[{timestamp:1,value:40}]},saved=[{id:"gauge",type:"gauge" as const,size:{columns:4,rows:3},position:{x:0,y:0},sources:[{kind:"metric" as const,name:"temperature"}],grid_columns:4 as const}];
+        render(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready editMode numericSources={[source]} matrices={[]} markers={[]} initialWidgets={saved} onWidgetsChange={changed}/>));await screen.findByText("metric / temperature");const color=screen.getByRole("button",{name:"Apply #2563eb"}),tile=document.querySelector<HTMLElement>('[data-widget-id="gauge"]')!,transfer=dataTransfer();fireEvent.dragStart(color,{dataTransfer:transfer});fireEvent.dragOver(tile,{dataTransfer:transfer});expect(tile.querySelector('[data-paint-preview="widget"]')).toBeTruthy();fireEvent.drop(tile,{dataTransfer:transfer});await waitFor(()=>expect(changed.mock.calls.at(-1)?.[0]?.[0].appearance.gradient).toHaveLength(3));expect(changed.mock.calls.at(-1)?.[0]?.[0].appearance.accent_color).toBe("#2563eb");
+    });
     it("configures widget data and time range from its editing shell", async () => {
         const user = userEvent.setup(), changed = vi.fn(), sources = [{ kind: "metric" as const, name: "loss", title: "loss", unit: "ratio", points: [{ timestamp: 1, value: .8, step: 1 }] }, { kind: "metric" as const, name: "duration", title: "duration", unit: "seconds", points: [{ timestamp: 1, value: 8, step: 1 }] }], saved = [{ id: "loss", type: "lineplot" as const, size: { columns: 2, rows: 1 }, position: { x: 0, y: 0 }, sources: [{ kind: "metric" as const, name: "loss" }], grid_columns: 4 as const }];
         render(wrap(<ObservabilityDashboard jobID="job" attemptID="attempt" ready editMode numericSources={sources} matrices={[]} markers={[]} initialWidgets={saved} onWidgetsChange={changed}/>));
@@ -140,4 +144,4 @@ describe("ObservabilityDashboard", () => {
         await user.click(screen.getByRole("button", { name: "Apply" }));
     });
 });
-function dataTransfer() { const values = new Map<string, string>(); return { effectAllowed: "all", dropEffect: "move", files: [], items: [], types: [], setData: (key: string, value: string) => values.set(key, value), getData: (key: string) => values.get(key) ?? "", clearData: () => values.clear(), setDragImage: () => undefined }; }
+function dataTransfer() { const values = new Map<string, string>(); return { effectAllowed: "all", dropEffect: "move", files: [], items: [], get types(){return[...values.keys()]}, setData: (key: string, value: string) => values.set(key, value), getData: (key: string) => values.get(key) ?? "", clearData: () => values.clear(), setDragImage: () => undefined }; }
