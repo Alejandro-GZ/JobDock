@@ -55,6 +55,7 @@ func TestDashboardTemplateResolverReportsMissingAmbiguousAndIncompatibleSlots(t 
 		wantStatus string
 	}{
 		{name: "required missing", slot: templateSlot("loss", []string{"metric:loss"}, 1, 1), wantStatus: "missing"},
+		{name: "untagged source type missing", slot: dashboardTemplateSlot{ID: "logs", SourceTypes: []string{"log"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 2}}, catalog: []observableSource{{Kind: "metric", Name: "loss"}}, wantStatus: "missing"},
 		{name: "ambiguous", slot: templateSlot("loss", []string{"metric:loss"}, 1, 1), catalog: []observableSource{{Kind: "metric", Name: "a", Tags: []string{"metric:loss"}}, {Kind: "metric", Name: "b", Tags: []string{"metric:loss"}}}, wantStatus: "ambiguous"},
 		{name: "incompatible", slot: dashboardTemplateSlot{ID: "loss", RequiredTags: []string{"metric:loss"}, SourceTypes: []string{"resource"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 1}}, catalog: []observableSource{{Kind: "metric", Name: "loss", Tags: []string{"metric:loss"}}}, wantStatus: "incompatible"},
 	}

@@ -422,6 +422,12 @@ func TestDashboardTemplateResolutionUsesAttemptDescriptorCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	files, _ := filestore.New(root, 1<<20, 1<<20, 1<<20)
+	if _, err = files.AppendAttemptLog(job.ID, attemptID, "stdout", 0, strings.NewReader("training started\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = files.AppendAttemptLog(job.ID, attemptID, "stderr", 0, strings.NewReader("warning\n")); err != nil {
+		t.Fatal(err)
+	}
 	box, _ := secretbox.New(bytes.Repeat([]byte{9}, 32))
 	server := httptest.NewServer(New(config.Server{AllowInsecureHTTP: true, SessionTTL: time.Hour}, repository, files, box, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	defer server.Close()
@@ -468,6 +474,31 @@ func TestDashboardTemplateResolutionUsesAttemptDescriptorCatalog(t *testing.T) {
 	}
 	if result.AttemptID != attemptID || len(result.Widgets) != 1 || len(result.Widgets[0].Sources) != 2 || result.Widgets[0].Sources[0].Name != "custom_training_objective" || result.Widgets[0].Sources[1].Name != "custom_validation_objective" {
 		t.Fatalf("resolved template: %#v", result)
+	}
+	payload, _ = json.Marshal(map[string]any{"attempt_id": attemptID, "template": trainingDashboardTemplate()})
+	request, _ = http.NewRequest(http.MethodPost, server.URL+"/api/v1/jobs/"+job.ID+"/dashboard/templates/resolve", bytes.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	logResponse, requestErr := client.Do(request)
+	if requestErr != nil {
+		t.Fatal(requestErr)
+	}
+	defer logResponse.Body.Close()
+	if logResponse.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(logResponse.Body)
+		t.Fatalf("official template resolution status=%d body=%s", logResponse.StatusCode, body)
+	}
+	if err = json.NewDecoder(logResponse.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	var logSources []dashboardWidgetSource
+	for _, widget := range result.Widgets {
+		if widget.Type == "logs" {
+			logSources = widget.Sources
+			break
+		}
+	}
+	if result.Compatibility == "incompatible" || len(logSources) != 2 || logSources[0].Name != "stderr" || logSources[1].Name != "stdout" {
+		t.Fatalf("attempt log sources were not resolved: %#v", result)
 	}
 	ambiguous := semanticTemplate(templateSlot("loss", []string{"metric:loss"}, 1, 1))
 	payload, _ = json.Marshal(map[string]any{

@@ -249,6 +249,15 @@ func (a *API) observableSources(r *http.Request, jobID, attemptID string) ([]obs
 	for _, descriptor := range descriptors {
 		sources = append(sources, observableSource{Kind: descriptor.Type, Name: descriptor.Name, Unit: descriptor.Unit, Tags: descriptor.Tags})
 	}
+	for _, stream := range []string{"stdout", "stderr"} {
+		exists, existsErr := a.files.AttemptLogExists(jobID, attemptID, stream)
+		if existsErr != nil {
+			return nil, existsErr
+		}
+		if exists {
+			sources = append(sources, observableSource{Kind: "log", Name: stream})
+		}
+	}
 	return sources, nil
 }
 
@@ -499,7 +508,7 @@ func resolveDashboardTemplateSlot(widgetID string, slot dashboardTemplateSlot, c
 	}
 	resolution := dashboardTemplateSlotResolution{WidgetID: widgetID, SlotID: slot.ID, Candidates: sourceReferences(compatible, slot.Role), Selected: []dashboardWidgetSource{}}
 	switch {
-	case len(tagMatches) > 0 && len(compatible) == 0:
+	case len(required) > 0 && len(tagMatches) > 0 && len(compatible) == 0:
 		resolution.Status = "incompatible"
 	case len(compatible) < slot.Cardinality.Min:
 		resolution.Status = "missing"
