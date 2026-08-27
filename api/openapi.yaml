@@ -631,6 +631,13 @@ paths:
                 required: [items]
                 properties: {items: {type: array, items: {$ref: '#/components/schemas/Node'}}}
   /nodes/{nodeId}:
+    get:
+      security: [{sessionCookie: []}, {personalAccessToken: []}]
+      operationId: getNodeDetail
+      parameters: [{$ref: '#/components/parameters/NodeID'}]
+      responses:
+        '200': {description: Operational host inventory, active reservations, and authorized observed usage, content: {application/json: {schema: {$ref: '#/components/schemas/NodeDetail'}}}}
+        '404': {$ref: '#/components/responses/Problem'}
     patch:
       operationId: updateNodeMetadata
       parameters:
@@ -1232,7 +1239,14 @@ components:
         uuid: {type: string}
         model: {type: string}
         vram_bytes: {type: integer, format: int64}
+        pci_bus_id: {type: string}
+        driver_version: {type: string}
+        compute_capability: {type: string}
+        utilization_basis_points: {type: integer, format: int64, minimum: 0, maximum: 10000}
+        memory_used_bytes: {type: integer, format: int64, minimum: 0}
+        temperature_celsius: {type: integer, format: int64}
         allocated: {type: boolean}
+        allocated_job_id: {type: string, format: uuid}
     GPUDiscovery:
       type: object
       required: [status]
@@ -1245,6 +1259,7 @@ components:
       required: [id, model, physical_cores, logical_cpus, total_millis, allocated_millis]
       properties:
         id: {type: string}
+        vendor: {type: string}
         model: {type: string}
         physical_cores: {type: integer, minimum: 1}
         logical_cpus: {type: array, items: {type: integer, minimum: 0}}
@@ -1252,7 +1267,7 @@ components:
         allocated_millis: {type: integer, format: int64, minimum: 0}
     Node:
       type: object
-      required: [id, name, status, cpu_total_millis, cpu_allocated_millis, memory_total_bytes, memory_allocated_bytes, workspace_free_bytes, labels, capabilities, cpu_packages, gpus, gpu_discovery, last_heartbeat]
+      required: [id, name, status, cpu_total_millis, cpu_allocated_millis, memory_total_bytes, memory_allocated_bytes, workspace_total_bytes, workspace_free_bytes, labels, capabilities, cpu_packages, gpus, gpu_discovery, system, runtime, last_heartbeat]
       properties:
         id: {type: string, format: uuid}
         name: {type: string}
@@ -1265,14 +1280,71 @@ components:
         cpu_allocated_millis: {type: integer, format: int64}
         memory_total_bytes: {type: integer, format: int64}
         memory_allocated_bytes: {type: integer, format: int64}
+        workspace_total_bytes: {type: integer, format: int64}
         workspace_free_bytes: {type: integer, format: int64}
         labels: {type: object, additionalProperties: {type: string}}
         capabilities: {type: array, items: {type: string}}
         cpu_packages: {type: array, items: {$ref: '#/components/schemas/CPUPackage'}}
         gpus: {type: array, items: {$ref: '#/components/schemas/GPU'}}
         gpu_discovery: {$ref: '#/components/schemas/GPUDiscovery'}
+        system: {$ref: '#/components/schemas/NodeSystemInfo'}
+        runtime: {$ref: '#/components/schemas/NodeRuntimeInfo'}
         last_heartbeat: {type: string, format: date-time}
         created_at: {type: string, format: date-time}
+    NodeSystemInfo:
+      type: object
+      properties:
+        hostname: {type: string}
+        operating_system: {type: string}
+        os_version: {type: string}
+        os_type: {type: string}
+        kernel_version: {type: string}
+        architecture: {type: string}
+    NodeRuntimeInfo:
+      type: object
+      properties:
+        docker_version: {type: string}
+        storage_driver: {type: string}
+        cgroup_driver: {type: string}
+        cgroup_version: {type: string}
+    NodeUsage:
+      type: object
+      required: [cpu_observed_millis, memory_observed_bytes, gpu_memory_observed_bytes, observed_allocation_count]
+      properties:
+        cpu_observed_millis: {type: integer, format: int64, minimum: 0}
+        memory_observed_bytes: {type: integer, format: int64, minimum: 0}
+        gpu_memory_observed_bytes: {type: integer, format: int64, minimum: 0}
+        gpu_utilization_basis_points: {type: integer, format: int64, minimum: 0, maximum: 10000}
+        latest_telemetry_at: {type: string, format: date-time}
+        observed_allocation_count: {type: integer, minimum: 0}
+    NodeAllocation:
+      type: object
+      required: [job_id, job_name, status, reserved_cpu_millis, reserved_memory_bytes, gpu_uuids, telemetry_status, can_open]
+      properties:
+        job_id: {type: string, format: uuid}
+        job_name: {type: string}
+        owner_id: {type: string, format: uuid}
+        attempt_id: {type: string, format: uuid}
+        status: {$ref: '#/components/schemas/JobStatus'}
+        reserved_cpu_millis: {type: integer, format: int64, minimum: 0}
+        reserved_memory_bytes: {type: integer, format: int64, minimum: 0}
+        cpu_package_id: {type: string}
+        cpu_set: {type: string}
+        gpu_uuids: {type: array, items: {type: string}}
+        observed_cpu_millis: {type: integer, format: int64, minimum: 0}
+        observed_memory_bytes: {type: integer, format: int64, minimum: 0}
+        observed_gpu_utilization_basis_points: {type: integer, format: int64, minimum: 0, maximum: 10000}
+        observed_gpu_memory_bytes: {type: integer, format: int64, minimum: 0}
+        telemetry_captured_at: {type: string, format: date-time}
+        telemetry_status: {type: string, enum: [fresh, stale, unavailable, restricted]}
+        can_open: {type: boolean}
+    NodeDetail:
+      type: object
+      required: [node, usage, allocations]
+      properties:
+        node: {$ref: '#/components/schemas/Node'}
+        usage: {$ref: '#/components/schemas/NodeUsage'}
+        allocations: {type: array, items: {$ref: '#/components/schemas/NodeAllocation'}}
     JobUpdate:
       type: object
       required: [cursor, job_id, name, status, version, created_at]
@@ -1818,12 +1890,15 @@ components:
         docker_version: {type: string}
         cpu_total_millis: {type: integer, format: int64, minimum: 0}
         memory_total_bytes: {type: integer, format: int64, minimum: 0}
+        workspace_total_bytes: {type: integer, format: int64, minimum: 0}
         workspace_free_bytes: {type: integer, format: int64, minimum: 0}
         labels: {type: object, additionalProperties: {type: string}}
         capabilities: {type: array, items: {type: string}}
         cpu_packages: {type: array, items: {$ref: '#/components/schemas/CPUPackage'}}
         gpus: {type: array, items: {$ref: '#/components/schemas/GPU'} }
         gpu_discovery: {$ref: '#/components/schemas/GPUDiscovery'}
+        system: {$ref: '#/components/schemas/NodeSystemInfo'}
+        runtime: {$ref: '#/components/schemas/NodeRuntimeInfo'}
     SecretMetadata:
       type: object
       required: [id, owner_id, name, kind, created_at, updated_at]

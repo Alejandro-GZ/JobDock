@@ -233,19 +233,43 @@ type JobAttempt struct {
 }
 
 type GPU struct {
-	UUID      string `json:"uuid"`
-	Model     string `json:"model"`
-	VRAMBytes int64  `json:"vram_bytes"`
-	Allocated bool   `json:"allocated"`
+	UUID                   string `json:"uuid"`
+	Model                  string `json:"model"`
+	VRAMBytes              int64  `json:"vram_bytes"`
+	PCIBusID               string `json:"pci_bus_id,omitempty"`
+	DriverVersion          string `json:"driver_version,omitempty"`
+	ComputeCapability      string `json:"compute_capability,omitempty"`
+	UtilizationBasisPoints *int64 `json:"utilization_basis_points,omitempty"`
+	MemoryUsedBytes        *int64 `json:"memory_used_bytes,omitempty"`
+	TemperatureCelsius     *int64 `json:"temperature_celsius,omitempty"`
+	Allocated              bool   `json:"allocated"`
+	AllocatedJobID         string `json:"allocated_job_id,omitempty"`
 }
 
 type CPUPackage struct {
 	ID              string `json:"id"`
+	Vendor          string `json:"vendor,omitempty"`
 	Model           string `json:"model"`
 	PhysicalCores   int    `json:"physical_cores"`
 	LogicalCPUs     []int  `json:"logical_cpus"`
 	TotalMillis     int64  `json:"total_millis"`
 	AllocatedMillis int64  `json:"allocated_millis"`
+}
+
+type NodeSystemInfo struct {
+	Hostname        string `json:"hostname,omitempty"`
+	OperatingSystem string `json:"operating_system,omitempty"`
+	OSVersion       string `json:"os_version,omitempty"`
+	OSType          string `json:"os_type,omitempty"`
+	KernelVersion   string `json:"kernel_version,omitempty"`
+	Architecture    string `json:"architecture,omitempty"`
+}
+
+type NodeRuntimeInfo struct {
+	DockerVersion string `json:"docker_version,omitempty"`
+	StorageDriver string `json:"storage_driver,omitempty"`
+	CgroupDriver  string `json:"cgroup_driver,omitempty"`
+	CgroupVersion string `json:"cgroup_version,omitempty"`
 }
 
 type GPUDiscovery struct {
@@ -266,12 +290,15 @@ type Node struct {
 	CPUAllocatedMillis   int64             `json:"cpu_allocated_millis"`
 	MemoryTotalBytes     int64             `json:"memory_total_bytes"`
 	MemoryAllocatedBytes int64             `json:"memory_allocated_bytes"`
+	WorkspaceTotalBytes  int64             `json:"workspace_total_bytes"`
 	WorkspaceFreeBytes   int64             `json:"workspace_free_bytes"`
 	Labels               map[string]string `json:"labels"`
 	Capabilities         []string          `json:"capabilities"`
 	CPUPackages          []CPUPackage      `json:"cpu_packages"`
 	GPUs                 []GPU             `json:"gpus"`
 	GPUDiscovery         GPUDiscovery      `json:"gpu_discovery"`
+	System               NodeSystemInfo    `json:"system"`
+	Runtime              NodeRuntimeInfo   `json:"runtime"`
 	LastHeartbeat        time.Time         `json:"last_heartbeat"`
 	CreatedAt            time.Time         `json:"created_at"`
 }

@@ -429,12 +429,14 @@ func (s *Store) MarkDeleted(ctx context.Context, jobID string) error {
 func (s *Store) UpsertNode(ctx context.Context, node domain.Node, credentialHash string) error {
 	labels, _ := json.Marshal(node.Labels)
 	capabilities, _ := json.Marshal(node.Capabilities)
+	systemInfo, _ := json.Marshal(node.System)
+	runtimeInfo, _ := json.Marshal(node.Runtime)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT INTO nodes(id,name,status,agent_version,protocol_version,architecture,docker_version,cpu_total_millis,memory_total_bytes,workspace_free_bytes,labels_json,credential_hash,credential_created_at,last_heartbeat,created_at,gpu_discovery_status,gpu_error_code,gpu_error_message,capabilities_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,status=excluded.status,agent_version=excluded.agent_version,protocol_version=excluded.protocol_version,architecture=excluded.architecture,docker_version=excluded.docker_version,cpu_total_millis=excluded.cpu_total_millis,memory_total_bytes=excluded.memory_total_bytes,workspace_free_bytes=excluded.workspace_free_bytes,labels_json=excluded.labels_json,last_heartbeat=excluded.last_heartbeat,gpu_discovery_status=excluded.gpu_discovery_status,gpu_error_code=excluded.gpu_error_code,gpu_error_message=excluded.gpu_error_message,capabilities_json=excluded.capabilities_json`, node.ID, node.Name, node.Status, node.AgentVersion, node.ProtocolVersion, node.Architecture, node.DockerVersion, node.CPUTotalMillis, node.MemoryTotalBytes, node.WorkspaceFreeBytes, labels, credentialHash, formatTime(time.Now().UTC()), formatTime(node.LastHeartbeat), formatTime(node.CreatedAt), node.GPUDiscovery.Status, node.GPUDiscovery.ErrorCode, node.GPUDiscovery.Message, capabilities)
+	_, err = tx.ExecContext(ctx, `INSERT INTO nodes(id,name,status,agent_version,protocol_version,architecture,docker_version,cpu_total_millis,memory_total_bytes,workspace_total_bytes,workspace_free_bytes,labels_json,credential_hash,credential_created_at,last_heartbeat,created_at,gpu_discovery_status,gpu_error_code,gpu_error_message,capabilities_json,system_info_json,runtime_info_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,status=excluded.status,agent_version=excluded.agent_version,protocol_version=excluded.protocol_version,architecture=excluded.architecture,docker_version=excluded.docker_version,cpu_total_millis=excluded.cpu_total_millis,memory_total_bytes=excluded.memory_total_bytes,workspace_total_bytes=excluded.workspace_total_bytes,workspace_free_bytes=excluded.workspace_free_bytes,labels_json=excluded.labels_json,last_heartbeat=excluded.last_heartbeat,gpu_discovery_status=excluded.gpu_discovery_status,gpu_error_code=excluded.gpu_error_code,gpu_error_message=excluded.gpu_error_message,capabilities_json=excluded.capabilities_json,system_info_json=excluded.system_info_json,runtime_info_json=excluded.runtime_info_json`, node.ID, node.Name, node.Status, node.AgentVersion, node.ProtocolVersion, node.Architecture, node.DockerVersion, node.CPUTotalMillis, node.MemoryTotalBytes, node.WorkspaceTotalBytes, node.WorkspaceFreeBytes, labels, credentialHash, formatTime(time.Now().UTC()), formatTime(node.LastHeartbeat), formatTime(node.CreatedAt), node.GPUDiscovery.Status, node.GPUDiscovery.ErrorCode, node.GPUDiscovery.Message, capabilities, systemInfo, runtimeInfo)
 	if err != nil {
 		return err
 	}
@@ -442,7 +444,7 @@ func (s *Store) UpsertNode(ctx context.Context, node domain.Node, credentialHash
 		return err
 	}
 	for _, gpu := range node.GPUs {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO gpus(node_id,uuid,model,vram_bytes) VALUES(?,?,?,?)`, node.ID, gpu.UUID, gpu.Model, gpu.VRAMBytes); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO gpus(node_id,uuid,model,vram_bytes,pci_bus_id,driver_version,compute_capability,utilization_basis_points,memory_used_bytes,temperature_celsius) VALUES(?,?,?,?,?,?,?,?,?,?)`, node.ID, gpu.UUID, gpu.Model, gpu.VRAMBytes, gpu.PCIBusID, gpu.DriverVersion, gpu.ComputeCapability, gpu.UtilizationBasisPoints, gpu.MemoryUsedBytes, gpu.TemperatureCelsius); err != nil {
 			return err
 		}
 	}
@@ -455,12 +457,14 @@ func (s *Store) UpsertNode(ctx context.Context, node domain.Node, credentialHash
 func (s *Store) Heartbeat(ctx context.Context, node domain.Node) error {
 	labels, _ := json.Marshal(node.Labels)
 	capabilities, _ := json.Marshal(node.Capabilities)
+	systemInfo, _ := json.Marshal(node.System)
+	runtimeInfo, _ := json.Marshal(node.Runtime)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE nodes SET name=?,status=CASE WHEN status='DRAINING' THEN status ELSE ? END,agent_version=?,protocol_version=?,architecture=?,docker_version=?,cpu_total_millis=?,memory_total_bytes=?,workspace_free_bytes=?,labels_json=?,last_heartbeat=?,gpu_discovery_status=?,gpu_error_code=?,gpu_error_message=?,capabilities_json=? WHERE id=? AND deleted_at IS NULL`, node.Name, node.Status, node.AgentVersion, node.ProtocolVersion, node.Architecture, node.DockerVersion, node.CPUTotalMillis, node.MemoryTotalBytes, node.WorkspaceFreeBytes, labels, formatTime(node.LastHeartbeat), node.GPUDiscovery.Status, node.GPUDiscovery.ErrorCode, node.GPUDiscovery.Message, capabilities, node.ID)
+	result, err := tx.ExecContext(ctx, `UPDATE nodes SET name=?,status=CASE WHEN status='DRAINING' THEN status ELSE ? END,agent_version=?,protocol_version=?,architecture=?,docker_version=?,cpu_total_millis=?,memory_total_bytes=?,workspace_total_bytes=?,workspace_free_bytes=?,labels_json=?,last_heartbeat=?,gpu_discovery_status=?,gpu_error_code=?,gpu_error_message=?,capabilities_json=?,system_info_json=?,runtime_info_json=? WHERE id=? AND deleted_at IS NULL`, node.Name, node.Status, node.AgentVersion, node.ProtocolVersion, node.Architecture, node.DockerVersion, node.CPUTotalMillis, node.MemoryTotalBytes, node.WorkspaceTotalBytes, node.WorkspaceFreeBytes, labels, formatTime(node.LastHeartbeat), node.GPUDiscovery.Status, node.GPUDiscovery.ErrorCode, node.GPUDiscovery.Message, capabilities, systemInfo, runtimeInfo, node.ID)
 	if err != nil {
 		return err
 	}
@@ -472,7 +476,7 @@ func (s *Store) Heartbeat(ctx context.Context, node domain.Node) error {
 		return err
 	}
 	for _, gpu := range node.GPUs {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO gpus(node_id,uuid,model,vram_bytes) VALUES(?,?,?,?)`, node.ID, gpu.UUID, gpu.Model, gpu.VRAMBytes); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO gpus(node_id,uuid,model,vram_bytes,pci_bus_id,driver_version,compute_capability,utilization_basis_points,memory_used_bytes,temperature_celsius) VALUES(?,?,?,?,?,?,?,?,?,?)`, node.ID, gpu.UUID, gpu.Model, gpu.VRAMBytes, gpu.PCIBusID, gpu.DriverVersion, gpu.ComputeCapability, gpu.UtilizationBasisPoints, gpu.MemoryUsedBytes, gpu.TemperatureCelsius); err != nil {
 			return err
 		}
 	}
@@ -483,7 +487,7 @@ func (s *Store) Heartbeat(ctx context.Context, node domain.Node) error {
 }
 
 func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(name_override,name),status,agent_version,protocol_version,architecture,docker_version,cpu_total_millis,memory_total_bytes,workspace_free_bytes,COALESCE(labels_override_json,labels_json),last_heartbeat,created_at,gpu_discovery_status,gpu_error_code,gpu_error_message,capabilities_json FROM nodes WHERE deleted_at IS NULL ORDER BY COALESCE(name_override,name)`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(name_override,name),status,agent_version,protocol_version,architecture,docker_version,cpu_total_millis,memory_total_bytes,workspace_total_bytes,workspace_free_bytes,COALESCE(labels_override_json,labels_json),last_heartbeat,created_at,gpu_discovery_status,gpu_error_code,gpu_error_message,capabilities_json,system_info_json,runtime_info_json FROM nodes WHERE deleted_at IS NULL ORDER BY COALESCE(name_override,name)`)
 	if err != nil {
 		return nil, err
 	}
@@ -493,35 +497,49 @@ func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
 		var node domain.Node
 		node.GPUs = make([]domain.GPU, 0)
 		node.CPUPackages = make([]domain.CPUPackage, 0)
-		var labels, capabilities, heartbeat, created string
-		if err := rows.Scan(&node.ID, &node.Name, &node.Status, &node.AgentVersion, &node.ProtocolVersion, &node.Architecture, &node.DockerVersion, &node.CPUTotalMillis, &node.MemoryTotalBytes, &node.WorkspaceFreeBytes, &labels, &heartbeat, &created, &node.GPUDiscovery.Status, &node.GPUDiscovery.ErrorCode, &node.GPUDiscovery.Message, &capabilities); err != nil {
+		var labels, capabilities, systemInfo, runtimeInfo, heartbeat, created string
+		if err := rows.Scan(&node.ID, &node.Name, &node.Status, &node.AgentVersion, &node.ProtocolVersion, &node.Architecture, &node.DockerVersion, &node.CPUTotalMillis, &node.MemoryTotalBytes, &node.WorkspaceTotalBytes, &node.WorkspaceFreeBytes, &labels, &heartbeat, &created, &node.GPUDiscovery.Status, &node.GPUDiscovery.ErrorCode, &node.GPUDiscovery.Message, &capabilities, &systemInfo, &runtimeInfo); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(labels), &node.Labels)
 		json.Unmarshal([]byte(capabilities), &node.Capabilities)
+		if node.Labels == nil {
+			node.Labels = map[string]string{}
+		}
+		if node.Capabilities == nil {
+			node.Capabilities = []string{}
+		}
+		json.Unmarshal([]byte(systemInfo), &node.System)
+		json.Unmarshal([]byte(runtimeInfo), &node.Runtime)
+		if node.System.Architecture == "" {
+			node.System.Architecture = node.Architecture
+		}
+		if node.Runtime.DockerVersion == "" {
+			node.Runtime.DockerVersion = node.DockerVersion
+		}
 		node.LastHeartbeat, _ = time.Parse(time.RFC3339Nano, heartbeat)
 		node.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-		gpuRows, err := s.db.QueryContext(ctx, `SELECT uuid,model,vram_bytes FROM gpus WHERE node_id=? ORDER BY uuid`, node.ID)
+		gpuRows, err := s.db.QueryContext(ctx, `SELECT uuid,model,vram_bytes,pci_bus_id,driver_version,compute_capability,utilization_basis_points,memory_used_bytes,temperature_celsius FROM gpus WHERE node_id=? ORDER BY uuid`, node.ID)
 		if err != nil {
 			return nil, err
 		}
 		for gpuRows.Next() {
 			var gpu domain.GPU
-			if err := gpuRows.Scan(&gpu.UUID, &gpu.Model, &gpu.VRAMBytes); err != nil {
+			if err := gpuRows.Scan(&gpu.UUID, &gpu.Model, &gpu.VRAMBytes, &gpu.PCIBusID, &gpu.DriverVersion, &gpu.ComputeCapability, &gpu.UtilizationBasisPoints, &gpu.MemoryUsedBytes, &gpu.TemperatureCelsius); err != nil {
 				gpuRows.Close()
 				return nil, err
 			}
 			node.GPUs = append(node.GPUs, gpu)
 		}
 		gpuRows.Close()
-		cpuRows, err := s.db.QueryContext(ctx, `SELECT package_id,model,physical_cores,logical_cpus_json,total_millis FROM cpu_packages WHERE node_id=? ORDER BY package_id`, node.ID)
+		cpuRows, err := s.db.QueryContext(ctx, `SELECT package_id,vendor,model,physical_cores,logical_cpus_json,total_millis FROM cpu_packages WHERE node_id=? ORDER BY package_id`, node.ID)
 		if err != nil {
 			return nil, err
 		}
 		for cpuRows.Next() {
 			var item domain.CPUPackage
 			var logical string
-			if err := cpuRows.Scan(&item.ID, &item.Model, &item.PhysicalCores, &logical, &item.TotalMillis); err != nil {
+			if err := cpuRows.Scan(&item.ID, &item.Vendor, &item.Model, &item.PhysicalCores, &logical, &item.TotalMillis); err != nil {
 				cpuRows.Close()
 				return nil, err
 			}
@@ -540,7 +558,7 @@ func replaceCPUPackages(ctx context.Context, tx *sql.Tx, nodeID string, packages
 	}
 	for _, item := range packages {
 		logical, _ := json.Marshal(item.LogicalCPUs)
-		if _, err := tx.ExecContext(ctx, `INSERT INTO cpu_packages(node_id,package_id,model,physical_cores,logical_cpus_json,total_millis) VALUES(?,?,?,?,?,?)`, nodeID, item.ID, item.Model, item.PhysicalCores, logical, item.TotalMillis); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO cpu_packages(node_id,package_id,vendor,model,physical_cores,logical_cpus_json,total_millis) VALUES(?,?,?,?,?,?,?)`, nodeID, item.ID, item.Vendor, item.Model, item.PhysicalCores, logical, item.TotalMillis); err != nil {
 			return err
 		}
 	}

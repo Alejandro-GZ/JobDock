@@ -23,9 +23,16 @@ type Client struct {
 type Info struct {
 	NCPU            int    `json:"NCPU"`
 	MemTotal        int64  `json:"MemTotal"`
+	Name            string `json:"Name"`
 	Architecture    string `json:"Architecture"`
 	ServerVersion   string `json:"ServerVersion"`
 	OperatingSystem string `json:"OperatingSystem"`
+	OSVersion       string `json:"OSVersion"`
+	OSType          string `json:"OSType"`
+	KernelVersion   string `json:"KernelVersion"`
+	Driver          string `json:"Driver"`
+	CgroupDriver    string `json:"CgroupDriver"`
+	CgroupVersion   string `json:"CgroupVersion"`
 }
 
 type ResourceStats struct {

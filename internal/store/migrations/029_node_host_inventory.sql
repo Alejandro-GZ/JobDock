@@ -1,0 +1,12 @@
+ALTER TABLE nodes ADD COLUMN workspace_total_bytes INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE nodes ADD COLUMN system_info_json TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE nodes ADD COLUMN runtime_info_json TEXT NOT NULL DEFAULT '{}';
+
+ALTER TABLE cpu_packages ADD COLUMN vendor TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE gpus ADD COLUMN pci_bus_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE gpus ADD COLUMN driver_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE gpus ADD COLUMN compute_capability TEXT NOT NULL DEFAULT '';
+ALTER TABLE gpus ADD COLUMN utilization_basis_points INTEGER;
+ALTER TABLE gpus ADD COLUMN memory_used_bytes INTEGER;
+ALTER TABLE gpus ADD COLUMN temperature_celsius INTEGER;

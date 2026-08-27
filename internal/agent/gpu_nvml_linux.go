@@ -27,6 +27,10 @@ func (nvmlDiscoverer) Discover(ctx context.Context) ([]domain.GPU, domain.GPUDis
 		return []domain.GPU{}, domain.GPUDiscovery{Status: "unavailable", ErrorCode: "NVML_UNAVAILABLE", Message: nvml.ErrorString(result)}
 	}
 	defer nvml.Shutdown()
+	driverVersion, driverResult := nvml.SystemGetDriverVersion()
+	if driverResult != nvml.SUCCESS {
+		driverVersion = ""
+	}
 	count, result := nvml.DeviceGetCount()
 	if result != nvml.SUCCESS {
 		return []domain.GPU{}, domain.GPUDiscovery{Status: "unavailable", ErrorCode: "DISCOVERY_FAILED", Message: nvml.ErrorString(result)}
@@ -52,9 +56,37 @@ func (nvmlDiscoverer) Discover(ctx context.Context) ([]domain.GPU, domain.GPUDis
 		if code != nvml.SUCCESS {
 			return []domain.GPU{}, domain.GPUDiscovery{Status: "unavailable", ErrorCode: "DISCOVERY_FAILED", Message: fmt.Sprintf("get GPU %s memory: %s", uuid, nvml.ErrorString(code))}
 		}
-		gpus = append(gpus, domain.GPU{UUID: uuid, Model: name, VRAMBytes: int64(memory.Total)})
+		gpu := domain.GPU{UUID: uuid, Model: name, VRAMBytes: int64(memory.Total), DriverVersion: driverVersion}
+		used := int64(memory.Used)
+		gpu.MemoryUsedBytes = &used
+		if utilization, utilizationCode := device.GetUtilizationRates(); utilizationCode == nvml.SUCCESS {
+			value := int64(utilization.Gpu) * 100
+			gpu.UtilizationBasisPoints = &value
+		}
+		if temperature, temperatureCode := device.GetTemperature(nvml.TEMPERATURE_GPU); temperatureCode == nvml.SUCCESS {
+			value := int64(temperature)
+			gpu.TemperatureCelsius = &value
+		}
+		if pci, pciCode := device.GetPciInfo(); pciCode == nvml.SUCCESS {
+			gpu.PCIBusID = nvmlString(pci.BusId[:])
+		}
+		if major, minor, capabilityCode := device.GetCudaComputeCapability(); capabilityCode == nvml.SUCCESS {
+			gpu.ComputeCapability = fmt.Sprintf("%d.%d", major, minor)
+		}
+		gpus = append(gpus, gpu)
 	}
 	return gpus, domain.GPUDiscovery{Status: "available", Message: fmt.Sprintf("Discovered %d NVIDIA GPU(s) through NVML", len(gpus))}
+}
+
+func nvmlString(value []int8) string {
+	bytes := make([]byte, 0, len(value))
+	for _, character := range value {
+		if character == 0 {
+			break
+		}
+		bytes = append(bytes, byte(character))
+	}
+	return string(bytes)
 }
 
 func (nvmlDiscoverer) Sample(ctx context.Context, uuids []string) (GPUUsage, error) {

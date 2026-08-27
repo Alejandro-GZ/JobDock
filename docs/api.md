@@ -25,6 +25,15 @@ uploads, node enrollment/drain/resume/metadata operations, and every SDK
 job-context endpoint. Secret values and agent/job credentials are write-only and
 must not be emitted by generated clients in logs.
 
+`GET /api/v1/nodes` remains the shared, polling-friendly capacity list.
+`GET /api/v1/nodes/{nodeId}` returns the persisted operational host inventory,
+active scheduler reservations and the latest resource observation for each
+current attempt. Administrators receive all per-job observations. Members can
+see the shared job ID, name, state and reservation, but observed values and job
+links are present only for jobs they own. Aggregate node usage remains available
+as pool-capacity information. Telemetry freshness is explicit and missing data
+is never presented as zero usage.
+
 ## Time-series queries
 
 Scalar metrics accept optional `timestamp`, `unit`, bounded JSON `metadata`, and

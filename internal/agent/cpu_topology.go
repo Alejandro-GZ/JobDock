@@ -10,6 +10,7 @@ type cpuTopologySample struct {
 	logicalID int
 	packageID string
 	coreID    string
+	vendor    string
 	model     string
 }
 
@@ -22,12 +23,15 @@ func buildCPUPackages(samples []cpuTopologySample) []domain.CPUPackage {
 		}
 		item := packages[sample.packageID]
 		if item == nil {
-			item = &domain.CPUPackage{ID: sample.packageID, Model: sample.model}
+			item = &domain.CPUPackage{ID: sample.packageID, Vendor: sample.vendor, Model: sample.model}
 			packages[sample.packageID] = item
 			cores[sample.packageID] = map[string]bool{}
 		}
 		if item.Model == "" && sample.model != "" {
 			item.Model = sample.model
+		}
+		if item.Vendor == "" && sample.vendor != "" {
+			item.Vendor = sample.vendor
 		}
 		item.LogicalCPUs = append(item.LogicalCPUs, sample.logicalID)
 		cores[sample.packageID][sample.coreID] = true

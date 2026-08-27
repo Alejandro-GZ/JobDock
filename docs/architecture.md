@@ -25,6 +25,14 @@ Scheduling first removes offline/draining nodes, label mismatches, and nodes wit
 
 Agents report NVIDIA devices by UUID and Linux CPU packages with their logical CPU IDs. A job may retain automatic best-fit placement or select a target node plus exact GPU UUIDs and an optional physical CPU package. Explicit selections survive reruns: busy or temporarily unavailable hardware leaves the job queued and is never substituted silently. CPU package affinity uses Docker `CpusetCpus` together with the normal CPU quota.
 
+Agents advertising `host_inventory_v1` also report an operational, non-sensitive
+host inventory on every heartbeat: Docker host and OS identity, kernel and
+architecture, Docker storage and cgroup configuration, workspace capacity, CPU
+vendor/package/thread topology, and NVIDIA PCI, driver, compute-capability and
+live device data. JobDock deliberately does not collect firmware, board, DIMM,
+disk or network serial identifiers. Older agents remain valid and expose their
+existing aggregate capacity with the extended fields marked unavailable.
+
 `LOST` means that execution is unknown, not failed. JobDock never starts another attempt automatically. If the original agent returns, Docker labels and the local assignment journal allow it to report the real state.
 
 An explicit rerun moves a terminal job back to `QUEUED` without changing its

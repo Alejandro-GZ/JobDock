@@ -253,11 +253,13 @@ func (a *Agent) inventory(ctx context.Context) (domain.Node, error) {
 		status = domain.NodeDegraded
 	}
 	packages := discoverCPUPackages()
-	capabilities := []string{}
+	capabilities := []string{"host_inventory_v1"}
 	if len(packages) > 0 {
 		capabilities = append(capabilities, "cpu_package_affinity")
 	}
-	return domain.Node{Name: a.config.Name, Status: status, AgentVersion: version, ProtocolVersion: 1, Architecture: info.Architecture, DockerVersion: info.ServerVersion, CPUTotalMillis: int64(info.NCPU) * 1000, MemoryTotalBytes: info.MemTotal, WorkspaceFreeBytes: free, Labels: a.config.Labels, Capabilities: capabilities, CPUPackages: packages, GPUs: gpus, GPUDiscovery: discovery}, nil
+	return domain.Node{Name: a.config.Name, Status: status, AgentVersion: version, ProtocolVersion: 1, Architecture: info.Architecture, DockerVersion: info.ServerVersion, CPUTotalMillis: int64(info.NCPU) * 1000, MemoryTotalBytes: info.MemTotal, WorkspaceTotalBytes: total, WorkspaceFreeBytes: free, Labels: a.config.Labels, Capabilities: capabilities, CPUPackages: packages, GPUs: gpus, GPUDiscovery: discovery,
+		System:  domain.NodeSystemInfo{Hostname: info.Name, OperatingSystem: info.OperatingSystem, OSVersion: info.OSVersion, OSType: info.OSType, KernelVersion: info.KernelVersion, Architecture: info.Architecture},
+		Runtime: domain.NodeRuntimeInfo{DockerVersion: info.ServerVersion, StorageDriver: info.Driver, CgroupDriver: info.CgroupDriver, CgroupVersion: info.CgroupVersion}}, nil
 }
 
 func (a *Agent) heartbeatLoop(ctx context.Context) {

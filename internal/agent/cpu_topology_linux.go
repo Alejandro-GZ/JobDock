@@ -12,7 +12,7 @@ import (
 )
 
 func discoverCPUPackages() []domain.CPUPackage {
-	models := cpuModels("/proc/cpuinfo")
+	details := cpuDetails("/proc/cpuinfo")
 	paths, _ := filepath.Glob("/sys/devices/system/cpu/cpu[0-9]*")
 	samples := make([]cpuTopologySample, 0, len(paths))
 	for _, path := range paths {
@@ -25,20 +25,24 @@ func discoverCPUPackages() []domain.CPUPackage {
 		if packageErr != nil || coreErr != nil {
 			continue
 		}
-		samples = append(samples, cpuTopologySample{logicalID: logicalID, packageID: strings.TrimSpace(string(packageData)), coreID: strings.TrimSpace(string(coreData)), model: models[logicalID]})
+		detail := details[logicalID]
+		samples = append(samples, cpuTopologySample{logicalID: logicalID, packageID: strings.TrimSpace(string(packageData)), coreID: strings.TrimSpace(string(coreData)), vendor: detail.vendor, model: detail.model})
 	}
 	return buildCPUPackages(samples)
 }
 
-func cpuModels(path string) map[int]string {
+type cpuDetail struct{ vendor, model string }
+
+func cpuDetails(path string) map[int]cpuDetail {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return map[int]string{}
+		return map[int]cpuDetail{}
 	}
-	result := map[int]string{}
+	result := map[int]cpuDetail{}
 	for _, block := range strings.Split(string(data), "\n\n") {
 		id := -1
 		model := ""
+		vendor := ""
 		for _, line := range strings.Split(block, "\n") {
 			parts := strings.SplitN(line, ":", 2)
 			if len(parts) != 2 {
@@ -49,10 +53,12 @@ func cpuModels(path string) map[int]string {
 				id, _ = strconv.Atoi(strings.TrimSpace(parts[1]))
 			case "model name":
 				model = strings.TrimSpace(parts[1])
+			case "vendor_id":
+				vendor = strings.TrimSpace(parts[1])
 			}
 		}
 		if id >= 0 {
-			result[id] = model
+			result[id] = cpuDetail{vendor: vendor, model: model}
 		}
 	}
 	return result

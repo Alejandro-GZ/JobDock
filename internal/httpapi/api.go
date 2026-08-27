@@ -136,6 +136,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/jobs/{id}/archive.zip", a.withAccess(scopeArtifactsRead, false, a.archive))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/checkpoints/latest.zip", a.withSession(false, false, a.latestCheckpointArchive))
 	mux.HandleFunc("GET /api/v1/nodes", a.withAccess(scopeNodesRead, false, a.listNodes))
+	mux.HandleFunc("GET /api/v1/nodes/{id}", a.withAccess(scopeNodesRead, false, a.getNodeDetail))
 	mux.HandleFunc("PATCH /api/v1/nodes/{id}", a.withSession(true, true, a.updateNodeMetadata))
 	mux.HandleFunc("DELETE /api/v1/nodes/{id}", a.withSession(true, true, a.deleteNode))
 	mux.HandleFunc("POST /api/v1/nodes/enrollment-tokens", a.withSession(true, true, a.createEnrollmentToken))

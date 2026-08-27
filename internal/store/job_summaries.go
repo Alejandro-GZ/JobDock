@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -14,6 +15,37 @@ import (
 type JobAttemptRef struct {
 	JobID     string
 	AttemptID string
+}
+
+type NodeAssignmentRecord struct {
+	Job      domain.Job
+	CPUSet   string
+	GPUUUIDs []string
+}
+
+func (s *Store) ActiveNodeAssignments(ctx context.Context, nodeID string) ([]NodeAssignmentRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT j.id,j.owner_id,j.spec_json,j.status,j.attempt_id,COALESCE(a.cpu_set,''),COALESCE(a.gpu_uuids_json,'[]')
+		FROM jobs j LEFT JOIN assignments a ON a.job_id=j.id AND a.attempt_id=j.attempt_id
+		WHERE j.assigned_node_id=? AND j.status IN ('ASSIGNED','PULLING_IMAGE','STARTING','RUNNING','STOPPING','LOST')
+		ORDER BY j.created_at`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]NodeAssignmentRecord, 0)
+	for rows.Next() {
+		var item NodeAssignmentRecord
+		var specJSON, gpuJSON string
+		if err = rows.Scan(&item.Job.ID, &item.Job.OwnerID, &specJSON, &item.Job.Status, &item.Job.AttemptID, &item.CPUSet, &gpuJSON); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal([]byte(specJSON), &item.Job.Spec); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(gpuJSON), &item.GPUUUIDs)
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 // ResourceSummaries returns at most limit recent points per attempt. When

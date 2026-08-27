@@ -85,12 +85,13 @@ func TestHardwareInventoryAndAssignmentRoundTrip(t *testing.T) {
 	if err = repository.CreateUser(ctx, user, "hash"); err != nil {
 		t.Fatal(err)
 	}
-	node := domain.Node{ID: ids.New(), Name: "dual-socket", Status: domain.NodeOnline, ProtocolVersion: 1, CPUTotalMillis: 4000, MemoryTotalBytes: 4096, WorkspaceFreeBytes: 20 << 30, Labels: map[string]string{}, Capabilities: []string{"cpu_package_affinity"}, CPUPackages: []domain.CPUPackage{{ID: "1", Model: "Test CPU", PhysicalCores: 1, LogicalCPUs: []int{2, 6}, TotalMillis: 2000}}, GPUs: []domain.GPU{{UUID: "GPU-1", Model: "Test GPU", VRAMBytes: 1024}}, GPUDiscovery: domain.GPUDiscovery{Status: "available"}, LastHeartbeat: now, CreatedAt: now}
+	utilization, memoryUsed, temperature := int64(5100), int64(512), int64(48)
+	node := domain.Node{ID: ids.New(), Name: "dual-socket", Status: domain.NodeOnline, ProtocolVersion: 1, CPUTotalMillis: 4000, MemoryTotalBytes: 4096, WorkspaceTotalBytes: 40 << 30, WorkspaceFreeBytes: 20 << 30, Labels: map[string]string{}, Capabilities: []string{"cpu_package_affinity"}, CPUPackages: []domain.CPUPackage{{ID: "1", Vendor: "Test Vendor", Model: "Test CPU", PhysicalCores: 1, LogicalCPUs: []int{2, 6}, TotalMillis: 2000}}, GPUs: []domain.GPU{{UUID: "GPU-1", Model: "Test GPU", VRAMBytes: 1024, PCIBusID: "0000:01:00.0", DriverVersion: "580", ComputeCapability: "8.9", UtilizationBasisPoints: &utilization, MemoryUsedBytes: &memoryUsed, TemperatureCelsius: &temperature}}, GPUDiscovery: domain.GPUDiscovery{Status: "available"}, System: domain.NodeSystemInfo{Hostname: "worker", OperatingSystem: "Linux", KernelVersion: "6.8", Architecture: "amd64"}, Runtime: domain.NodeRuntimeInfo{DockerVersion: "29", StorageDriver: "overlay2", CgroupVersion: "2"}, LastHeartbeat: now, CreatedAt: now}
 	if err = repository.UpsertNode(ctx, node, "hardware-credential"); err != nil {
 		t.Fatal(err)
 	}
 	nodes, err := repository.ListNodes(ctx)
-	if err != nil || len(nodes) != 1 || len(nodes[0].CPUPackages) != 1 || nodes[0].CPUPackages[0].LogicalCPUs[1] != 6 || len(nodes[0].Capabilities) != 1 {
+	if err != nil || len(nodes) != 1 || len(nodes[0].CPUPackages) != 1 || nodes[0].CPUPackages[0].LogicalCPUs[1] != 6 || nodes[0].CPUPackages[0].Vendor != "Test Vendor" || len(nodes[0].Capabilities) != 1 || nodes[0].WorkspaceTotalBytes != 40<<30 || nodes[0].System.Hostname != "worker" || nodes[0].Runtime.StorageDriver != "overlay2" || nodes[0].GPUs[0].PCIBusID != "0000:01:00.0" || nodes[0].GPUs[0].UtilizationBasisPoints == nil || *nodes[0].GPUs[0].UtilizationBasisPoints != utilization {
 		t.Fatalf("inventory did not round trip: %#v %v", nodes, err)
 	}
 	job := domain.Job{ID: ids.New(), OwnerID: user.ID, Spec: domain.JobSpec{Name: "pinned-job", Image: "alpine", TargetNodeID: node.ID, Resources: domain.Resources{CPUMillis: 1000, CPUPackageID: "1", MemoryBytes: 1024, GPU: domain.GPURequest{Count: 1, UUIDs: []string{"GPU-1"}}}}, Status: domain.JobQueued, DesiredStatus: domain.JobRunning, ObservedStatus: domain.JobQueued, CreatedAt: now}
@@ -107,6 +108,27 @@ func TestHardwareInventoryAndAssignmentRoundTrip(t *testing.T) {
 	attempt, err := repository.Attempt(ctx, job.ID, "attempt")
 	if err != nil || attempt.CPUPackageID != "1" || attempt.GPUUUIDs[0] != "GPU-1" {
 		t.Fatalf("attempt did not retain hardware: %#v %v", attempt, err)
+	}
+}
+
+func TestLegacyNodeCollectionsAreNormalized(t *testing.T) {
+	ctx := context.Background()
+	repository, err := store.Open(t.TempDir() + "/legacy-node.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	now := time.Now().UTC()
+	node := domain.Node{ID: ids.New(), Name: "legacy", Status: domain.NodeOnline, ProtocolVersion: 1, LastHeartbeat: now, CreatedAt: now}
+	if err = repository.UpsertNode(ctx, node, "legacy-credential"); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := repository.ListNodes(ctx)
+	if err != nil || len(nodes) != 1 {
+		t.Fatalf("list legacy node: %#v %v", nodes, err)
+	}
+	if nodes[0].Capabilities == nil || nodes[0].Labels == nil || nodes[0].GPUs == nil || nodes[0].CPUPackages == nil {
+		t.Fatalf("legacy collections must be empty rather than null: %#v", nodes[0])
 	}
 }
 
