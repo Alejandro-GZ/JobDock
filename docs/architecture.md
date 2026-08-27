@@ -23,6 +23,8 @@ The server never connects to a remote Docker daemon. Agents initiate every netwo
 
 Scheduling first removes offline/draining nodes, label mismatches, and nodes without unreserved CPU, memory, or GPU capacity. Best-fit then minimizes VRAM, memory, and CPU waste. Assignment and reservation are one SQLite transaction. FIFO is the only queue policy in v0.1.
 
+Agents report NVIDIA devices by UUID and Linux CPU packages with their logical CPU IDs. A job may retain automatic best-fit placement or select a target node plus exact GPU UUIDs and an optional physical CPU package. Explicit selections survive reruns: busy or temporarily unavailable hardware leaves the job queued and is never substituted silently. CPU package affinity uses Docker `CpusetCpus` together with the normal CPU quota.
+
 `LOST` means that execution is unknown, not failed. JobDock never starts another attempt automatically. If the original agent returns, Docker labels and the local assignment journal allow it to report the real state.
 
 An explicit rerun moves a terminal job back to `QUEUED` without changing its

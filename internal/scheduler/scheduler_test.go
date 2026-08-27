@@ -26,6 +26,28 @@ func TestSelectNodeExplainsShortage(t *testing.T) {
 	}
 }
 
+func TestSelectNodeUsesExplicitGPUAndCPUPackage(t *testing.T) {
+	spec := domain.JobSpec{TargetNodeID: "node-a", Resources: domain.Resources{CPUMillis: 1500, CPUPackageID: "1", MemoryBytes: 1024, GPU: domain.GPURequest{Count: 1, UUIDs: []string{"GPU-B"}}}}
+	nodes := []domain.Node{{ID: "node-a", Status: domain.NodeOnline, CPUTotalMillis: 8000, MemoryTotalBytes: 8192, Capabilities: []string{"cpu_package_affinity"}, CPUPackages: []domain.CPUPackage{{ID: "1", LogicalCPUs: []int{2, 6}, TotalMillis: 2000}}, GPUs: []domain.GPU{{UUID: "GPU-A"}, {UUID: "GPU-B"}}}, {ID: "node-b", Status: domain.NodeOnline, CPUTotalMillis: 8000, MemoryTotalBytes: 8192, GPUs: []domain.GPU{{UUID: "GPU-B"}}}}
+	selected, code, _ := selectNode(spec, nodes)
+	if code != "" || selected == nil || selected.node.ID != "node-a" || selected.cpuSet != "2,6" || len(selected.gpuUUIDs) != 1 || selected.gpuUUIDs[0] != "GPU-B" {
+		t.Fatalf("unexpected selection: %#v %s", selected, code)
+	}
+}
+
+func TestSelectNodeWaitsForExplicitHardware(t *testing.T) {
+	base := domain.Node{ID: "node-a", Status: domain.NodeOnline, CPUTotalMillis: 8000, MemoryTotalBytes: 8192, Capabilities: []string{"cpu_package_affinity"}, CPUPackages: []domain.CPUPackage{{ID: "0", LogicalCPUs: []int{0}, TotalMillis: 1000}}, GPUs: []domain.GPU{{UUID: "GPU-A", Allocated: true}}}
+	spec := domain.JobSpec{TargetNodeID: "node-a", Resources: domain.Resources{CPUMillis: 500, MemoryBytes: 1024, GPU: domain.GPURequest{Count: 1, UUIDs: []string{"GPU-A"}}}}
+	if _, code, _ := selectNode(spec, []domain.Node{base}); code != "REQUESTED_GPU_ALLOCATED" {
+		t.Fatalf("unexpected GPU reason %s", code)
+	}
+	spec.Resources.GPU = domain.GPURequest{}
+	spec.Resources.CPUPackageID = "missing"
+	if _, code, _ := selectNode(spec, []domain.Node{base}); code != "REQUESTED_CPU_PACKAGE_NOT_FOUND" {
+		t.Fatalf("unexpected CPU reason %s", code)
+	}
+}
+
 func BenchmarkSelectNodeFiftyNodes(b *testing.B) {
 	nodes := make([]domain.Node, 50)
 	for index := range nodes {

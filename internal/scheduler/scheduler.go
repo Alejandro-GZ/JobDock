@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jobdock/jobdock/internal/auth"
@@ -20,11 +22,13 @@ type Scheduler struct {
 }
 
 type candidate struct {
-	node      domain.Node
-	gpuUUIDs  []string
-	vramWaste int64
-	ramWaste  int64
-	cpuWaste  int64
+	node         domain.Node
+	gpuUUIDs     []string
+	vramWaste    int64
+	ramWaste     int64
+	cpuWaste     int64
+	cpuPackageID string
+	cpuSet       string
 }
 
 func New(repository *store.Store, box *secretbox.Box) *Scheduler {
@@ -65,7 +69,7 @@ func (s *Scheduler) Schedule(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		err = s.store.ReserveJob(ctx, job.ID, selected.node.ID, attemptID, assignmentID, auth.TokenHash(jobToken), encrypted, selected.gpuUUIDs)
+		err = s.store.ReserveJobWithAffinity(ctx, job.ID, selected.node.ID, attemptID, assignmentID, auth.TokenHash(jobToken), encrypted, selected.gpuUUIDs, selected.cpuPackageID, selected.cpuSet)
 		if err != nil {
 			if err == store.ErrConflict {
 				continue
@@ -79,8 +83,12 @@ func (s *Scheduler) Schedule(ctx context.Context) error {
 
 func selectNode(spec domain.JobSpec, nodes []domain.Node) (*candidate, string, string) {
 	var candidates []candidate
-	var hasOnline, hasLabels, hasCPU, hasMemory, hasGPUModel bool
+	var hasTarget, hasOnline, hasLabels, hasCPU, hasMemory, hasGPUModel, hasGPUInventory, hasFreeRequestedGPU, hasCPUCapability, hasCPUPackage, hasCPUPackageCapacity bool
 	for _, node := range nodes {
+		if spec.TargetNodeID != "" && node.ID != spec.TargetNodeID {
+			continue
+		}
+		hasTarget = true
 		if node.Status != domain.NodeOnline {
 			continue
 		}
@@ -99,6 +107,30 @@ func selectNode(spec domain.JobSpec, nodes []domain.Node) (*candidate, string, s
 			continue
 		}
 		hasMemory = true
+		cpuPackageID, cpuSet := "", ""
+		if spec.Resources.CPUPackageID != "" {
+			if !contains(node.Capabilities, "cpu_package_affinity") {
+				continue
+			}
+			hasCPUCapability = true
+			var selected *domain.CPUPackage
+			for index := range node.CPUPackages {
+				if node.CPUPackages[index].ID == spec.Resources.CPUPackageID {
+					selected = &node.CPUPackages[index]
+					break
+				}
+			}
+			if selected == nil {
+				continue
+			}
+			hasCPUPackage = true
+			if selected.TotalMillis-selected.AllocatedMillis < spec.Resources.CPUMillis {
+				continue
+			}
+			hasCPUPackageCapacity = true
+			cpuPackageID = selected.ID
+			cpuSet = logicalCPUSet(selected.LogicalCPUs)
+		}
 		gpus := append([]domain.GPU(nil), node.GPUs...)
 		sort.Slice(gpus, func(i, j int) bool {
 			if gpus[i].VRAMBytes == gpus[j].VRAMBytes {
@@ -108,22 +140,54 @@ func selectNode(spec domain.JobSpec, nodes []domain.Node) (*candidate, string, s
 		})
 		var chosen []string
 		var vramWaste int64
-		for _, gpu := range gpus {
-			if gpu.VRAMBytes >= spec.Resources.GPU.MinVRAMBytes {
-				hasGPUModel = true
+		if len(spec.Resources.GPU.UUIDs) > 0 {
+			byID := map[string]domain.GPU{}
+			for _, gpu := range gpus {
+				byID[gpu.UUID] = gpu
 			}
-			if !gpu.Allocated && gpu.VRAMBytes >= spec.Resources.GPU.MinVRAMBytes && len(chosen) < spec.Resources.GPU.Count {
-				chosen = append(chosen, gpu.UUID)
-				vramWaste += gpu.VRAMBytes - spec.Resources.GPU.MinVRAMBytes
+			allExist, allFree := true, true
+			for _, id := range spec.Resources.GPU.UUIDs {
+				gpu, ok := byID[id]
+				if !ok {
+					allExist = false
+					break
+				}
+				if gpu.Allocated {
+					allFree = false
+				}
+				chosen = append(chosen, id)
+			}
+			if !allExist {
+				continue
+			}
+			hasGPUInventory = true
+			if !allFree {
+				continue
+			}
+			hasFreeRequestedGPU = true
+			hasGPUModel = true
+		} else {
+			for _, gpu := range gpus {
+				if gpu.VRAMBytes >= spec.Resources.GPU.MinVRAMBytes {
+					hasGPUModel = true
+				}
+				if !gpu.Allocated && gpu.VRAMBytes >= spec.Resources.GPU.MinVRAMBytes && len(chosen) < spec.Resources.GPU.Count {
+					chosen = append(chosen, gpu.UUID)
+					vramWaste += gpu.VRAMBytes - spec.Resources.GPU.MinVRAMBytes
+				}
 			}
 		}
 		if len(chosen) != spec.Resources.GPU.Count {
 			continue
 		}
-		candidates = append(candidates, candidate{node: node, gpuUUIDs: chosen, vramWaste: vramWaste, ramWaste: memoryFree - spec.Resources.MemoryBytes, cpuWaste: cpuFree - spec.Resources.CPUMillis})
+		candidates = append(candidates, candidate{node: node, gpuUUIDs: chosen, vramWaste: vramWaste, ramWaste: memoryFree - spec.Resources.MemoryBytes, cpuWaste: cpuFree - spec.Resources.CPUMillis, cpuPackageID: cpuPackageID, cpuSet: cpuSet})
 	}
 	if len(candidates) == 0 {
 		switch {
+		case spec.TargetNodeID != "" && !hasTarget:
+			return nil, "REQUESTED_NODE_NOT_FOUND", "Waiting: the requested execution node is not registered"
+		case spec.TargetNodeID != "" && !hasOnline:
+			return nil, "REQUESTED_NODE_UNAVAILABLE", "Waiting: the requested execution node is not online"
 		case !hasOnline:
 			return nil, "NO_ONLINE_NODE", "Waiting: no execution node is online"
 		case !hasLabels:
@@ -132,6 +196,16 @@ func selectNode(spec domain.JobSpec, nodes []domain.Node) (*candidate, string, s
 			return nil, "INSUFFICIENT_CPU", "Waiting: compatible nodes do not have enough unreserved CPU"
 		case !hasMemory:
 			return nil, "INSUFFICIENT_MEMORY", "Waiting: compatible nodes do not have enough unreserved memory"
+		case spec.Resources.CPUPackageID != "" && !hasCPUCapability:
+			return nil, "CPU_AFFINITY_UNSUPPORTED", "Waiting: the requested node does not support CPU package affinity"
+		case spec.Resources.CPUPackageID != "" && !hasCPUPackage:
+			return nil, "REQUESTED_CPU_PACKAGE_NOT_FOUND", "Waiting: the requested CPU package is not present on the node"
+		case spec.Resources.CPUPackageID != "" && !hasCPUPackageCapacity:
+			return nil, "INSUFFICIENT_CPU_PACKAGE", "Waiting: the requested CPU package does not have enough unreserved capacity"
+		case len(spec.Resources.GPU.UUIDs) > 0 && !hasGPUInventory:
+			return nil, "REQUESTED_GPU_NOT_FOUND", "Waiting: one or more requested GPUs are not present on the node"
+		case len(spec.Resources.GPU.UUIDs) > 0 && !hasFreeRequestedGPU:
+			return nil, "REQUESTED_GPU_ALLOCATED", "Waiting: one or more requested GPUs are currently allocated"
 		case spec.Resources.GPU.Count > 0 && !hasGPUModel:
 			return nil, "NO_COMPATIBLE_GPU", fmt.Sprintf("Waiting: no node has %d GPU(s) with the requested VRAM", spec.Resources.GPU.Count)
 		default:
@@ -154,6 +228,23 @@ func selectNode(spec domain.JobSpec, nodes []domain.Node) (*candidate, string, s
 	return &candidates[0], "", ""
 }
 
+func contains(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func logicalCPUSet(values []int) string {
+	parts := make([]string, len(values))
+	for index, value := range values {
+		parts[index] = strconv.Itoa(value)
+	}
+	return strings.Join(parts, ",")
+}
+
 func labelsMatch(labels, selector map[string]string) bool {
 	for key, value := range selector {
 		if labels[key] != value {
@@ -173,6 +264,13 @@ func reserveInSnapshot(nodes []domain.Node, nodeID string, resources domain.Reso
 			continue
 		}
 		nodes[i].CPUAllocatedMillis += resources.CPUMillis
+		if resources.CPUPackageID != "" {
+			for index := range nodes[i].CPUPackages {
+				if nodes[i].CPUPackages[index].ID == resources.CPUPackageID {
+					nodes[i].CPUPackages[index].AllocatedMillis += resources.CPUMillis
+				}
+			}
+		}
 		nodes[i].MemoryAllocatedBytes += resources.MemoryBytes
 		for j := range nodes[i].GPUs {
 			if set[nodes[i].GPUs[j].UUID] {

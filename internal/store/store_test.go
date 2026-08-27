@@ -73,6 +73,43 @@ func TestSQLiteSchedulingRoundTrip(t *testing.T) {
 	}
 }
 
+func TestHardwareInventoryAndAssignmentRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	repository, err := store.Open(t.TempDir() + "/hardware.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	now := time.Now().UTC()
+	user := domain.User{ID: ids.New(), Username: "hardware", Role: domain.RoleMember, CreatedAt: now}
+	if err = repository.CreateUser(ctx, user, "hash"); err != nil {
+		t.Fatal(err)
+	}
+	node := domain.Node{ID: ids.New(), Name: "dual-socket", Status: domain.NodeOnline, ProtocolVersion: 1, CPUTotalMillis: 4000, MemoryTotalBytes: 4096, WorkspaceFreeBytes: 20 << 30, Labels: map[string]string{}, Capabilities: []string{"cpu_package_affinity"}, CPUPackages: []domain.CPUPackage{{ID: "1", Model: "Test CPU", PhysicalCores: 1, LogicalCPUs: []int{2, 6}, TotalMillis: 2000}}, GPUs: []domain.GPU{{UUID: "GPU-1", Model: "Test GPU", VRAMBytes: 1024}}, GPUDiscovery: domain.GPUDiscovery{Status: "available"}, LastHeartbeat: now, CreatedAt: now}
+	if err = repository.UpsertNode(ctx, node, "hardware-credential"); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := repository.ListNodes(ctx)
+	if err != nil || len(nodes) != 1 || len(nodes[0].CPUPackages) != 1 || nodes[0].CPUPackages[0].LogicalCPUs[1] != 6 || len(nodes[0].Capabilities) != 1 {
+		t.Fatalf("inventory did not round trip: %#v %v", nodes, err)
+	}
+	job := domain.Job{ID: ids.New(), OwnerID: user.ID, Spec: domain.JobSpec{Name: "pinned-job", Image: "alpine", TargetNodeID: node.ID, Resources: domain.Resources{CPUMillis: 1000, CPUPackageID: "1", MemoryBytes: 1024, GPU: domain.GPURequest{Count: 1, UUIDs: []string{"GPU-1"}}}}, Status: domain.JobQueued, DesiredStatus: domain.JobRunning, ObservedStatus: domain.JobQueued, CreatedAt: now}
+	if err = repository.CreateJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.ReserveJobWithAffinity(ctx, job.ID, node.ID, "attempt", "assignment", "token", []byte("cipher"), []string{"GPU-1"}, "1", "2,6"); err != nil {
+		t.Fatal(err)
+	}
+	assignment, err := repository.AssignmentForNode(ctx, node.ID)
+	if err != nil || assignment.CPUPackageID != "1" || assignment.CPUSet != "2,6" || assignment.GPUUUIDs[0] != "GPU-1" {
+		t.Fatalf("assignment did not round trip: %#v %v", assignment, err)
+	}
+	attempt, err := repository.Attempt(ctx, job.ID, "attempt")
+	if err != nil || attempt.CPUPackageID != "1" || attempt.GPUUUIDs[0] != "GPU-1" {
+		t.Fatalf("attempt did not retain hardware: %#v %v", attempt, err)
+	}
+}
+
 func TestIdempotencyReplay(t *testing.T) {
 	ctx := context.Background()
 	repository, err := store.Open(t.TempDir() + "/jobdock.db")

@@ -41,6 +41,13 @@ func Account(nodes []domain.Node, jobs []domain.Job, gpuAllocations map[string]m
 			continue
 		}
 		node.CPUAllocatedMillis += job.Spec.Resources.CPUMillis
+		if job.Spec.Resources.CPUPackageID != "" {
+			for index := range node.CPUPackages {
+				if node.CPUPackages[index].ID == job.Spec.Resources.CPUPackageID {
+					node.CPUPackages[index].AllocatedMillis += job.Spec.Resources.CPUMillis
+				}
+			}
+		}
 		node.MemoryAllocatedBytes += job.Spec.Resources.MemoryBytes
 	}
 }

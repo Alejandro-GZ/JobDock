@@ -208,7 +208,7 @@ func (s *Store) Job(ctx context.Context, id string) (domain.Job, error) {
 }
 
 func (s *Store) Attempts(ctx context.Context, jobID string) ([]domain.JobAttempt, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,job_id,attempt_number,node_id,status,image_digest,exit_code,failure_reason,outputs_json,created_at,started_at,finished_at FROM job_attempts WHERE job_id=? ORDER BY attempt_number DESC`, jobID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,job_id,attempt_number,node_id,cpu_package_id,gpu_uuids_json,status,image_digest,exit_code,failure_reason,outputs_json,created_at,started_at,finished_at FROM job_attempts WHERE job_id=? ORDER BY attempt_number DESC`, jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +225,7 @@ func (s *Store) Attempts(ctx context.Context, jobID string) ([]domain.JobAttempt
 }
 
 func (s *Store) Attempt(ctx context.Context, jobID, attemptID string) (domain.JobAttempt, error) {
-	return scanAttempt(s.db.QueryRowContext(ctx, `SELECT id,job_id,attempt_number,node_id,status,image_digest,exit_code,failure_reason,outputs_json,created_at,started_at,finished_at FROM job_attempts WHERE id=? AND job_id=?`, attemptID, jobID))
+	return scanAttempt(s.db.QueryRowContext(ctx, `SELECT id,job_id,attempt_number,node_id,cpu_package_id,gpu_uuids_json,status,image_digest,exit_code,failure_reason,outputs_json,created_at,started_at,finished_at FROM job_attempts WHERE id=? AND job_id=?`, attemptID, jobID))
 }
 
 func (s *Store) ListJobs(ctx context.Context, includeDeleted bool) ([]domain.Job, error) {
@@ -273,6 +273,10 @@ func (s *Store) SetQueueReason(ctx context.Context, jobID, code, message string)
 }
 
 func (s *Store) ReserveJob(ctx context.Context, jobID, nodeID, attemptID, assignmentID, jobTokenHash string, jobTokenCiphertext []byte, gpuUUIDs []string) error {
+	return s.ReserveJobWithAffinity(ctx, jobID, nodeID, attemptID, assignmentID, jobTokenHash, jobTokenCiphertext, gpuUUIDs, "", "")
+}
+
+func (s *Store) ReserveJobWithAffinity(ctx context.Context, jobID, nodeID, attemptID, assignmentID, jobTokenHash string, jobTokenCiphertext []byte, gpuUUIDs []string, cpuPackageID, cpuSet string) error {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return err
@@ -287,11 +291,11 @@ func (s *Store) ReserveJob(ctx context.Context, jobID, nodeID, attemptID, assign
 		return ErrConflict
 	}
 	now := formatTime(time.Now().UTC())
-	if _, err = tx.ExecContext(ctx, `INSERT INTO job_attempts(id,job_id,attempt_number,node_id,assignment_id,status,job_token_hash,created_at) SELECT ?,?,COALESCE(MAX(attempt_number),0)+1,?,?, 'ASSIGNED',?,? FROM job_attempts WHERE job_id=?`, attemptID, jobID, nodeID, assignmentID, jobTokenHash, now, jobID); err != nil {
+	gpus, _ := json.Marshal(gpuUUIDs)
+	if _, err = tx.ExecContext(ctx, `INSERT INTO job_attempts(id,job_id,attempt_number,node_id,assignment_id,cpu_package_id,gpu_uuids_json,status,job_token_hash,created_at) SELECT ?,?,COALESCE(MAX(attempt_number),0)+1,?,?,?,?, 'ASSIGNED',?,? FROM job_attempts WHERE job_id=?`, attemptID, jobID, nodeID, assignmentID, cpuPackageID, gpus, jobTokenHash, now, jobID); err != nil {
 		return err
 	}
-	gpus, _ := json.Marshal(gpuUUIDs)
-	if _, err = tx.ExecContext(ctx, `INSERT INTO assignments(id,job_id,attempt_id,node_id,gpu_uuids_json,job_token_ciphertext,created_at) VALUES(?,?,?,?,?,?,?)`, assignmentID, jobID, attemptID, nodeID, gpus, jobTokenCiphertext, now); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO assignments(id,job_id,attempt_id,node_id,gpu_uuids_json,job_token_ciphertext,created_at,cpu_package_id,cpu_set) VALUES(?,?,?,?,?,?,?,?,?)`, assignmentID, jobID, attemptID, nodeID, gpus, jobTokenCiphertext, now, cpuPackageID, cpuSet); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO job_events(job_id,attempt_id,sequence,type,status,payload_json,created_at) SELECT ?,?,COALESCE(MAX(sequence),0)+1,'assigned','ASSIGNED','{}',? FROM job_events WHERE job_id=?`, jobID, attemptID, now, jobID); err != nil {
@@ -424,12 +428,13 @@ func (s *Store) MarkDeleted(ctx context.Context, jobID string) error {
 
 func (s *Store) UpsertNode(ctx context.Context, node domain.Node, credentialHash string) error {
 	labels, _ := json.Marshal(node.Labels)
+	capabilities, _ := json.Marshal(node.Capabilities)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT INTO nodes(id,name,status,agent_version,protocol_version,architecture,docker_version,cpu_total_millis,memory_total_bytes,workspace_free_bytes,labels_json,credential_hash,credential_created_at,last_heartbeat,created_at,gpu_discovery_status,gpu_error_code,gpu_error_message) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,status=excluded.status,agent_version=excluded.agent_version,protocol_version=excluded.protocol_version,architecture=excluded.architecture,docker_version=excluded.docker_version,cpu_total_millis=excluded.cpu_total_millis,memory_total_bytes=excluded.memory_total_bytes,workspace_free_bytes=excluded.workspace_free_bytes,labels_json=excluded.labels_json,last_heartbeat=excluded.last_heartbeat,gpu_discovery_status=excluded.gpu_discovery_status,gpu_error_code=excluded.gpu_error_code,gpu_error_message=excluded.gpu_error_message`, node.ID, node.Name, node.Status, node.AgentVersion, node.ProtocolVersion, node.Architecture, node.DockerVersion, node.CPUTotalMillis, node.MemoryTotalBytes, node.WorkspaceFreeBytes, labels, credentialHash, formatTime(time.Now().UTC()), formatTime(node.LastHeartbeat), formatTime(node.CreatedAt), node.GPUDiscovery.Status, node.GPUDiscovery.ErrorCode, node.GPUDiscovery.Message)
+	_, err = tx.ExecContext(ctx, `INSERT INTO nodes(id,name,status,agent_version,protocol_version,architecture,docker_version,cpu_total_millis,memory_total_bytes,workspace_free_bytes,labels_json,credential_hash,credential_created_at,last_heartbeat,created_at,gpu_discovery_status,gpu_error_code,gpu_error_message,capabilities_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,status=excluded.status,agent_version=excluded.agent_version,protocol_version=excluded.protocol_version,architecture=excluded.architecture,docker_version=excluded.docker_version,cpu_total_millis=excluded.cpu_total_millis,memory_total_bytes=excluded.memory_total_bytes,workspace_free_bytes=excluded.workspace_free_bytes,labels_json=excluded.labels_json,last_heartbeat=excluded.last_heartbeat,gpu_discovery_status=excluded.gpu_discovery_status,gpu_error_code=excluded.gpu_error_code,gpu_error_message=excluded.gpu_error_message,capabilities_json=excluded.capabilities_json`, node.ID, node.Name, node.Status, node.AgentVersion, node.ProtocolVersion, node.Architecture, node.DockerVersion, node.CPUTotalMillis, node.MemoryTotalBytes, node.WorkspaceFreeBytes, labels, credentialHash, formatTime(time.Now().UTC()), formatTime(node.LastHeartbeat), formatTime(node.CreatedAt), node.GPUDiscovery.Status, node.GPUDiscovery.ErrorCode, node.GPUDiscovery.Message, capabilities)
 	if err != nil {
 		return err
 	}
@@ -441,17 +446,21 @@ func (s *Store) UpsertNode(ctx context.Context, node domain.Node, credentialHash
 			return err
 		}
 	}
+	if err = replaceCPUPackages(ctx, tx, node.ID, node.CPUPackages); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
 func (s *Store) Heartbeat(ctx context.Context, node domain.Node) error {
 	labels, _ := json.Marshal(node.Labels)
+	capabilities, _ := json.Marshal(node.Capabilities)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE nodes SET name=?,status=CASE WHEN status='DRAINING' THEN status ELSE ? END,agent_version=?,protocol_version=?,architecture=?,docker_version=?,cpu_total_millis=?,memory_total_bytes=?,workspace_free_bytes=?,labels_json=?,last_heartbeat=?,gpu_discovery_status=?,gpu_error_code=?,gpu_error_message=? WHERE id=? AND deleted_at IS NULL`, node.Name, node.Status, node.AgentVersion, node.ProtocolVersion, node.Architecture, node.DockerVersion, node.CPUTotalMillis, node.MemoryTotalBytes, node.WorkspaceFreeBytes, labels, formatTime(node.LastHeartbeat), node.GPUDiscovery.Status, node.GPUDiscovery.ErrorCode, node.GPUDiscovery.Message, node.ID)
+	result, err := tx.ExecContext(ctx, `UPDATE nodes SET name=?,status=CASE WHEN status='DRAINING' THEN status ELSE ? END,agent_version=?,protocol_version=?,architecture=?,docker_version=?,cpu_total_millis=?,memory_total_bytes=?,workspace_free_bytes=?,labels_json=?,last_heartbeat=?,gpu_discovery_status=?,gpu_error_code=?,gpu_error_message=?,capabilities_json=? WHERE id=? AND deleted_at IS NULL`, node.Name, node.Status, node.AgentVersion, node.ProtocolVersion, node.Architecture, node.DockerVersion, node.CPUTotalMillis, node.MemoryTotalBytes, node.WorkspaceFreeBytes, labels, formatTime(node.LastHeartbeat), node.GPUDiscovery.Status, node.GPUDiscovery.ErrorCode, node.GPUDiscovery.Message, capabilities, node.ID)
 	if err != nil {
 		return err
 	}
@@ -467,11 +476,14 @@ func (s *Store) Heartbeat(ctx context.Context, node domain.Node) error {
 			return err
 		}
 	}
+	if err = replaceCPUPackages(ctx, tx, node.ID, node.CPUPackages); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
 func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(name_override,name),status,agent_version,protocol_version,architecture,docker_version,cpu_total_millis,memory_total_bytes,workspace_free_bytes,COALESCE(labels_override_json,labels_json),last_heartbeat,created_at,gpu_discovery_status,gpu_error_code,gpu_error_message FROM nodes WHERE deleted_at IS NULL ORDER BY COALESCE(name_override,name)`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(name_override,name),status,agent_version,protocol_version,architecture,docker_version,cpu_total_millis,memory_total_bytes,workspace_free_bytes,COALESCE(labels_override_json,labels_json),last_heartbeat,created_at,gpu_discovery_status,gpu_error_code,gpu_error_message,capabilities_json FROM nodes WHERE deleted_at IS NULL ORDER BY COALESCE(name_override,name)`)
 	if err != nil {
 		return nil, err
 	}
@@ -480,11 +492,13 @@ func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
 	for rows.Next() {
 		var node domain.Node
 		node.GPUs = make([]domain.GPU, 0)
-		var labels, heartbeat, created string
-		if err := rows.Scan(&node.ID, &node.Name, &node.Status, &node.AgentVersion, &node.ProtocolVersion, &node.Architecture, &node.DockerVersion, &node.CPUTotalMillis, &node.MemoryTotalBytes, &node.WorkspaceFreeBytes, &labels, &heartbeat, &created, &node.GPUDiscovery.Status, &node.GPUDiscovery.ErrorCode, &node.GPUDiscovery.Message); err != nil {
+		node.CPUPackages = make([]domain.CPUPackage, 0)
+		var labels, capabilities, heartbeat, created string
+		if err := rows.Scan(&node.ID, &node.Name, &node.Status, &node.AgentVersion, &node.ProtocolVersion, &node.Architecture, &node.DockerVersion, &node.CPUTotalMillis, &node.MemoryTotalBytes, &node.WorkspaceFreeBytes, &labels, &heartbeat, &created, &node.GPUDiscovery.Status, &node.GPUDiscovery.ErrorCode, &node.GPUDiscovery.Message, &capabilities); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(labels), &node.Labels)
+		json.Unmarshal([]byte(capabilities), &node.Capabilities)
 		node.LastHeartbeat, _ = time.Parse(time.RFC3339Nano, heartbeat)
 		node.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 		gpuRows, err := s.db.QueryContext(ctx, `SELECT uuid,model,vram_bytes FROM gpus WHERE node_id=? ORDER BY uuid`, node.ID)
@@ -500,9 +514,37 @@ func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
 			node.GPUs = append(node.GPUs, gpu)
 		}
 		gpuRows.Close()
+		cpuRows, err := s.db.QueryContext(ctx, `SELECT package_id,model,physical_cores,logical_cpus_json,total_millis FROM cpu_packages WHERE node_id=? ORDER BY package_id`, node.ID)
+		if err != nil {
+			return nil, err
+		}
+		for cpuRows.Next() {
+			var item domain.CPUPackage
+			var logical string
+			if err := cpuRows.Scan(&item.ID, &item.Model, &item.PhysicalCores, &logical, &item.TotalMillis); err != nil {
+				cpuRows.Close()
+				return nil, err
+			}
+			_ = json.Unmarshal([]byte(logical), &item.LogicalCPUs)
+			node.CPUPackages = append(node.CPUPackages, item)
+		}
+		cpuRows.Close()
 		nodes = append(nodes, node)
 	}
 	return nodes, rows.Err()
+}
+
+func replaceCPUPackages(ctx context.Context, tx *sql.Tx, nodeID string, packages []domain.CPUPackage) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM cpu_packages WHERE node_id=?`, nodeID); err != nil {
+		return err
+	}
+	for _, item := range packages {
+		logical, _ := json.Marshal(item.LogicalCPUs)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO cpu_packages(node_id,package_id,model,physical_cores,logical_cpus_json,total_millis) VALUES(?,?,?,?,?,?)`, nodeID, item.ID, item.Model, item.PhysicalCores, logical, item.TotalMillis); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) UpdateNodeMetadata(ctx context.Context, id, name string, labels map[string]string) error {
@@ -631,7 +673,7 @@ func (s *Store) MarkStaleNodes(ctx context.Context, offlineBefore, lostBefore ti
 func (s *Store) AssignmentForNode(ctx context.Context, nodeID string) (domain.Assignment, error) {
 	var assignment domain.Assignment
 	var specJSON, gpusJSON, created string
-	err := s.db.QueryRowContext(ctx, `SELECT a.id,a.job_id,a.attempt_id,j.spec_json,a.gpu_uuids_json,a.job_token_ciphertext,a.created_at,COALESCE((SELECT MAX(sequence) FROM job_events WHERE job_id=a.job_id),0) FROM assignments a JOIN jobs j ON j.id=a.job_id WHERE a.node_id=? AND a.attempt_id=j.attempt_id AND a.accepted_at IS NULL AND j.status IN ('ASSIGNED','PULLING_IMAGE','STARTING') ORDER BY a.created_at LIMIT 1`, nodeID).Scan(&assignment.ID, &assignment.JobID, &assignment.AttemptID, &specJSON, &gpusJSON, &assignment.JobTokenEncrypted, &created, &assignment.EventSequence)
+	err := s.db.QueryRowContext(ctx, `SELECT a.id,a.job_id,a.attempt_id,j.spec_json,a.gpu_uuids_json,a.job_token_ciphertext,a.created_at,COALESCE((SELECT MAX(sequence) FROM job_events WHERE job_id=a.job_id),0),a.cpu_package_id,a.cpu_set FROM assignments a JOIN jobs j ON j.id=a.job_id WHERE a.node_id=? AND a.attempt_id=j.attempt_id AND a.accepted_at IS NULL AND j.status IN ('ASSIGNED','PULLING_IMAGE','STARTING') ORDER BY a.created_at LIMIT 1`, nodeID).Scan(&assignment.ID, &assignment.JobID, &assignment.AttemptID, &specJSON, &gpusJSON, &assignment.JobTokenEncrypted, &created, &assignment.EventSequence, &assignment.CPUPackageID, &assignment.CPUSet)
 	if errors.Is(err, sql.ErrNoRows) {
 		return assignment, ErrNotFound
 	}
@@ -1019,9 +1061,9 @@ func scanJob(row scanner) (domain.Job, error) {
 func scanAttempt(row scanner) (domain.JobAttempt, error) {
 	var attempt domain.JobAttempt
 	var exit sql.NullInt64
-	var outputs, created string
+	var gpus, outputs, created string
 	var started, finished sql.NullString
-	err := row.Scan(&attempt.ID, &attempt.JobID, &attempt.AttemptNumber, &attempt.NodeID, &attempt.Status, &attempt.ImageDigest, &exit, &attempt.FailureReason, &outputs, &created, &started, &finished)
+	err := row.Scan(&attempt.ID, &attempt.JobID, &attempt.AttemptNumber, &attempt.NodeID, &attempt.CPUPackageID, &gpus, &attempt.Status, &attempt.ImageDigest, &exit, &attempt.FailureReason, &outputs, &created, &started, &finished)
 	if errors.Is(err, sql.ErrNoRows) {
 		return attempt, ErrNotFound
 	}
@@ -1033,6 +1075,7 @@ func scanAttempt(row scanner) (domain.JobAttempt, error) {
 		attempt.ExitCode = &value
 	}
 	_ = json.Unmarshal([]byte(outputs), &attempt.Outputs)
+	_ = json.Unmarshal([]byte(gpus), &attempt.GPUUUIDs)
 	if attempt.Outputs == nil {
 		attempt.Outputs = []domain.OutputFile{}
 	}

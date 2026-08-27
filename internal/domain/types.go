@@ -149,14 +149,16 @@ type BuildWork struct {
 }
 
 type GPURequest struct {
-	Count        int   `json:"count"`
-	MinVRAMBytes int64 `json:"min_vram_bytes"`
+	Count        int      `json:"count"`
+	MinVRAMBytes int64    `json:"min_vram_bytes"`
+	UUIDs        []string `json:"uuids,omitempty"`
 }
 
 type Resources struct {
-	CPUMillis   int64      `json:"cpu_millis"`
-	MemoryBytes int64      `json:"memory_bytes"`
-	GPU         GPURequest `json:"gpu"`
+	CPUMillis    int64      `json:"cpu_millis"`
+	CPUPackageID string     `json:"cpu_package_id,omitempty"`
+	MemoryBytes  int64      `json:"memory_bytes"`
+	GPU          GPURequest `json:"gpu"`
 }
 
 type SecretRef struct {
@@ -182,6 +184,7 @@ type JobSpec struct {
 	Resources        Resources         `json:"resources"`
 	Labels           map[string]string `json:"labels,omitempty"`
 	NodeSelector     map[string]string `json:"node_selector,omitempty"`
+	TargetNodeID     string            `json:"target_node_id,omitempty"`
 	Inputs           []InputFile       `json:"inputs,omitempty"`
 }
 
@@ -217,6 +220,8 @@ type JobAttempt struct {
 	JobID         string       `json:"job_id"`
 	AttemptNumber int          `json:"attempt_number"`
 	NodeID        string       `json:"node_id"`
+	CPUPackageID  string       `json:"cpu_package_id,omitempty"`
+	GPUUUIDs      []string     `json:"gpu_uuids,omitempty"`
 	Status        JobStatus    `json:"status"`
 	ImageDigest   string       `json:"image_digest,omitempty"`
 	ExitCode      *int         `json:"exit_code,omitempty"`
@@ -232,6 +237,15 @@ type GPU struct {
 	Model     string `json:"model"`
 	VRAMBytes int64  `json:"vram_bytes"`
 	Allocated bool   `json:"allocated"`
+}
+
+type CPUPackage struct {
+	ID              string `json:"id"`
+	Model           string `json:"model"`
+	PhysicalCores   int    `json:"physical_cores"`
+	LogicalCPUs     []int  `json:"logical_cpus"`
+	TotalMillis     int64  `json:"total_millis"`
+	AllocatedMillis int64  `json:"allocated_millis"`
 }
 
 type GPUDiscovery struct {
@@ -254,6 +268,8 @@ type Node struct {
 	MemoryAllocatedBytes int64             `json:"memory_allocated_bytes"`
 	WorkspaceFreeBytes   int64             `json:"workspace_free_bytes"`
 	Labels               map[string]string `json:"labels"`
+	Capabilities         []string          `json:"capabilities"`
+	CPUPackages          []CPUPackage      `json:"cpu_packages"`
 	GPUs                 []GPU             `json:"gpus"`
 	GPUDiscovery         GPUDiscovery      `json:"gpu_discovery"`
 	LastHeartbeat        time.Time         `json:"last_heartbeat"`
@@ -266,6 +282,8 @@ type Assignment struct {
 	AttemptID         string            `json:"attempt_id"`
 	Spec              JobSpec           `json:"spec"`
 	GPUUUIDs          []string          `json:"gpu_uuids"`
+	CPUPackageID      string            `json:"cpu_package_id,omitempty"`
+	CPUSet            string            `json:"cpu_set,omitempty"`
 	JobToken          string            `json:"job_token"`
 	JobTokenEncrypted []byte            `json:"-"`
 	Secrets           map[string]string `json:"secrets,omitempty"`

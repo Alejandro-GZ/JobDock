@@ -140,6 +140,24 @@ func ValidateJobSpec(spec JobSpec) error {
 	if spec.Resources.GPU.Count < 0 || spec.Resources.GPU.MinVRAMBytes < 0 {
 		return errors.New("GPU requirements cannot be negative")
 	}
+	if len(spec.Resources.GPU.UUIDs) > 0 {
+		if spec.TargetNodeID == "" {
+			return errors.New("target_node_id is required for explicit GPU selection")
+		}
+		if spec.Resources.GPU.Count != len(spec.Resources.GPU.UUIDs) {
+			return errors.New("GPU count must match the number of explicit UUIDs")
+		}
+		seen := map[string]bool{}
+		for _, id := range spec.Resources.GPU.UUIDs {
+			if strings.TrimSpace(id) == "" || seen[id] {
+				return errors.New("explicit GPU UUIDs must be non-empty and unique")
+			}
+			seen[id] = true
+		}
+	}
+	if spec.Resources.CPUPackageID != "" && spec.TargetNodeID == "" {
+		return errors.New("target_node_id is required for CPU package affinity")
+	}
 	for key := range spec.Environment {
 		if !envName.MatchString(key) || strings.HasPrefix(key, "JOBDOCK_") {
 			return fmt.Errorf("invalid or reserved environment variable %q", key)

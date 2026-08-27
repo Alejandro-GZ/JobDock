@@ -43,6 +43,22 @@ func TestValidateJobSpec(t *testing.T) {
 	}
 }
 
+func TestValidateExplicitHardwareAffinity(t *testing.T) {
+	spec := JobSpec{Name: "hardware-job", Image: "alpine", TargetNodeID: "node", Resources: Resources{CPUMillis: 1000, CPUPackageID: "0", MemoryBytes: 1024, GPU: GPURequest{Count: 2, UUIDs: []string{"GPU-1", "GPU-2"}}}}
+	if err := ValidateJobSpec(spec); err != nil {
+		t.Fatal(err)
+	}
+	spec.TargetNodeID = ""
+	if err := ValidateJobSpec(spec); err == nil {
+		t.Fatal("expected target node validation")
+	}
+	spec.TargetNodeID = "node"
+	spec.Resources.GPU.Count = 1
+	if err := ValidateJobSpec(spec); err == nil {
+		t.Fatal("expected UUID count validation")
+	}
+}
+
 func TestBuildLifecycleAndValidation(t *testing.T) {
 	if !CanBuildTransition(BuildCreated, BuildAnalyzing) || !CanBuildTransition(BuildCreated, BuildBuilding) || !CanBuildTransition(BuildAnalyzing, BuildBuilding) || !CanBuildTransition(BuildBuilding, BuildSucceeded) {
 		t.Fatal("expected happy-path build transitions")

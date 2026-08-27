@@ -71,8 +71,43 @@ type CreateOptions struct {
 	Environment      []string
 	Binds            []string
 	CPUMillis        int64
+	CPUSet           string
 	MemoryBytes      int64
 	GPUUUIDs         []string
+}
+
+type deviceRequest struct {
+	Driver       string     `json:"Driver"`
+	DeviceIDs    []string   `json:"DeviceIDs"`
+	Capabilities [][]string `json:"Capabilities"`
+}
+
+type hostConfig struct {
+	Binds          []string        `json:"Binds"`
+	Memory         int64           `json:"Memory"`
+	NanoCPUs       int64           `json:"NanoCpus"`
+	CpusetCpus     string          `json:"CpusetCpus,omitempty"`
+	PidsLimit      int64           `json:"PidsLimit"`
+	CapDrop        []string        `json:"CapDrop"`
+	SecurityOpt    []string        `json:"SecurityOpt"`
+	DeviceRequests []deviceRequest `json:"DeviceRequests,omitempty"`
+}
+
+type createContainerRequest struct {
+	Image      string            `json:"Image"`
+	Cmd        []string          `json:"Cmd"`
+	Env        []string          `json:"Env"`
+	WorkingDir string            `json:"WorkingDir,omitempty"`
+	Labels     map[string]string `json:"Labels"`
+	HostConfig hostConfig        `json:"HostConfig"`
+}
+
+func createRequest(options CreateOptions) createContainerRequest {
+	body := createContainerRequest{Image: options.Image, Cmd: options.Command, Env: options.Environment, WorkingDir: options.WorkingDirectory, Labels: map[string]string{"jobdock.managed": "true", "jobdock.job_id": options.JobID, "jobdock.attempt_id": options.AttemptID}, HostConfig: hostConfig{Binds: options.Binds, Memory: options.MemoryBytes, NanoCPUs: options.CPUMillis * 1_000_000, CpusetCpus: options.CPUSet, PidsLimit: 1024, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges"}}}
+	if len(options.GPUUUIDs) > 0 {
+		body.HostConfig.DeviceRequests = []deviceRequest{{Driver: "nvidia", DeviceIDs: options.GPUUUIDs, Capabilities: [][]string{{"gpu"}}}}
+	}
+	return body
 }
 
 func New(socket string) *Client {
@@ -179,31 +214,7 @@ func (c *Client) ImageDigest(ctx context.Context, image string) string {
 }
 
 func (c *Client) Create(ctx context.Context, options CreateOptions) (string, error) {
-	type deviceRequest struct {
-		Driver       string     `json:"Driver"`
-		DeviceIDs    []string   `json:"DeviceIDs"`
-		Capabilities [][]string `json:"Capabilities"`
-	}
-	type hostConfig struct {
-		Binds          []string        `json:"Binds"`
-		Memory         int64           `json:"Memory"`
-		NanoCPUs       int64           `json:"NanoCpus"`
-		PidsLimit      int64           `json:"PidsLimit"`
-		CapDrop        []string        `json:"CapDrop"`
-		SecurityOpt    []string        `json:"SecurityOpt"`
-		DeviceRequests []deviceRequest `json:"DeviceRequests,omitempty"`
-	}
-	body := struct {
-		Image      string            `json:"Image"`
-		Cmd        []string          `json:"Cmd"`
-		Env        []string          `json:"Env"`
-		WorkingDir string            `json:"WorkingDir,omitempty"`
-		Labels     map[string]string `json:"Labels"`
-		HostConfig hostConfig        `json:"HostConfig"`
-	}{Image: options.Image, Cmd: options.Command, Env: options.Environment, WorkingDir: options.WorkingDirectory, Labels: map[string]string{"jobdock.managed": "true", "jobdock.job_id": options.JobID, "jobdock.attempt_id": options.AttemptID}, HostConfig: hostConfig{Binds: options.Binds, Memory: options.MemoryBytes, NanoCPUs: options.CPUMillis * 1_000_000, PidsLimit: 1024, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges"}}}
-	if len(options.GPUUUIDs) > 0 {
-		body.HostConfig.DeviceRequests = []deviceRequest{{Driver: "nvidia", DeviceIDs: options.GPUUUIDs, Capabilities: [][]string{{"gpu"}}}}
-	}
+	body := createRequest(options)
 	data, _ := json.Marshal(body)
 	response, err := c.request(ctx, "POST", "/containers/create?name="+url.QueryEscape(options.Name), bytes.NewReader(data), jsonHeader())
 	if err != nil {

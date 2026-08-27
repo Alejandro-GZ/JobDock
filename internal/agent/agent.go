@@ -252,7 +252,12 @@ func (a *Agent) inventory(ctx context.Context) (domain.Node, error) {
 	if degraded {
 		status = domain.NodeDegraded
 	}
-	return domain.Node{Name: a.config.Name, Status: status, AgentVersion: version, ProtocolVersion: 1, Architecture: info.Architecture, DockerVersion: info.ServerVersion, CPUTotalMillis: int64(info.NCPU) * 1000, MemoryTotalBytes: info.MemTotal, WorkspaceFreeBytes: free, Labels: a.config.Labels, GPUs: gpus, GPUDiscovery: discovery}, nil
+	packages := discoverCPUPackages()
+	capabilities := []string{}
+	if len(packages) > 0 {
+		capabilities = append(capabilities, "cpu_package_affinity")
+	}
+	return domain.Node{Name: a.config.Name, Status: status, AgentVersion: version, ProtocolVersion: 1, Architecture: info.Architecture, DockerVersion: info.ServerVersion, CPUTotalMillis: int64(info.NCPU) * 1000, MemoryTotalBytes: info.MemTotal, WorkspaceFreeBytes: free, Labels: a.config.Labels, Capabilities: capabilities, CPUPackages: packages, GPUs: gpus, GPUDiscovery: discovery}, nil
 }
 
 func (a *Agent) heartbeatLoop(ctx context.Context) {
@@ -431,7 +436,7 @@ func (a *Agent) execute(ctx context.Context, record *runtimeAssignment) {
 			a.completePreStartCancellation(record)
 			return
 		}
-		containerID, err := a.docker.Create(ctx, dockerengine.CreateOptions{Name: "jobdock-" + strings.ReplaceAll(record.JobID, "-", "")[:12], JobID: record.JobID, AttemptID: record.AttemptID, Image: runtimeImage, Command: record.Spec.Command, WorkingDirectory: record.Spec.WorkingDirectory, Environment: environment, Binds: binds, CPUMillis: record.Spec.Resources.CPUMillis, MemoryBytes: record.Spec.Resources.MemoryBytes, GPUUUIDs: record.GPUUUIDs})
+		containerID, err := a.docker.Create(ctx, dockerengine.CreateOptions{Name: "jobdock-" + strings.ReplaceAll(record.JobID, "-", "")[:12], JobID: record.JobID, AttemptID: record.AttemptID, Image: runtimeImage, Command: record.Spec.Command, WorkingDirectory: record.Spec.WorkingDirectory, Environment: environment, Binds: binds, CPUMillis: record.Spec.Resources.CPUMillis, CPUSet: record.CPUSet, MemoryBytes: record.Spec.Resources.MemoryBytes, GPUUUIDs: record.GPUUUIDs})
 		if err != nil {
 			if a.stopRequested(record) {
 				a.completePreStartCancellation(record)
