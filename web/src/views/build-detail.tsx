@@ -1,6 +1,6 @@
 import {useMutation,useQuery,useQueryClient} from "@tanstack/react-query";
 import {Link,useNavigate,useParams} from "react-router-dom";
-import {AlertTriangle,ArrowLeft,Check,Code2,LoaderCircle,PackageCheck,Play,Terminal,Trash2,X} from "lucide-react";
+import {AlertTriangle,ArrowLeft,Check,Code2,Copy,LoaderCircle,PackageCheck,Play,Terminal,Trash2,X} from "lucide-react";
 import {toast} from "sonner";
 import {api} from "@/api";
 import {BuildStatusBadge} from "@/views/builds";
@@ -30,7 +30,7 @@ export function BuildDetail(){
     </section>}
     {item.mode==="DOCKERFILE"&&item.status==="CREATED"&&<section className="flex items-center justify-between rounded-md border p-4"><div><h2 className="text-sm font-medium">Dockerfile build</h2><p className="text-xs text-muted-foreground">BuildKit will use the Dockerfile at the project root.</p></div><Button onClick={()=>confirm.mutate()} disabled={confirm.isPending}>{confirm.isPending?<LoaderCircle className="size-4 animate-spin"/>:<Play className="size-4"/>}Start build</Button></section>}
     {item.status==="BUILDING"&&<div className="flex justify-end"><Button variant="outline" onClick={()=>cancel.mutate()} disabled={cancel.isPending}><X className="size-4"/>Cancel build</Button></div>}
-    {item.status==="SUCCEEDED"&&item.oci_digest&&<section className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-4"><div className="flex items-center gap-2 text-sm font-medium"><Check className="size-4 text-emerald-600"/>{item.artifact_available?"Managed image ready":"Managed image expired"}</div><p className="mt-1 text-xs text-muted-foreground">{item.artifact_available?"JobDock will distribute this immutable image directly to assigned agents.":"Create an explicit rebuild before starting new jobs from this build."}</p><div className="mt-2 break-all font-mono text-xs text-muted-foreground">{item.oci_digest}</div></section>}
+    {item.status==="SUCCEEDED"&&item.oci_digest&&<ManagedImage artifactAvailable={item.artifact_available} artifactReference={item.artifact_reference} digest={item.oci_digest}/>}
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]"><section className="overflow-hidden rounded-md border"><div className="flex items-center gap-2 border-b px-4 py-3"><Terminal className="size-4"/><h2 className="text-sm font-medium">Build log</h2></div><pre className="max-h-[420px] overflow-auto whitespace-pre-wrap bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-100">{logs.data||"No build output."}</pre></section>
       <section className="rounded-md border"><div className="flex items-center gap-2 border-b px-4 py-3"><Code2 className="size-4"/><h2 className="text-sm font-medium">Source identity</h2></div><dl className="space-y-3 p-4 text-sm"><Metadata label="Mode" value={item.mode}/>{item.mode==="DOCKERFILE"&&<><Metadata label="Build context" value={item.context_path||"."} mono/><Metadata label="Dockerfile" value={item.dockerfile_path||"Dockerfile"} mono/></>}<Metadata label="Archive" value={item.source.filename}/><Metadata label="SHA-256" value={item.source.sha256} mono/><Metadata label="Created" value={new Date(item.created_at).toLocaleString()}/></dl></section></div>
   </div>;
@@ -38,3 +38,20 @@ export function BuildDetail(){
 
 function Detected({label,value,mono=false}:{label:string;value:string;mono?:boolean}){return <div className="min-w-0 border-b p-4 sm:border-r lg:border-b-0"><dt className="text-xs text-muted-foreground">{label}</dt><dd className={`${mono?"font-mono text-xs":"text-sm font-medium"} mt-1 break-words`}>{value||"Not reported"}</dd></div>}
 function Metadata({label,value,mono=false}:{label:string;value:string;mono?:boolean}){return <div><dt className="text-xs text-muted-foreground">{label}</dt><dd className={`${mono?"font-mono text-[11px]":""} mt-0.5 break-all`}>{value}</dd></div>}
+
+export function ManagedImage({artifactAvailable,artifactReference,digest}:{artifactAvailable:boolean;artifactReference?:string;digest:string}){
+  const copyReference=async()=>{
+    try{
+      if(!artifactReference||!navigator.clipboard?.writeText)throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(artifactReference);
+      toast.success("Image reference copied");
+    }catch{
+      toast.error("Could not copy image reference");
+    }
+  };
+  return <section className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-4">
+    <div className="flex items-center gap-2 text-sm font-medium"><Check className="size-4 text-emerald-600"/>{artifactAvailable?"Managed image ready":"Managed image expired"}</div>
+    {artifactAvailable&&artifactReference?<div className="mt-2 flex min-w-0 items-center gap-2"><code className="min-w-0 flex-1 break-all rounded-md border bg-background/70 px-3 py-2 font-mono text-xs text-foreground">{artifactReference}</code><Button type="button" variant="outline" size="icon" className="shrink-0" title="Copy image reference" onClick={copyReference}><Copy className="size-4"/><span className="sr-only">Copy image reference</span></Button></div>:<p className="mt-1 text-xs text-muted-foreground">Create an explicit rebuild before starting new jobs from this build.</p>}
+    <div className="mt-2 break-all font-mono text-xs text-muted-foreground">{digest}</div>
+  </section>;
+}
