@@ -39,6 +39,7 @@ export type DashboardWidgetAppearance = {
   palette?: DashboardPaletteRef;
   background_color?: string;
   border_color?: string;
+  border_style?: "none" | "subtle";
   text_color?: string;
   accent_color?: string;
   padding?: "none" | "compact" | "normal";
@@ -326,6 +327,7 @@ function restoreAppearance(type:DashboardWidgetType,value:unknown):DashboardWidg
   if(typeof item.subtitle==="string"&&item.subtitle.trim())appearance.subtitle=item.subtitle.trim().slice(0,160);
   if(item.palette&&typeof item.palette.id==="string"&&item.palette.version===1)appearance.palette={id:item.palette.id.slice(0,64),version:1};
   for(const key of ["background_color","border_color","text_color","accent_color","stdout_color","stderr_color"] as const)if(typeof item[key]==="string"&&/^#[0-9a-f]{6}$/i.test(item[key]!))appearance[key]=item[key]!.toLowerCase();
+  if(item.border_style==="none"||item.border_style==="subtle")appearance.border_style=item.border_style;
   if(["none","compact","normal"].includes(String(item.padding)))appearance.padding=item.padding;
   if(typeof item.show_labels==="boolean")appearance.show_labels=item.show_labels;
   if(typeof item.show_values==="boolean")appearance.show_values=item.show_values;

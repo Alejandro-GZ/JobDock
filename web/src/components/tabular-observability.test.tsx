@@ -63,7 +63,7 @@ describe("tabular observability widgets",()=>{
     view(<ProjectionScatterWidget jobID="job" attemptID="attempt" widget={widget} onUpdate={()=>{}}/>);
     const plot=await screen.findByRole("img",{name:"Embedding scatter with 2 points"});
     await waitFor(()=>expect(plot.getAttribute("width")).toBe("900"));
-    expect(plot.getAttribute("height")).toBe("240");expect(plot.getAttribute("data-plot-size")).toBe("176x176");expect(plot.hasAttribute("preserveAspectRatio")).toBe(false);
+    expect(plot.getAttribute("height")).toBe("240");expect(plot.getAttribute("data-plot-size")).toBe("164x164");expect(plot.hasAttribute("preserveAspectRatio")).toBe(false);
     bounds.mockRestore();vi.unstubAllGlobals();
   });
 

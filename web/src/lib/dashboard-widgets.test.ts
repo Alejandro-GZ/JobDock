@@ -38,6 +38,12 @@ describe("dashboard widget model",()=>{
     expect(createDashboardWidget("heatmap",typed,"heatmap").sources[0]?.name).toBe("attention");
     expect(createDashboardWidget("correlation_heatmap",typed,"correlation").sources[0]?.name).toBe("features");
   });
+  it("restores borderless and explicitly bordered widget surfaces",()=>{
+    const none=restoreDashboardWidgets([{id:"none",type:"lineplot",size:{columns:2,rows:2},position:{x:0,y:0},sources:[],appearance:{schema_version:1,border_style:"none"}}])!;
+    const subtle=restoreDashboardWidgets([{id:"subtle",type:"lineplot",size:{columns:2,rows:2},position:{x:0,y:0},sources:[],appearance:{schema_version:1,border_style:"subtle",border_color:"#123abc"}}])!;
+    expect(none[0].appearance?.border_style).toBe("none");
+    expect(subtle[0].appearance).toMatchObject({border_style:"subtle",border_color:"#123abc"});
+  });
 
   it("reorders and resizes without overlapping occupied grid cells",()=>{
     const widgets=layoutDashboardWidgets([

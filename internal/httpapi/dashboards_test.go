@@ -43,6 +43,14 @@ func TestDashboardAppearanceValidationAndCompatibility(t *testing.T) {
 			t.Fatalf("gradient for %s: %v", widgetType, err)
 		}
 	}
+	bordered := dashboardWidget{ID: "bordered", Type: "lineplot", Size: dashboardWidgetSize{Columns: 2, Rows: 2}, Appearance: &dashboardWidgetAppearance{SchemaVersion: 1, BorderStyle: "subtle", BorderColor: "#123abc"}}
+	if err := validateDashboardWidgetAppearance(bordered); err != nil {
+		t.Fatalf("subtle border: %v", err)
+	}
+	bordered.Appearance.BorderStyle = "heavy"
+	if err := validateDashboardWidgetAppearance(bordered); err == nil {
+		t.Fatal("unsupported border style was accepted")
+	}
 }
 
 func TestDashboardConfigurationPersistsAndFallsBackSafely(t *testing.T) {

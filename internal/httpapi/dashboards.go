@@ -97,6 +97,7 @@ type dashboardWidgetAppearance struct {
 	Palette         *dashboardPaletteRef                 `json:"palette,omitempty"`
 	BackgroundColor string                               `json:"background_color,omitempty"`
 	BorderColor     string                               `json:"border_color,omitempty"`
+	BorderStyle     string                               `json:"border_style,omitempty"`
 	TextColor       string                               `json:"text_color,omitempty"`
 	AccentColor     string                               `json:"accent_color,omitempty"`
 	Padding         string                               `json:"padding,omitempty"`
@@ -649,6 +650,9 @@ func validateDashboardWidgetAppearance(widget dashboardWidget) error {
 	}
 	if appearance.Padding != "" && appearance.Padding != "none" && appearance.Padding != "compact" && appearance.Padding != "normal" {
 		return dashboardError("Widget appearance padding is invalid")
+	}
+	if appearance.BorderStyle != "" && appearance.BorderStyle != "none" && appearance.BorderStyle != "subtle" {
+		return dashboardError("Widget appearance border_style is invalid")
 	}
 	if appearance.Density != "" && appearance.Density != "compact" && appearance.Density != "normal" && appearance.Density != "comfortable" {
 		return dashboardError("Widget appearance density is invalid")

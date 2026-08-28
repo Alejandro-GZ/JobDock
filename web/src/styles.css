@@ -4,11 +4,13 @@
 .jobdock-log-appearance [data-log-console] { background-color: var(--log-background) !important; }
 .jobdock-log-appearance [data-log-stream="stdout"] { color: var(--stdout-color); }
 .jobdock-log-appearance [data-log-stream="stderr"] { color: var(--stderr-color); }
-.dashboard-widget-surface > section {
+.dashboard-widget-surface > * {
   background-color: var(--widget-bg, hsl(var(--card))) !important;
   border-color: var(--widget-border, hsl(var(--border))) !important;
+  border-width: 0 !important;
   color: var(--widget-text, inherit);
 }
+.dashboard-widget-surface[data-widget-border="subtle"] > * { border-width: 1px !important; }
 .dashboard-widget-surface[data-widget-padding="none"] > section { padding: 0 !important; }
 .dashboard-widget-surface[data-widget-padding="compact"] > section { padding: .375rem !important; }
 @import "tw-animate-css";

@@ -21,6 +21,9 @@ describe("ObservationPlot",()=>{
     expect(screen.getByText(/independent Y scales/i)).toBeTruthy();
     expect(screen.getByRole("img",{name:/Training lineplot with 4 points/i})).toBeTruthy();
     expect(screen.getByRole("button",{name:"Zoom in Training"})).toBeTruthy();
+    expect(document.querySelector('[data-y-axis="ratio"]')).toBeTruthy();
+    expect(document.querySelector('[data-y-axis="seconds"]')).toBeTruthy();
+    expect(screen.getByText("Step")).toBeTruthy();
   });
 
   it("matches explicit scatter X and Y sources by step and fills its tile",async()=>{

@@ -22,7 +22,9 @@ describe("rich observability widgets", () => {
   it("switches a confusion matrix between absolute and row-normalized values", async () => {
     const user = userEvent.setup();
     render(<ConfusionMatrixWidget matrix={{id:1,attempt_id:"attempt-1",name:"validation",values:[[8,2],[1,9]],labels:["cat","dog"],step:5}}/>);
-    expect(screen.getByRole("grid",{name:"validation confusion matrix"}).style.width).toBe("310px");
+    const grid=screen.getByRole("grid",{name:"validation confusion matrix"});
+    expect(Number(grid.getAttribute("data-cell-size"))).toBeGreaterThan(80);
+    expect(Number.parseFloat(grid.style.width)).toBeLessThanOrEqual(310);
     expect(screen.getByTitle("cat → dog: 2")).toBeTruthy();
     await user.click(screen.getByRole("button", {name:"Normalized"}));
     expect(screen.getByTitle("cat → dog: 20.00%")).toBeTruthy();

@@ -1489,6 +1489,7 @@ components:
         palette: {$ref: '#/components/schemas/DashboardPaletteReference'}
         background_color: {type: string, pattern: '^#[0-9A-Fa-f]{6}$'}
         border_color: {type: string, pattern: '^#[0-9A-Fa-f]{6}$'}
+        border_style: {type: string, enum: [none, subtle], default: none}
         text_color: {type: string, pattern: '^#[0-9A-Fa-f]{6}$'}
         accent_color: {type: string, pattern: '^#[0-9A-Fa-f]{6}$'}
         padding: {type: string, enum: [none, compact, normal]}
