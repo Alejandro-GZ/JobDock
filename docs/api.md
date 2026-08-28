@@ -34,6 +34,11 @@ links are present only for jobs they own. Aggregate node usage remains available
 as pool-capacity information. Telemetry freshness is explicit and missing data
 is never presented as zero usage.
 
+NVIDIA inventory reports an instantaneous NVML GPU-busy sample for compatibility
+and, when the agent advertises `gpu_window_telemetry_v1`, a ten-second average,
+peak, sample timestamp and sample count. These host-wide readings are distinct
+from per-job resource telemetry and from Windows WDDM engine counters.
+
 ## Time-series queries
 
 Scalar metrics accept optional `timestamp`, `unit`, bounded JSON `metadata`, and

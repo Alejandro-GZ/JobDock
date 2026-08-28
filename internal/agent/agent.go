@@ -40,7 +40,9 @@ type Agent struct {
 	mu                  sync.Mutex
 	running             map[string]*runtimeAssignment
 	gpu                 GPUDiscoverer
+	gpuTelemetry        *gpuTelemetryBuffer
 	gpuLogOnce          sync.Once
+	gpuSampleErrorOnce  sync.Once
 	syncing             map[string]bool
 	inventoryOverride   func(context.Context) (domain.Node, error)
 }
@@ -95,7 +97,7 @@ func New(cfg config.Agent, logger *slog.Logger) *Agent {
 }
 
 func NewWithGPUDiscoverer(cfg config.Agent, logger *slog.Logger, gpu GPUDiscoverer) *Agent {
-	return &Agent{config: cfg, log: logger, docker: dockerengine.New(cfg.DockerSocket), http: &http.Client{Timeout: 30 * time.Second}, running: map[string]*runtimeAssignment{}, syncing: map[string]bool{}, gpu: gpu}
+	return &Agent{config: cfg, log: logger, docker: dockerengine.New(cfg.DockerSocket), http: &http.Client{Timeout: 30 * time.Second}, running: map[string]*runtimeAssignment{}, syncing: map[string]bool{}, gpu: gpu, gpuTelemetry: newGPUTelemetryBuffer()}
 }
 
 func (a *Agent) Run(ctx context.Context) error {
@@ -111,6 +113,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err := a.authenticate(ctx); err != nil {
 		return err
 	}
+	go a.gpuTelemetryLoop(ctx)
 	go a.heartbeatLoop(ctx)
 	if err := a.reconcile(ctx); err != nil {
 		a.log.Warn("reconciliation_failed", "error", err)
@@ -240,6 +243,8 @@ func (a *Agent) inventory(ctx context.Context) (domain.Node, error) {
 		status = domain.NodeDegraded
 	}
 	gpus, discovery, degraded := resolveGPUInventory(ctx, a.config.GPUMode, a.gpu)
+	a.gpuTelemetry.setDevices(gpus)
+	a.gpuTelemetry.apply(gpus)
 	a.gpuLogOnce.Do(func() {
 		if discovery.Status == "available" {
 			a.log.Info("gpu_discovery_ready", "count", len(gpus))
@@ -257,9 +262,35 @@ func (a *Agent) inventory(ctx context.Context) (domain.Node, error) {
 	if len(packages) > 0 {
 		capabilities = append(capabilities, "cpu_package_affinity")
 	}
+	if discovery.Status == "available" {
+		capabilities = append(capabilities, "gpu_window_telemetry_v1")
+	}
 	return domain.Node{Name: a.config.Name, Status: status, AgentVersion: version, ProtocolVersion: 1, Architecture: info.Architecture, DockerVersion: info.ServerVersion, CPUTotalMillis: int64(info.NCPU) * 1000, MemoryTotalBytes: info.MemTotal, WorkspaceTotalBytes: total, WorkspaceFreeBytes: free, Labels: a.config.Labels, Capabilities: capabilities, CPUPackages: packages, GPUs: gpus, GPUDiscovery: discovery,
 		System:  domain.NodeSystemInfo{Hostname: info.Name, OperatingSystem: info.OperatingSystem, OSVersion: info.OSVersion, OSType: info.OSType, KernelVersion: info.KernelVersion, Architecture: info.Architecture},
 		Runtime: domain.NodeRuntimeInfo{DockerVersion: info.ServerVersion, StorageDriver: info.Driver, CgroupDriver: info.CgroupDriver, CgroupVersion: info.CgroupVersion}}, nil
+}
+
+func (a *Agent) gpuTelemetryLoop(ctx context.Context) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		uuids := a.gpuTelemetry.deviceIDs()
+		if len(uuids) > 0 {
+			samples, err := a.gpu.SampleDevices(ctx, uuids)
+			if err != nil {
+				if ctx.Err() == nil {
+					a.gpuSampleErrorOnce.Do(func() { a.log.Warn("gpu_window_sample_failed", "error", err) })
+				}
+			} else {
+				a.gpuTelemetry.add(samples)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func (a *Agent) heartbeatLoop(ctx context.Context) {

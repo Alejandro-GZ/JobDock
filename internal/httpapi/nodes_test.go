@@ -32,8 +32,8 @@ func TestNodeDetailAttributesReservationsAndScopesTelemetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	utilization, used, temperature := int64(7200), int64(2<<30), int64(61)
-	node := domain.Node{ID: ids.New(), Name: "inventory-node", Status: domain.NodeOnline, AgentVersion: "test", ProtocolVersion: 1, Architecture: "amd64", DockerVersion: "29", CPUTotalMillis: 8000, MemoryTotalBytes: 16 << 30, WorkspaceTotalBytes: 100 << 30, WorkspaceFreeBytes: 80 << 30, Labels: map[string]string{}, Capabilities: []string{"host_inventory_v1", "cpu_package_affinity"}, CPUPackages: []domain.CPUPackage{{ID: "0", Vendor: "GenuineIntel", Model: "Test CPU", PhysicalCores: 4, LogicalCPUs: []int{0, 1, 2, 3, 4, 5, 6, 7}, TotalMillis: 8000}}, GPUs: []domain.GPU{{UUID: "GPU-1", Model: "Test GPU", VRAMBytes: 8 << 30, PCIBusID: "0000:01:00.0", DriverVersion: "580", ComputeCapability: "8.9", UtilizationBasisPoints: &utilization, MemoryUsedBytes: &used, TemperatureCelsius: &temperature}}, GPUDiscovery: domain.GPUDiscovery{Status: "available"}, System: domain.NodeSystemInfo{Hostname: "worker-1", OperatingSystem: "Linux", KernelVersion: "6.8", Architecture: "amd64"}, Runtime: domain.NodeRuntimeInfo{DockerVersion: "29", StorageDriver: "overlay2", CgroupVersion: "2"}, LastHeartbeat: now, CreatedAt: now}
+	utilization, average, peak, used, temperature := int64(7200), int64(4800), int64(8300), int64(2<<30), int64(61)
+	node := domain.Node{ID: ids.New(), Name: "inventory-node", Status: domain.NodeOnline, AgentVersion: "test", ProtocolVersion: 1, Architecture: "amd64", DockerVersion: "29", CPUTotalMillis: 8000, MemoryTotalBytes: 16 << 30, WorkspaceTotalBytes: 100 << 30, WorkspaceFreeBytes: 80 << 30, Labels: map[string]string{}, Capabilities: []string{"host_inventory_v1", "cpu_package_affinity", "gpu_window_telemetry_v1"}, CPUPackages: []domain.CPUPackage{{ID: "0", Vendor: "GenuineIntel", Model: "Test CPU", PhysicalCores: 4, LogicalCPUs: []int{0, 1, 2, 3, 4, 5, 6, 7}, TotalMillis: 8000}}, GPUs: []domain.GPU{{UUID: "GPU-1", Model: "Test GPU", VRAMBytes: 8 << 30, PCIBusID: "0000:01:00.0", DriverVersion: "580", ComputeCapability: "8.9", UtilizationBasisPoints: &utilization, UtilizationAverageBasisPoints: &average, UtilizationPeakBasisPoints: &peak, UtilizationSampledAt: &now, UtilizationWindowSeconds: 10, UtilizationSampleCount: 10, MemoryUsedBytes: &used, TemperatureCelsius: &temperature}, {UUID: "GPU-2", Model: "Test GPU", VRAMBytes: 8 << 30, UtilizationBasisPoints: &utilization, UtilizationAverageBasisPoints: &average, UtilizationPeakBasisPoints: &peak, UtilizationSampledAt: &now, UtilizationWindowSeconds: 10, UtilizationSampleCount: 10, MemoryUsedBytes: &used, TemperatureCelsius: &temperature}}, GPUDiscovery: domain.GPUDiscovery{Status: "available"}, System: domain.NodeSystemInfo{Hostname: "worker-1", OperatingSystem: "Linux", KernelVersion: "6.8", Architecture: "amd64"}, Runtime: domain.NodeRuntimeInfo{DockerVersion: "29", StorageDriver: "overlay2", CgroupVersion: "2"}, LastHeartbeat: now, CreatedAt: now}
 	if err = repository.UpsertNode(ctx, node, "node-detail-credential"); err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestNodeDetailAttributesReservationsAndScopesTelemetry(t *testing.T) {
 		return job
 	}
 	owned := create(owner, "owned", []string{"GPU-1"}, 400)
-	foreign := create(other, "foreign", nil, 800)
+	foreign := create(other, "foreign", []string{"GPU-2"}, 800)
 	files, _ := filestore.New(root, 1<<20, 1<<20, 1<<20)
 	box, _ := secretbox.New(bytes.Repeat([]byte{4}, 32))
 	api := New(config.Server{AllowInsecureHTTP: true, SessionTTL: time.Hour}, repository, files, box, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -74,8 +74,11 @@ func TestNodeDetailAttributesReservationsAndScopesTelemetry(t *testing.T) {
 	if byID[foreign.ID].CanOpen || byID[foreign.ID].TelemetryStatus != "restricted" || byID[foreign.ID].ObservedCPUMillis != nil {
 		t.Fatalf("foreign allocation leaked telemetry: %#v", byID[foreign.ID])
 	}
-	if member.Node.GPUs[0].AllocatedJobID != owned.ID || member.Node.GPUs[0].UtilizationBasisPoints == nil {
+	if member.Node.GPUs[0].AllocatedJobID != owned.ID || member.Node.GPUs[0].UtilizationBasisPoints == nil || member.Node.GPUs[0].UtilizationAverageBasisPoints == nil || *member.Node.GPUs[0].UtilizationAverageBasisPoints != average || member.Node.GPUs[0].UtilizationSampleCount != 10 {
 		t.Fatalf("GPU allocation was not attributed: %#v", member.Node.GPUs[0])
+	}
+	if member.Node.GPUs[1].AllocatedJobID != foreign.ID || member.Node.GPUs[1].UtilizationBasisPoints != nil || member.Node.GPUs[1].UtilizationAverageBasisPoints != nil || member.Node.GPUs[1].UtilizationPeakBasisPoints != nil || member.Node.GPUs[1].UtilizationSampledAt != nil || member.Node.GPUs[1].UtilizationSampleCount != 0 {
+		t.Fatalf("foreign GPU telemetry leaked: %#v", member.Node.GPUs[1])
 	}
 	adminClient := loginSeriesUser(t, server.URL, admin.Username)
 	var adminDetail nodeDetail

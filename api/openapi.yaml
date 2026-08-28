@@ -1243,6 +1243,11 @@ components:
         driver_version: {type: string}
         compute_capability: {type: string}
         utilization_basis_points: {type: integer, format: int64, minimum: 0, maximum: 10000}
+        utilization_average_basis_points: {type: integer, format: int64, minimum: 0, maximum: 10000}
+        utilization_peak_basis_points: {type: integer, format: int64, minimum: 0, maximum: 10000}
+        utilization_sampled_at: {type: string, format: date-time}
+        utilization_window_seconds: {type: integer, minimum: 1}
+        utilization_sample_count: {type: integer, minimum: 1}
         memory_used_bytes: {type: integer, format: int64, minimum: 0}
         temperature_celsius: {type: integer, format: int64}
         allocated: {type: boolean}

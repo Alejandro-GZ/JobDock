@@ -18,6 +18,10 @@ func (f fakeGPUDiscoverer) Sample(context.Context, []string) (GPUUsage, error) {
 	return f.usage, f.sampleErr
 }
 
+func (f fakeGPUDiscoverer) SampleDevices(context.Context, []string) (map[string]GPUDeviceUsage, error) {
+	return map[string]GPUDeviceUsage{}, f.sampleErr
+}
+
 func (f fakeGPUDiscoverer) Discover(context.Context) ([]domain.GPU, domain.GPUDiscovery) {
 	return f.gpus, f.discovery
 }

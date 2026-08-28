@@ -21,3 +21,7 @@ func (unsupportedGPUDiscoverer) Discover(context.Context) ([]domain.GPU, domain.
 func (unsupportedGPUDiscoverer) Sample(context.Context, []string) (GPUUsage, error) {
 	return GPUUsage{}, errors.New("NVML sampling is unavailable")
 }
+
+func (unsupportedGPUDiscoverer) SampleDevices(context.Context, []string) (map[string]GPUDeviceUsage, error) {
+	return nil, errors.New("NVML sampling is unavailable")
+}

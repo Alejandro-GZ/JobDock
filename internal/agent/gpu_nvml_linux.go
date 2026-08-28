@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"github.com/jobdock/jobdock/internal/domain"
@@ -92,33 +93,60 @@ func nvmlString(value []int8) string {
 func (nvmlDiscoverer) Sample(ctx context.Context, uuids []string) (GPUUsage, error) {
 	nvmlMu.Lock()
 	defer nvmlMu.Unlock()
-	if err := ctx.Err(); err != nil {
+	samples, err := sampleNVMLDevices(ctx, uuids)
+	if err != nil {
 		return GPUUsage{}, err
 	}
+	var usage GPUUsage
+	for _, uuid := range uuids {
+		sample := samples[uuid]
+		usage.UtilizationBasisPoints += sample.UtilizationBasisPoints
+		usage.MemoryBytes += sample.MemoryBytes
+	}
+	if len(uuids) > 0 {
+		usage.UtilizationBasisPoints /= int64(len(uuids))
+	}
+	return usage, nil
+}
+
+func (nvmlDiscoverer) SampleDevices(ctx context.Context, uuids []string) (map[string]GPUDeviceUsage, error) {
+	nvmlMu.Lock()
+	defer nvmlMu.Unlock()
+	return sampleNVMLDevices(ctx, uuids)
+}
+
+func sampleNVMLDevices(ctx context.Context, uuids []string) (map[string]GPUDeviceUsage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(uuids) == 0 {
-		return GPUUsage{}, nil
+		return map[string]GPUDeviceUsage{}, nil
 	}
 	if result := nvml.Init(); result != nvml.SUCCESS {
-		return GPUUsage{}, fmt.Errorf("initialize NVML: %s", nvml.ErrorString(result))
+		return nil, fmt.Errorf("initialize NVML: %s", nvml.ErrorString(result))
 	}
 	defer nvml.Shutdown()
-	var usage GPUUsage
+	sampledAt := time.Now().UTC()
+	samples := make(map[string]GPUDeviceUsage, len(uuids))
 	for _, uuid := range uuids {
 		device, result := nvml.DeviceGetHandleByUUID(uuid)
 		if result != nvml.SUCCESS {
-			return GPUUsage{}, fmt.Errorf("get GPU %s: %s", uuid, nvml.ErrorString(result))
+			return nil, fmt.Errorf("get GPU %s: %s", uuid, nvml.ErrorString(result))
 		}
 		utilization, result := device.GetUtilizationRates()
 		if result != nvml.SUCCESS {
-			return GPUUsage{}, fmt.Errorf("get GPU %s utilization: %s", uuid, nvml.ErrorString(result))
+			return nil, fmt.Errorf("get GPU %s utilization: %s", uuid, nvml.ErrorString(result))
 		}
 		memory, result := device.GetMemoryInfo()
 		if result != nvml.SUCCESS {
-			return GPUUsage{}, fmt.Errorf("get GPU %s memory: %s", uuid, nvml.ErrorString(result))
+			return nil, fmt.Errorf("get GPU %s memory: %s", uuid, nvml.ErrorString(result))
 		}
-		usage.UtilizationBasisPoints += int64(utilization.Gpu) * 100
-		usage.MemoryBytes += int64(memory.Used)
+		sample := GPUDeviceUsage{UtilizationBasisPoints: int64(utilization.Gpu) * 100, MemoryBytes: int64(memory.Used), SampledAt: sampledAt}
+		if temperature, code := device.GetTemperature(nvml.TEMPERATURE_GPU); code == nvml.SUCCESS {
+			value := int64(temperature)
+			sample.TemperatureCelsius = &value
+		}
+		samples[uuid] = sample
 	}
-	usage.UtilizationBasisPoints /= int64(len(uuids))
-	return usage, nil
+	return samples, nil
 }

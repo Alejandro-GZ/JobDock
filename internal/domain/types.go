@@ -233,17 +233,22 @@ type JobAttempt struct {
 }
 
 type GPU struct {
-	UUID                   string `json:"uuid"`
-	Model                  string `json:"model"`
-	VRAMBytes              int64  `json:"vram_bytes"`
-	PCIBusID               string `json:"pci_bus_id,omitempty"`
-	DriverVersion          string `json:"driver_version,omitempty"`
-	ComputeCapability      string `json:"compute_capability,omitempty"`
-	UtilizationBasisPoints *int64 `json:"utilization_basis_points,omitempty"`
-	MemoryUsedBytes        *int64 `json:"memory_used_bytes,omitempty"`
-	TemperatureCelsius     *int64 `json:"temperature_celsius,omitempty"`
-	Allocated              bool   `json:"allocated"`
-	AllocatedJobID         string `json:"allocated_job_id,omitempty"`
+	UUID                          string     `json:"uuid"`
+	Model                         string     `json:"model"`
+	VRAMBytes                     int64      `json:"vram_bytes"`
+	PCIBusID                      string     `json:"pci_bus_id,omitempty"`
+	DriverVersion                 string     `json:"driver_version,omitempty"`
+	ComputeCapability             string     `json:"compute_capability,omitempty"`
+	UtilizationBasisPoints        *int64     `json:"utilization_basis_points,omitempty"`
+	UtilizationAverageBasisPoints *int64     `json:"utilization_average_basis_points,omitempty"`
+	UtilizationPeakBasisPoints    *int64     `json:"utilization_peak_basis_points,omitempty"`
+	UtilizationSampledAt          *time.Time `json:"utilization_sampled_at,omitempty"`
+	UtilizationWindowSeconds      int        `json:"utilization_window_seconds,omitempty"`
+	UtilizationSampleCount        int        `json:"utilization_sample_count,omitempty"`
+	MemoryUsedBytes               *int64     `json:"memory_used_bytes,omitempty"`
+	TemperatureCelsius            *int64     `json:"temperature_celsius,omitempty"`
+	Allocated                     bool       `json:"allocated"`
+	AllocatedJobID                string     `json:"allocated_job_id,omitempty"`
 }
 
 type CPUPackage struct {

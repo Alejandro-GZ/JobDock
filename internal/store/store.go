@@ -444,7 +444,7 @@ func (s *Store) UpsertNode(ctx context.Context, node domain.Node, credentialHash
 		return err
 	}
 	for _, gpu := range node.GPUs {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO gpus(node_id,uuid,model,vram_bytes,pci_bus_id,driver_version,compute_capability,utilization_basis_points,memory_used_bytes,temperature_celsius) VALUES(?,?,?,?,?,?,?,?,?,?)`, node.ID, gpu.UUID, gpu.Model, gpu.VRAMBytes, gpu.PCIBusID, gpu.DriverVersion, gpu.ComputeCapability, gpu.UtilizationBasisPoints, gpu.MemoryUsedBytes, gpu.TemperatureCelsius); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO gpus(node_id,uuid,model,vram_bytes,pci_bus_id,driver_version,compute_capability,utilization_basis_points,utilization_average_basis_points,utilization_peak_basis_points,utilization_sampled_at,utilization_window_seconds,utilization_sample_count,memory_used_bytes,temperature_celsius) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, node.ID, gpu.UUID, gpu.Model, gpu.VRAMBytes, gpu.PCIBusID, gpu.DriverVersion, gpu.ComputeCapability, gpu.UtilizationBasisPoints, gpu.UtilizationAverageBasisPoints, gpu.UtilizationPeakBasisPoints, optionalTime(gpu.UtilizationSampledAt), gpu.UtilizationWindowSeconds, gpu.UtilizationSampleCount, gpu.MemoryUsedBytes, gpu.TemperatureCelsius); err != nil {
 			return err
 		}
 	}
@@ -476,7 +476,7 @@ func (s *Store) Heartbeat(ctx context.Context, node domain.Node) error {
 		return err
 	}
 	for _, gpu := range node.GPUs {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO gpus(node_id,uuid,model,vram_bytes,pci_bus_id,driver_version,compute_capability,utilization_basis_points,memory_used_bytes,temperature_celsius) VALUES(?,?,?,?,?,?,?,?,?,?)`, node.ID, gpu.UUID, gpu.Model, gpu.VRAMBytes, gpu.PCIBusID, gpu.DriverVersion, gpu.ComputeCapability, gpu.UtilizationBasisPoints, gpu.MemoryUsedBytes, gpu.TemperatureCelsius); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO gpus(node_id,uuid,model,vram_bytes,pci_bus_id,driver_version,compute_capability,utilization_basis_points,utilization_average_basis_points,utilization_peak_basis_points,utilization_sampled_at,utilization_window_seconds,utilization_sample_count,memory_used_bytes,temperature_celsius) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, node.ID, gpu.UUID, gpu.Model, gpu.VRAMBytes, gpu.PCIBusID, gpu.DriverVersion, gpu.ComputeCapability, gpu.UtilizationBasisPoints, gpu.UtilizationAverageBasisPoints, gpu.UtilizationPeakBasisPoints, optionalTime(gpu.UtilizationSampledAt), gpu.UtilizationWindowSeconds, gpu.UtilizationSampleCount, gpu.MemoryUsedBytes, gpu.TemperatureCelsius); err != nil {
 			return err
 		}
 	}
@@ -519,15 +519,22 @@ func (s *Store) ListNodes(ctx context.Context) ([]domain.Node, error) {
 		}
 		node.LastHeartbeat, _ = time.Parse(time.RFC3339Nano, heartbeat)
 		node.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-		gpuRows, err := s.db.QueryContext(ctx, `SELECT uuid,model,vram_bytes,pci_bus_id,driver_version,compute_capability,utilization_basis_points,memory_used_bytes,temperature_celsius FROM gpus WHERE node_id=? ORDER BY uuid`, node.ID)
+		gpuRows, err := s.db.QueryContext(ctx, `SELECT uuid,model,vram_bytes,pci_bus_id,driver_version,compute_capability,utilization_basis_points,utilization_average_basis_points,utilization_peak_basis_points,utilization_sampled_at,utilization_window_seconds,utilization_sample_count,memory_used_bytes,temperature_celsius FROM gpus WHERE node_id=? ORDER BY uuid`, node.ID)
 		if err != nil {
 			return nil, err
 		}
 		for gpuRows.Next() {
 			var gpu domain.GPU
-			if err := gpuRows.Scan(&gpu.UUID, &gpu.Model, &gpu.VRAMBytes, &gpu.PCIBusID, &gpu.DriverVersion, &gpu.ComputeCapability, &gpu.UtilizationBasisPoints, &gpu.MemoryUsedBytes, &gpu.TemperatureCelsius); err != nil {
+			var sampledAt sql.NullString
+			if err := gpuRows.Scan(&gpu.UUID, &gpu.Model, &gpu.VRAMBytes, &gpu.PCIBusID, &gpu.DriverVersion, &gpu.ComputeCapability, &gpu.UtilizationBasisPoints, &gpu.UtilizationAverageBasisPoints, &gpu.UtilizationPeakBasisPoints, &sampledAt, &gpu.UtilizationWindowSeconds, &gpu.UtilizationSampleCount, &gpu.MemoryUsedBytes, &gpu.TemperatureCelsius); err != nil {
 				gpuRows.Close()
 				return nil, err
+			}
+			if sampledAt.Valid && sampledAt.String != "" {
+				value, parseErr := time.Parse(time.RFC3339Nano, sampledAt.String)
+				if parseErr == nil {
+					gpu.UtilizationSampledAt = &value
+				}
 			}
 			node.GPUs = append(node.GPUs, gpu)
 		}
@@ -1104,6 +1111,13 @@ func scanAttempt(row scanner) (domain.JobAttempt, error) {
 }
 
 func formatTime(value time.Time) string { return value.UTC().Format(time.RFC3339Nano) }
+
+func optionalTime(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return formatTime(*value)
+}
 func parseNullTime(value sql.NullString) *time.Time {
 	if !value.Valid {
 		return nil

@@ -138,6 +138,11 @@ func (a *API) getNodeDetail(w http.ResponseWriter, r *http.Request) {
 		detail.Node.GPUs[index].AllocatedJobID = owner.JobID
 		if !owner.CanOpen {
 			detail.Node.GPUs[index].UtilizationBasisPoints = nil
+			detail.Node.GPUs[index].UtilizationAverageBasisPoints = nil
+			detail.Node.GPUs[index].UtilizationPeakBasisPoints = nil
+			detail.Node.GPUs[index].UtilizationSampledAt = nil
+			detail.Node.GPUs[index].UtilizationWindowSeconds = 0
+			detail.Node.GPUs[index].UtilizationSampleCount = 0
 			detail.Node.GPUs[index].MemoryUsedBytes = nil
 			detail.Node.GPUs[index].TemperatureCelsius = nil
 		}

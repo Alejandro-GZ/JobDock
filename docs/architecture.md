@@ -33,6 +33,11 @@ live device data. JobDock deliberately does not collect firmware, board, DIMM,
 disk or network serial identifiers. Older agents remain valid and expose their
 existing aggregate capacity with the extended fields marked unavailable.
 
+Agents advertising `gpu_window_telemetry_v1` sample NVML once per second and
+publish a rolling ten-second GPU-busy average alongside the compatible
+instantaneous reading. The window remains agent-local; only its latest summary
+is persisted with node inventory.
+
 `LOST` means that execution is unknown, not failed. JobDock never starts another attempt automatically. If the original agent returns, Docker labels and the local assignment journal allow it to report the real state.
 
 An explicit rerun moves a terminal job back to `QUEUED` without changing its
