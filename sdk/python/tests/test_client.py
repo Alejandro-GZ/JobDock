@@ -15,6 +15,36 @@ def test_current_job_is_noop_without_environment(monkeypatch):
         current_job(required=True)
 
 
+def test_worker_delivers_rich_observations_once_and_preserves_global_order(tmp_path: Path, monkeypatch):
+    original_run = Job._run
+    monkeypatch.setattr(Job, "_run", lambda self: None)
+    job = Job("id", "http://jobdock.test", "token", tmp_path)
+    sent = []
+    monkeypatch.setattr(job, "_send_with_retry", lambda endpoint, payload: sent.append((endpoint, payload)))
+
+    job.metric("loss", 1.0, step=1)
+    job.metric("accuracy", .5, step=1)
+    job.table(TableObservation("first", [TableColumn("value", "number")], [{"value": 1}]))
+    job.table(TableObservation("second", [TableColumn("value", "number")], [{"value": 2}]))
+    job.metric("loss", .8, step=2)
+    job.distribution(DistributionObservation("train", [1, 2]))
+    job.distribution(DistributionObservation("validation", [3, 4]))
+    job.heatmap("attention-a", [[1.0]])
+    job.heatmap("attention-b", [[2.0]])
+
+    job._closed.set()
+    original_run(job)
+
+    assert [endpoint for endpoint, _ in sent] == [
+        "metrics", "tables", "tables", "metrics",
+        "distributions", "distributions", "matrices", "matrices",
+    ]
+    assert [item["name"] for item in sent[0][1]["items"]] == ["loss", "accuracy"]
+    assert sent[1][1]["name"] == "first" and sent[2][1]["name"] == "second"
+    assert sent[4][1]["name"] == "train" and sent[5][1]["name"] == "validation"
+    assert sent[6][1]["name"] == "attention-a" and sent[7][1]["name"] == "attention-b"
+
+
 def test_progress_validation(tmp_path: Path):
     job = Job("id", "http://127.0.0.1:1", "token", tmp_path)
     with pytest.raises(ValueError):

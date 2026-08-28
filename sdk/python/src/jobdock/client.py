@@ -489,12 +489,19 @@ class Job:
             logger.warning("JobDock telemetry queue is full; dropping %s update", endpoint)
 
     def _run(self) -> None:
-        while not self._closed.is_set() or not self._queue.empty():
-            try:
-                message = self._queue.get(timeout=0.2)
-            except queue.Empty:
-                continue
+        pending: _Message | None = None
+        while pending is not None or not self._closed.is_set() or not self._queue.empty():
+            if pending is not None:
+                message, pending = pending, None
+            else:
+                try:
+                    message = self._queue.get(timeout=0.2)
+                except queue.Empty:
+                    continue
             if message is None:
+                continue
+            if message.endpoint not in {"metrics", "params"}:
+                self._send_with_retry(message.endpoint, message.payload)
                 continue
             batch = [message]
             while len(batch) < 64:
@@ -505,11 +512,11 @@ class Job:
                 if next_message is None:
                     continue
                 if next_message.endpoint != message.endpoint:
-                    self._queue.put_nowait(next_message)
+                    pending = next_message
                     break
                 batch.append(next_message)
             payload = message.payload
-            if message.endpoint in {"metrics", "params"} and len(batch) > 1:
+            if len(batch) > 1:
                 payload = {"items": [item for entry in batch for item in entry.payload["items"]]}
             self._send_with_retry(message.endpoint, payload)
 
