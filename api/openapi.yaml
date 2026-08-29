@@ -1807,6 +1807,7 @@ components:
           maxItems: 32
           uniqueItems: true
           items: {type: string, minLength: 1, maxLength: 256}
+        theme: {type: string, enum: [light, dark], default: light, description: Captured JobDock UI theme used by the offline report.}
     DashboardUpdate:
       type: object
       additionalProperties: false

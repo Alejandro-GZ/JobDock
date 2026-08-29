@@ -26,11 +26,13 @@ const (
 	dashboardReportLogBytes      = 1 << 20
 	dashboardReportSeriesLimit   = 2000
 	dashboardReportTableLimit    = 500
+	dashboardReportOrderBytes    = 8 << 20
 )
 
 type dashboardReportRequest struct {
 	AttemptID    string   `json:"attempt_id"`
 	DashboardIDs []string `json:"dashboard_ids"`
+	Theme        string   `json:"theme,omitempty"`
 }
 
 type dashboardReportWarning struct {
@@ -44,9 +46,15 @@ type dashboardReportWarning struct {
 type dashboardReportDashboard struct {
 	ID            string          `json:"id"`
 	Name          string          `json:"name"`
+	IsDefault     bool            `json:"is_default"`
 	SchemaVersion int             `json:"schema_version"`
 	Config        dashboardConfig `json:"config"`
 	UpdatedAt     time.Time       `json:"updated_at"`
+}
+
+type dashboardReportLogFragment struct {
+	Stream string `json:"stream"`
+	Text   string `json:"text"`
 }
 
 type dashboardReportJob struct {
@@ -75,6 +83,7 @@ type dashboardReportSources struct {
 	Distributions map[string][]distributionView       `json:"distributions"`
 	Tables        map[string]domain.TablePage         `json:"tables"`
 	Logs          map[string]string                   `json:"logs"`
+	LogFragments  []dashboardReportLogFragment        `json:"log_fragments"`
 	Progress      *domain.ProgressState               `json:"progress,omitempty"`
 	Checkpoints   []domain.CheckpointSync             `json:"checkpoints"`
 }
@@ -83,6 +92,7 @@ type dashboardReportManifest struct {
 	SchemaVersion  int                        `json:"schema_version"`
 	JobDockVersion string                     `json:"jobdock_version"`
 	GeneratedAt    time.Time                  `json:"generated_at"`
+	Theme          string                     `json:"theme"`
 	Job            dashboardReportJob         `json:"job"`
 	Attempt        dashboardReportAttempt     `json:"attempt"`
 	Dashboards     []dashboardReportDashboard `json:"dashboards"`
@@ -105,6 +115,14 @@ func (a *API) createDashboardReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.AttemptID = strings.TrimSpace(body.AttemptID)
+	body.Theme = strings.ToLower(strings.TrimSpace(body.Theme))
+	if body.Theme == "" {
+		body.Theme = "light"
+	}
+	if body.Theme != "light" && body.Theme != "dark" {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard_report", "Theme must be light or dark")
+		return
+	}
 	if body.AttemptID == "" || len(body.DashboardIDs) == 0 || len(body.DashboardIDs) > 32 {
 		writeProblem(w, http.StatusUnprocessableEntity, "invalid_dashboard_report", "An attempt and between 1 and 32 dashboards are required")
 		return
@@ -125,7 +143,7 @@ func (a *API) createDashboardReport(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	manifest, err := a.buildDashboardReport(ctx, currentUser(r).ID, job, attempt, body.DashboardIDs, time.Now().UTC())
+	manifest, err := a.buildDashboardReport(ctx, currentUser(r).ID, job, attempt, body.DashboardIDs, body.Theme, time.Now().UTC())
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -155,11 +173,11 @@ func (a *API) createDashboardReport(w http.ResponseWriter, r *http.Request) {
 	_ = a.store.Audit(r.Context(), currentUser(r).ID, "dashboard.report.export", "job", job.ID, map[string]any{"attempt_id": attempt.ID, "dashboard_ids": body.DashboardIDs, "warning_count": len(manifest.Warnings)})
 }
 
-func (a *API) buildDashboardReport(ctx context.Context, userID string, job domain.Job, attempt domain.JobAttempt, dashboardIDs []string, generatedAt time.Time) (dashboardReportManifest, error) {
-	manifest := dashboardReportManifest{SchemaVersion: dashboardReportSchemaVersion, JobDockVersion: a.version, GeneratedAt: generatedAt,
+func (a *API) buildDashboardReport(ctx context.Context, userID string, job domain.Job, attempt domain.JobAttempt, dashboardIDs []string, theme string, generatedAt time.Time) (dashboardReportManifest, error) {
+	manifest := dashboardReportManifest{SchemaVersion: dashboardReportSchemaVersion, JobDockVersion: a.version, GeneratedAt: generatedAt, Theme: theme,
 		Job:        dashboardReportJob{ID: job.ID, Name: job.Spec.Name, Status: job.Status, CreatedAt: job.CreatedAt, StartedAt: job.StartedAt, FinishedAt: job.FinishedAt},
 		Attempt:    dashboardReportAttempt{ID: attempt.ID, AttemptNumber: attempt.AttemptNumber, Status: attempt.Status, ExitCode: attempt.ExitCode, CreatedAt: attempt.CreatedAt, StartedAt: attempt.StartedAt, FinishedAt: attempt.FinishedAt},
-		Dashboards: []dashboardReportDashboard{}, Warnings: []dashboardReportWarning{}, Sources: dashboardReportSources{Metrics: []domain.MetricSeries{}, Resources: []domain.ResourceSample{}, Matrices: map[string]domain.MatrixObservation{}, Distributions: map[string][]distributionView{}, Tables: map[string]domain.TablePage{}, Logs: map[string]string{}, Checkpoints: []domain.CheckpointSync{}}}
+		Dashboards: []dashboardReportDashboard{}, Warnings: []dashboardReportWarning{}, Sources: dashboardReportSources{Metrics: []domain.MetricSeries{}, Resources: []domain.ResourceSample{}, Matrices: map[string]domain.MatrixObservation{}, Distributions: map[string][]distributionView{}, Tables: map[string]domain.TablePage{}, Logs: map[string]string{}, LogFragments: []dashboardReportLogFragment{}, Checkpoints: []domain.CheckpointSync{}}}
 	sources := reportSourceSet{metrics: map[string]bool{}, matrices: map[string]bool{}, distributions: map[string]bool{}, tables: map[string]bool{}, logs: map[string]bool{}}
 	for _, dashboardID := range dashboardIDs {
 		item, err := a.store.Dashboard(ctx, userID, job.ID, dashboardID)
@@ -173,7 +191,7 @@ func (a *API) buildDashboardReport(ctx context.Context, userID string, job domai
 		if err = json.Unmarshal(item.ConfigJSON, &config); err != nil {
 			return manifest, err
 		}
-		manifest.Dashboards = append(manifest.Dashboards, dashboardReportDashboard{ID: item.ID, Name: item.Name, SchemaVersion: item.SchemaVersion, Config: config, UpdatedAt: item.UpdatedAt})
+		manifest.Dashboards = append(manifest.Dashboards, dashboardReportDashboard{ID: item.ID, Name: item.Name, IsDefault: item.IsDefault, SchemaVersion: item.SchemaVersion, Config: config, UpdatedAt: item.UpdatedAt})
 		collectReportSources(config.Widgets, &sources)
 	}
 	from, to := attempt.CreatedAt.UTC(), generatedAt
@@ -198,7 +216,7 @@ func (a *API) buildDashboardReport(ctx context.Context, userID string, job domai
 			return manifest, err
 		}
 		for index := range manifest.Sources.Metrics {
-			manifest.Sources.Metrics[index].Metadata = nil
+			manifest.Sources.Metrics[index].Metadata = sanitizeReportRecord(manifest.Sources.Metrics[index].Metadata)
 			series := manifest.Sources.Metrics[index]
 			if series.SampleCount > int64(len(series.Points)) {
 				manifest.Warnings = append(manifest.Warnings, reportWarning("series_downsampled", "Metric series was downsampled for offline export", "metric:"+series.Name))
@@ -225,7 +243,7 @@ func (a *API) buildDashboardReport(ctx context.Context, userID string, job domai
 			continue
 		}
 		resolved := resolveMatrixResolution(items[0], "auto")
-		resolved.Metadata = nil
+		resolved.Metadata = sanitizeReportRecord(resolved.Metadata)
 		manifest.Sources.Matrices[name] = resolved
 		if resolved.Resolution != nil && resolved.Resolution.Mode == "aggregated" {
 			manifest.Warnings = append(manifest.Warnings, reportWarning("matrix_aggregated", "Matrix was aggregated to at most 64 x 64 cells", "matrix:"+name))
@@ -243,7 +261,7 @@ func (a *API) buildDashboardReport(ctx context.Context, userID string, job domai
 			}
 			latest[item.Group] = true
 			view := buildDistributionView(item, 0)
-			view.Metadata = nil
+			view.Metadata = sanitizeReportRecord(view.Metadata)
 			manifest.Sources.Distributions[name] = append(manifest.Sources.Distributions[name], view)
 		}
 		if len(items) == 512 {
@@ -259,7 +277,7 @@ func (a *API) buildDashboardReport(ctx context.Context, userID string, job domai
 			}
 			return manifest, queryErr
 		}
-		page.Metadata = nil
+		page.Metadata = sanitizeReportRecord(page.Metadata)
 		for index := range page.Items {
 			page.Items[index].Values = sanitizeReportRecord(page.Items[index].Values)
 		}
@@ -268,6 +286,7 @@ func (a *API) buildDashboardReport(ctx context.Context, userID string, job domai
 			manifest.Warnings = append(manifest.Warnings, reportWarning("table_sampled", "Table was sampled to 500 rows for offline export", "table:"+name))
 		}
 	}
+	logStarts := map[string]int64{}
 	for stream := range sources.logs {
 		size, sizeErr := a.files.AttemptLogSize(job.ID, attempt.ID, stream)
 		if sizeErr != nil {
@@ -279,11 +298,20 @@ func (a *API) buildDashboardReport(ctx context.Context, userID string, job domai
 			offset = size - dashboardReportLogBytes
 			manifest.Warnings = append(manifest.Warnings, reportWarning("log_truncated", "Log stream contains only the final 1 MiB", "log:"+stream))
 		}
+		logStarts[stream] = offset
 		data, _, readErr := a.files.ReadAttemptLogChunk(job.ID, attempt.ID, stream, offset, dashboardReportLogBytes)
 		if readErr != nil {
 			return manifest, readErr
 		}
 		manifest.Sources.Logs[stream] = string(data)
+	}
+	manifest.Sources.LogFragments = a.dashboardReportOrderedLogs(job.ID, attempt.ID, sources.logs, manifest.Sources.Logs, logStarts)
+	if len(manifest.Sources.LogFragments) == 0 {
+		for _, stream := range []string{"stdout", "stderr"} {
+			if value, exists := manifest.Sources.Logs[stream]; exists && value != "" {
+				manifest.Sources.LogFragments = append(manifest.Sources.LogFragments, dashboardReportLogFragment{Stream: stream, Text: value})
+			}
+		}
 	}
 	if sources.progress {
 		state, queryErr := a.store.ProgressState(ctx, job.ID, attempt.ID)
@@ -291,13 +319,13 @@ func (a *API) buildDashboardReport(ctx context.Context, userID string, job domai
 			return manifest, queryErr
 		}
 		if state.Simple != nil {
-			state.Simple.Metadata = nil
+			state.Simple.Metadata = sanitizeReportRecord(state.Simple.Metadata)
 		}
 		if state.Current != nil {
-			state.Current.Metadata = nil
+			state.Current.Metadata = sanitizeReportRecord(state.Current.Metadata)
 		}
 		for index := range state.Milestones {
-			state.Milestones[index].Metadata = nil
+			state.Milestones[index].Metadata = sanitizeReportRecord(state.Milestones[index].Metadata)
 		}
 		manifest.Sources.Progress = &state
 	}
@@ -307,7 +335,7 @@ func (a *API) buildDashboardReport(ctx context.Context, userID string, job domai
 			return manifest, err
 		}
 		for index := range manifest.Sources.Checkpoints {
-			manifest.Sources.Checkpoints[index].Metadata = nil
+			manifest.Sources.Checkpoints[index].Metadata = sanitizeReportRecord(manifest.Sources.Checkpoints[index].Metadata)
 		}
 	}
 	return manifest, nil
@@ -316,30 +344,82 @@ func (a *API) buildDashboardReport(ctx context.Context, userID string, job domai
 var reportSensitiveKeyPattern = regexp.MustCompile(`(?i)(authorization|cookie|credential|password|passwd|secret|token|api[_-]?key)`)
 
 func sanitizeReportRecord(record map[string]any) map[string]any {
+	if record == nil {
+		return nil
+	}
 	result := make(map[string]any, len(record))
 	for key, value := range record {
 		if reportSensitiveKeyPattern.MatchString(key) {
 			result[key] = "[REDACTED]"
 			continue
 		}
-		switch typed := value.(type) {
-		case map[string]any:
-			result[key] = sanitizeReportRecord(typed)
-		case []any:
-			items := make([]any, len(typed))
-			for index, item := range typed {
-				if nested, ok := item.(map[string]any); ok {
-					items[index] = sanitizeReportRecord(nested)
-				} else {
-					items[index] = item
-				}
-			}
-			result[key] = items
-		default:
-			result[key] = value
-		}
+		result[key] = sanitizeReportValue(value)
 	}
 	return result
+}
+
+func sanitizeReportValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return sanitizeReportRecord(typed)
+	case []any:
+		items := make([]any, len(typed))
+		for index, item := range typed {
+			items[index] = sanitizeReportValue(item)
+		}
+		return items
+	default:
+		return value
+	}
+}
+
+func (a *API) dashboardReportOrderedLogs(jobID, attemptID string, selected map[string]bool, logs map[string]string, starts map[string]int64) []dashboardReportLogFragment {
+	exists, err := a.files.AttemptLogExists(jobID, attemptID, ".order")
+	if err != nil || !exists {
+		return nil
+	}
+	size, err := a.files.AttemptLogSize(jobID, attemptID, ".order")
+	if err != nil || size == 0 {
+		return nil
+	}
+	offset := size - dashboardReportOrderBytes
+	if offset < 0 {
+		offset = 0
+	}
+	data, _, err := a.files.ReadAttemptLogChunk(jobID, attemptID, ".order", offset, dashboardReportOrderBytes)
+	if err != nil {
+		return nil
+	}
+	if offset > 0 {
+		if newline := strings.IndexByte(string(data), '\n'); newline >= 0 {
+			data = data[newline+1:]
+		} else {
+			return nil
+		}
+	}
+	fragments := make([]dashboardReportLogFragment, 0)
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var order combinedLogOrder
+		if json.Unmarshal([]byte(line), &order) != nil || !selected[order.Stream] || order.NextOffset <= order.StartOffset {
+			continue
+		}
+		streamStart, ok := starts[order.Stream]
+		if !ok {
+			continue
+		}
+		streamData := []byte(logs[order.Stream])
+		start := max(order.StartOffset, streamStart)
+		end := min(order.NextOffset, streamStart+int64(len(streamData)))
+		if end <= start {
+			continue
+		}
+		from, to := start-streamStart, end-streamStart
+		fragments = append(fragments, dashboardReportLogFragment{Stream: order.Stream, Text: string(streamData[from:to])})
+	}
+	return fragments
 }
 
 func collectReportSources(widgets []dashboardWidget, target *reportSourceSet) {
@@ -405,7 +485,11 @@ func renderDashboardReport(manifest dashboardReportManifest, runtime, stylesheet
 	hash := sha256.Sum256([]byte(safeRuntime))
 	csp := fmt.Sprintf("default-src 'none'; script-src 'sha256-%s'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; form-action 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'", base64.StdEncoding.EncodeToString(hash[:]))
 	title := html.EscapeString(manifest.Job.Name + " - JobDock report")
-	document := "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"" + html.EscapeString(csp) + "\"><title>" + title + "</title><style>" + strings.ReplaceAll(stylesheet, "</style", "<\\/style") + "</style></head><body><div id=\"root\"></div><script id=\"jobdock-report-data\" type=\"application/json\">" + encoded + "</script><script>" + safeRuntime + "</script></body></html>"
+	htmlClass := ""
+	if manifest.Theme == "dark" {
+		htmlClass = ` class="dark"`
+	}
+	document := "<!doctype html><html lang=\"en\"" + htmlClass + "><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"jobdock-report-schema\" content=\"" + fmt.Sprint(manifest.SchemaVersion) + "\"><meta name=\"jobdock-job-id\" content=\"" + html.EscapeString(manifest.Job.ID) + "\"><meta name=\"jobdock-attempt-id\" content=\"" + html.EscapeString(manifest.Attempt.ID) + "\"><meta name=\"jobdock-generated-at\" content=\"" + html.EscapeString(manifest.GeneratedAt.Format(time.RFC3339Nano)) + "\"><meta http-equiv=\"Content-Security-Policy\" content=\"" + html.EscapeString(csp) + "\"><title>" + title + "</title><style>" + strings.ReplaceAll(stylesheet, "</style", "<\\/style") + "</style></head><body><div id=\"root\"></div><script id=\"jobdock-report-data\" type=\"application/json\">" + encoded + "</script><script>" + safeRuntime + "</script></body></html>"
 	return []byte(document), nil
 }
 

@@ -46,6 +46,7 @@ func TestRenderDashboardReportIsSelfContainedAndEscapesJobData(t *testing.T) {
 		SchemaVersion:  dashboardReportSchemaVersion,
 		JobDockVersion: "v0.1.0",
 		GeneratedAt:    time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC),
+		Theme:          "dark",
 		Job:            dashboardReportJob{ID: "job-1", Name: malicious},
 		Attempt:        dashboardReportAttempt{ID: "attempt-1", AttemptNumber: 1},
 		Dashboards:     []dashboardReportDashboard{{ID: "dashboard-1", Name: malicious, SchemaVersion: 1, Config: dashboardConfig{Widgets: []dashboardWidget{}}}},
@@ -64,6 +65,9 @@ func TestRenderDashboardReportIsSelfContainedAndEscapesJobData(t *testing.T) {
 		if !strings.Contains(text, expected) {
 			t.Errorf("report missing %q", expected)
 		}
+	}
+	if !strings.Contains(text, `<html lang="en" class="dark">`) || !strings.Contains(text, `name="jobdock-attempt-id" content="attempt-1"`) {
+		t.Fatal("report omitted the captured theme or trace metadata")
 	}
 	match := regexp.MustCompile(`<script id="jobdock-report-data" type="application/json">([^<]+)</script>`).FindStringSubmatch(text)
 	if len(match) != 2 {
@@ -97,6 +101,36 @@ func TestSanitizeReportRecordRedactsCredentialFields(t *testing.T) {
 	result := sanitizeReportRecord(map[string]any{"score": .9, "api_key": "plain", "nested": map[string]any{"accessToken": "plain", "label": "safe"}})
 	if result["api_key"] != "[REDACTED]" || result["nested"].(map[string]any)["accessToken"] != "[REDACTED]" || result["nested"].(map[string]any)["label"] != "safe" {
 		t.Fatalf("unexpected sanitized record: %#v", result)
+	}
+}
+
+func TestDashboardReportOrderedLogsPreservesCombinedStreamOrder(t *testing.T) {
+	files, err := filestore.New(t.TempDir(), 1<<20, 1<<20, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobID, attemptID := ids.New(), ids.New()
+	stdout, stderr := "one\nthree\n", "two\n"
+	if _, err = files.AppendAttemptLog(jobID, attemptID, "stdout", 0, strings.NewReader(stdout)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = files.AppendAttemptLog(jobID, attemptID, "stderr", 0, strings.NewReader(stderr)); err != nil {
+		t.Fatal(err)
+	}
+	orders := []combinedLogOrder{{Sequence: 1, Stream: "stdout", StartOffset: 0, NextOffset: 4}, {Sequence: 2, Stream: "stderr", StartOffset: 0, NextOffset: 4}, {Sequence: 3, Stream: "stdout", StartOffset: 4, NextOffset: int64(len(stdout))}}
+	var encoded bytes.Buffer
+	for _, order := range orders {
+		line, _ := json.Marshal(order)
+		encoded.Write(line)
+		encoded.WriteByte('\n')
+	}
+	if _, err = files.AppendAttemptLog(jobID, attemptID, ".order", 0, &encoded); err != nil {
+		t.Fatal(err)
+	}
+	api := &API{files: files}
+	fragments := api.dashboardReportOrderedLogs(jobID, attemptID, map[string]bool{"stdout": true, "stderr": true}, map[string]string{"stdout": stdout, "stderr": stderr}, map[string]int64{"stdout": 0, "stderr": 0})
+	if len(fragments) != 3 || fragments[0].Stream != "stdout" || fragments[0].Text != "one\n" || fragments[1].Stream != "stderr" || fragments[1].Text != "two\n" || fragments[2].Stream != "stdout" || fragments[2].Text != "three\n" {
+		t.Fatalf("unexpected ordered log fragments: %#v", fragments)
 	}
 }
 
