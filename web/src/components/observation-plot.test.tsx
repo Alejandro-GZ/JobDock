@@ -81,9 +81,21 @@ describe("ObservationPlot",()=>{
     const {container}=render(<ObservationPlot type="stacked_bar" title="Composition" series={[loss,shifted]} xAxis="step"/>);
     const plot=screen.getByRole("img",{name:/Composition stacked_bar with 4 points/i});
     expect(plot.getAttribute("data-missing-values")).toBe("zero");
-    expect(container.querySelectorAll("rect")).toHaveLength(6);
+    expect(container.querySelectorAll("[data-bar-mark]")).toHaveLength(6);
     fireEvent.pointerMove(plot,{clientX:720,clientY:100});
     expect(screen.getByText(/loss: 0 \(missing\)/i)).toBeTruthy();
+  });
+  it.each(["barplot","stacked_bar"] as const)("keeps the first and last %s marks inside the vertical axes",async type=>{
+    vi.spyOn(HTMLElement.prototype,"getBoundingClientRect").mockReturnValue({width:360,height:180,top:0,left:0,right:360,bottom:180,x:0,y:0,toJSON:()=>({})});
+    vi.stubGlobal("ResizeObserver",class{constructor(private callback:ResizeObserverCallback){}observe(){this.callback([],this as unknown as ResizeObserver)}disconnect(){}unobserve(){}});
+    const second={...duration,unit:"ratio"};
+    const {container}=render(<ObservationPlot type={type} title="Bounded bars" series={[loss,second]} xAxis="step"/>);
+    const plot=screen.getByRole("img",{name:new RegExp(`Bounded bars ${type}`)});
+    await waitFor(()=>expect(plot.getAttribute("width")).toBe("360"));
+    const marks=[...container.querySelectorAll<SVGRectElement>("[data-bar-mark]")];
+    expect(marks.length).toBeGreaterThan(0);
+    for(const mark of marks){const x=Number(mark.getAttribute("x")),width=Number(mark.getAttribute("width"));expect(x).toBeGreaterThanOrEqual(58);expect(x+width).toBeLessThanOrEqual(342)}
+    expect(container.querySelector("[data-plot-marks]")?.getAttribute("clip-path")).toMatch(/^url\(#.+\)$/);
   });
   it("rejects stacked series with incompatible units",()=>{
     render(<ObservationPlot type="stacked_bar" series={[loss,duration]} xAxis="step"/>);
