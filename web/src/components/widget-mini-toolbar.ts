@@ -1,0 +1,1 @@
+export const widgetMiniToolbarClassName = "pointer-events-none absolute bottom-1 left-1/2 z-20 flex -translate-x-1/2 items-center rounded-md border bg-card/90 p-0.5 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100";

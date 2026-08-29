@@ -2,10 +2,11 @@ import {useState} from "react";
 import {List,RotateCcw,ZoomIn,ZoomOut} from "lucide-react";
 import {Button} from "@/components/ui/button";
 import type {PlotSeries} from "@/components/observation-plot";
+import {widgetMiniToolbarClassName} from "@/components/widget-mini-toolbar";
 
 export function PlotToolbar({label,series,colors,mixedUnits,legend="auto",onZoomIn,onZoomOut,onReset}:{label:string;series:PlotSeries[];colors:Map<string,string>;mixedUnits:boolean;legend?:"auto"|"hidden"|"open";onZoomIn:()=>void;onZoomOut:()=>void;onReset:()=>void}){
   const [legendOpen,setLegendOpen]=useState(legend==="open");
-  return <div data-plot-toolbar className="pointer-events-none absolute bottom-1 left-1/2 z-20 flex -translate-x-1/2 items-center rounded-md border bg-card/90 p-0.5 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+  return <div data-plot-toolbar className={widgetMiniToolbarClassName}>
     <Button type="button" variant="ghost" size="icon" className="size-6" aria-label={`Zoom in ${label}`} onClick={onZoomIn}><ZoomIn className="size-3"/></Button>
     <Button type="button" variant="ghost" size="icon" className="size-6" aria-label={`Zoom out ${label}`} onClick={onZoomOut}><ZoomOut className="size-3"/></Button>
     <Button type="button" variant="ghost" size="icon" className="size-6" aria-label={`Reset zoom ${label}`} onClick={onReset}><RotateCcw className="size-3"/></Button>

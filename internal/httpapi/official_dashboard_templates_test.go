@@ -65,6 +65,12 @@ func TestOfficialDashboardTemplateCatalogIsDiverseValidAndFrameworkNeutral(t *te
 		}
 		definition := strings.ToLower(template.ID + " " + template.Name + " " + template.Description)
 		for _, widget := range template.Widgets {
+			if widget.Type == "heatmap" || widget.Type == "correlation_heatmap" || widget.Type == "confusion_matrix" {
+				editorSize := fmt.Sprintf("%dx%d", widget.Size.Rows, widget.Size.Columns)
+				if editorSize != "5x3" && editorSize != "10x6" && editorSize != "12x7" {
+					t.Fatalf("template %s matrix %s has an unreadable editor footprint %dx%d", template.ID, widget.ID, widget.Size.Rows, widget.Size.Columns)
+				}
+			}
 			for _, slot := range widget.Slots {
 				for _, tag := range append(append([]string{}, slot.RequiredTags...), slot.OptionalTags...) {
 					if !standard[tag] {
@@ -98,6 +104,59 @@ func TestOfficialDashboardTemplateCatalogIsDiverseValidAndFrameworkNeutral(t *te
 	}
 	if len(layouts) < 12 {
 		t.Fatalf("layout signatures=%d want at least 12", len(layouts))
+	}
+}
+
+func TestLiveMonitoringTemplatesIncludeAgentResourceTelemetry(t *testing.T) {
+	for _, id := range []string{"training-general", "data-pipeline", "language-model-pretraining", "llm-fine-tuning", "policy-optimization", "hpo-single-objective"} {
+		template := officialTemplateByID(id)
+		found := false
+		for _, widget := range template.Widgets {
+			if widget.ID == "resource-telemetry" && widget.Type == "lineplot" && len(widget.Slots) == 1 && len(widget.Slots[0].SourceTypes) == 1 && widget.Slots[0].SourceTypes[0] == "resource" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("live template %s does not expose agent resource telemetry", id)
+		}
+	}
+	resolution := resolveDashboardTemplate(officialTemplateByID("training-general"), []observableSource{
+		{Kind: "metric", Name: "loss", Tags: []string{"metric:loss", "phase:train"}},
+		{Kind: "resource", Name: "cpu", Unit: "cores"}, {Kind: "resource", Name: "memory", Unit: "GiB"},
+		{Kind: "resource", Name: "gpu-utilization", Unit: "%"}, {Kind: "resource", Name: "gpu-memory", Unit: "GiB"},
+	})
+	found := false
+	for _, widget := range resolution.Widgets {
+		if widget.ID == "resource-telemetry" {
+			found = len(widget.Sources) == 4 && widget.Sources[0].Name == "cpu" && widget.Sources[3].Name == "memory"
+		}
+	}
+	if !found {
+		t.Fatalf("resource telemetry was not deterministically materialized: %#v", resolution.Widgets)
+	}
+}
+
+func TestCategoricalTemplateDoesNotDuplicatePieAndDonut(t *testing.T) {
+	template := officialTemplateByID("categorical-composition")
+	if len(template.Widgets) != 2 || template.Widgets[0].Type != "donut_chart" || template.Widgets[1].Type != "data_grid" {
+		t.Fatalf("categorical composition must combine a chart and records: %#v", template.Widgets)
+	}
+}
+
+func TestTemplateFamiliesDoNotRepeatTheSameRendererCompositionExcessively(t *testing.T) {
+	profiles := map[string][]string{}
+	for _, template := range officialDashboardTemplates() {
+		parts := make([]string, 0, len(template.Widgets))
+		for _, widget := range template.Widgets {
+			parts = append(parts, widget.Type)
+		}
+		profile := template.Category + ":" + strings.Join(parts, ",")
+		profiles[profile] = append(profiles[profile], template.ID)
+	}
+	for profile, ids := range profiles {
+		if len(ids) > 3 {
+			t.Fatalf("template renderer profile %s is repeated by %v", profile, ids)
+		}
 	}
 }
 

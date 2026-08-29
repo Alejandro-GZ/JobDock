@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import {QueryClient,QueryClientProvider} from "@tanstack/react-query";
-import {render,screen,waitFor} from "@testing-library/react";
+import {fireEvent,render,screen,waitFor} from "@testing-library/react";
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import {api} from "@/api";
 import {DataGridWidget} from "@/components/data-grid-widget";
@@ -51,8 +51,23 @@ describe("tabular observability widgets",()=>{
     const widget:DashboardWidget={id:"bubble",type:"bubble_chart",size:{columns:6,rows:4},position:{x:0,y:0},sources:[{kind:"table",name:"observations"}],table_columns:["x","y","size","label"]};
     view(<TabularChartWidget jobID="job" attemptID="attempt" widget={widget} onUpdate={()=>{}}/>);
     expect(await screen.findByLabelText("Bubble Chart")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button",{name:"Bubble Chart settings"}));
     expect(screen.getByLabelText("Color or group")).toBeTruthy();
     expect(api.table).toHaveBeenCalledTimes(1);
+  });
+
+  it("provides a shared mini-toolbar and an explicit legend for pie and donut charts",async()=>{
+    vi.mocked(api.table).mockResolvedValue({...page,columns:[{name:"label",type:"string"},{name:"value",type:"number"}],items:[{cursor:1,timestamp:"2026-08-24T12:00:00Z",values:{label:"Train",value:75}},{cursor:2,timestamp:"2026-08-24T12:00:01Z",values:{label:"Validation",value:25}}]});
+    const widget:DashboardWidget={id:"donut",type:"donut_chart",size:{columns:5,rows:3},position:{x:0,y:0},sources:[{kind:"table",name:"observations"}],table_columns:["label","value"]};
+    view(<TabularChartWidget jobID="job" attemptID="attempt" widget={widget} onUpdate={()=>{}}/>);
+    expect(await screen.findByLabelText("Donut Chart")).toBeTruthy();
+    const toolbar=document.querySelector<HTMLElement>("[data-widget-toolbar]");
+    expect(toolbar?.className).toContain("bottom-1");
+    fireEvent.click(screen.getByRole("button",{name:"Donut Chart legend"}));
+    expect(screen.getByText("Train")).toBeTruthy();
+    expect(screen.getByText("75 · 75.0%")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button",{name:"Donut Chart settings"}));
+    expect(screen.getByLabelText("Category limit")).toBeTruthy();
   });
 
   it("keeps embedding scatter geometry square inside a wide tile",async()=>{

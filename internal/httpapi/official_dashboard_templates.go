@@ -182,9 +182,9 @@ func multivariateTemplate() dashboardTemplate {
 
 func categoricalSnapshotTemplate() dashboardTemplate {
 	slot := dashboardTemplateSlot{ID: "table", RequiredTags: []string{"table:categorical"}, SourceTypes: []string{"table"}, Cardinality: dashboardTemplateCardinality{Min: 1, Max: 1}, OnMissing: "error", OnAmbiguous: "error"}
-	return dashboardTemplate{ID: "categorical-composition", Name: "Categorical composition", Description: "Inspect a bounded categorical snapshot with explicit grouping of small categories.", Category: "general", SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{
-		officialWidget("pie", "pie_chart", 6, 6, 0, 0, slot),
-		officialWidget("donut", "donut_chart", 6, 6, 6, 0, slot),
+	return dashboardTemplate{ID: "categorical-composition", Name: "Categorical composition", Description: "Compare categorical proportions with their bounded source records without duplicating the same chart.", Category: "general", SchemaVersion: dashboardTemplateSchemaVersion, Version: 2, Widgets: []dashboardTemplateWidget{
+		officialWidget("composition", "donut_chart", 5, 6, 0, 0, slot),
+		officialWidget("records", "data_grid", 7, 6, 5, 0, slot),
 	}}
 }
 
@@ -199,8 +199,8 @@ func matrixTemplate(id, name, description, category, widgetType, tag string) das
 	if widgetType == "correlation_heatmap" {
 		palette = "diverging"
 	}
-	return dashboardTemplate{ID: id, Name: name, Description: description, Category: category, SchemaVersion: dashboardTemplateSchemaVersion, Version: 1, Widgets: []dashboardTemplateWidget{{
-		ID: "matrix", Type: widgetType, Size: dashboardWidgetSize{Columns: 12, Rows: 8}, Position: dashboardWidgetPosition{X: 0, Y: 0}, Slots: []dashboardTemplateSlot{slot}, GridColumns: 12,
+	return dashboardTemplate{ID: id, Name: name, Description: description, Category: category, SchemaVersion: dashboardTemplateSchemaVersion, Version: 2, Widgets: []dashboardTemplateWidget{{
+		ID: "matrix", Type: widgetType, Size: dashboardWidgetSize{Columns: 7, Rows: 12}, Position: dashboardWidgetPosition{X: 0, Y: 0}, Slots: []dashboardTemplateSlot{slot}, GridColumns: 12,
 		Appearance: &dashboardWidgetAppearance{SchemaVersion: 1, HeatmapScale: "auto", HeatmapPalette: palette},
 	}}}
 }
@@ -244,9 +244,9 @@ func classificationDashboardTemplate() dashboardTemplate {
 func regressionDashboardTemplate() dashboardTemplate { return officialTemplateByID("regression") }
 
 func buildOfficialTemplate(spec officialTemplateSpec, index int) dashboardTemplate {
-	version := 2
+	version := 3
 	if spec.ID == "training-general" || spec.ID == "classification" || spec.ID == "regression" {
-		version = 3
+		version = 4
 	}
 	primaryType := map[string]string{"line": "lineplot", "bar": "barplot", "scatter": "scatterplot"}[spec.Style]
 	primarySlots := []dashboardTemplateSlot{officialMetricSlot("primary", spec.Primary, spec.Phase, 1, "error")}
@@ -271,8 +271,18 @@ func buildOfficialTemplate(spec officialTemplateSpec, index int) dashboardTempla
 		if index%3 == 1 {
 			width = 12
 		}
-		widget := officialWidget("supporting", "lineplot", width, 4, 0, 4, slots...)
-		widget.Appearance = officialPlotAppearance("line", spec.Category)
+		supportingType := "lineplot"
+		// Evaluation dashboards emphasize a compact cross-metric snapshot instead
+		// of repeating another temporal plot with the same shape as training views.
+		if spec.Phase == "evaluation" && spec.Style == "bar" && len(slots) >= 3 {
+			supportingType = "starplot"
+		}
+		widget := officialWidget("supporting", supportingType, width, 4, 0, 4, slots...)
+		if supportingType == "starplot" {
+			widget.Appearance = &dashboardWidgetAppearance{SchemaVersion: 1, ColorScheme: "warm", Legend: "auto"}
+		} else {
+			widget.Appearance = officialPlotAppearance("line", spec.Category)
+		}
 		widgets = append(widgets, widget)
 	}
 	if spec.Gauge {
@@ -280,19 +290,44 @@ func buildOfficialTemplate(spec officialTemplateSpec, index int) dashboardTempla
 	}
 	bottomX := 0
 	if spec.Matrix {
-		widget := officialWidget("matrix", "confusion_matrix", 6, 4, 0, 8, officialOptionalSlot("matrix", "matrix", 1))
+		widget := officialWidget("matrix", "confusion_matrix", 3, 5, 0, 8, officialOptionalSlot("matrix", "matrix", 1))
 		widget.Appearance = &dashboardWidgetAppearance{SchemaVersion: 1, MatrixMode: "normalized"}
 		widgets = append(widgets, widget)
-		bottomX = 6
+		bottomX = 3
 	}
 	if spec.Progress {
-		widgets = append(widgets, officialWidget("progress", "progress", 6, 4, bottomX, 8, officialOptionalSlot("progress", "progress", 1)))
-		bottomX += 6
+		columns := 6
+		rows := 4
+		if spec.Matrix {
+			columns, rows = 9, 5
+		}
+		widgets = append(widgets, officialWidget("progress", "progress", columns, rows, bottomX, 8, officialOptionalSlot("progress", "progress", 1)))
+		bottomX += columns
 	}
 	if spec.Logs && bottomX < 12 {
 		widgets = append(widgets, officialWidget("logs", "logs", 12-bottomX, 4, bottomX, 8, officialOptionalSlot("logs", "log", 2)))
 	}
-	return dashboardTemplate{ID: spec.ID, Name: spec.Name, Description: spec.Description, Category: spec.Category, SchemaVersion: dashboardTemplateSchemaVersion, Version: version, Widgets: widgets}
+	if liveMonitoringTemplate(spec) {
+		resources := dashboardTemplateSlot{ID: "resources", SourceTypes: []string{"resource"}, Cardinality: dashboardTemplateCardinality{Min: 0, Max: 4}, OnMissing: "omit_widget", OnAmbiguous: "omit_widget"}
+		widget := officialWidget("resource-telemetry", "lineplot", 12, 4, 0, 12, resources)
+		widget.XAxis = "time"
+		widget.Appearance = &dashboardWidgetAppearance{SchemaVersion: 1, ColorScheme: "warm", Legend: "auto"}
+		widgets = append(widgets, widget)
+	}
+	description := spec.Description
+	if liveMonitoringTemplate(spec) {
+		description += " Includes live agent-reported CPU, memory, and GPU telemetry."
+	}
+	return dashboardTemplate{ID: spec.ID, Name: spec.Name, Description: description, Category: spec.Category, SchemaVersion: dashboardTemplateSchemaVersion, Version: version, Widgets: widgets}
+}
+
+func liveMonitoringTemplate(spec officialTemplateSpec) bool {
+	switch spec.Phase {
+	case "train", "pretraining", "fine_tuning", "hpo_search", "preprocessing":
+		return spec.Progress || spec.Logs
+	default:
+		return false
+	}
 }
 
 func officialPlotAppearance(style, category string) *dashboardWidgetAppearance {

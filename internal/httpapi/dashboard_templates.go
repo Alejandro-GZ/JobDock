@@ -249,6 +249,17 @@ func (a *API) observableSources(r *http.Request, jobID, attemptID string) ([]obs
 	for _, descriptor := range descriptors {
 		sources = append(sources, observableSource{Kind: descriptor.Type, Name: descriptor.Name, Unit: descriptor.Unit, Tags: descriptor.Tags})
 	}
+	// Resource telemetry is a stable part of every attempt contract. The series may
+	// still be empty before the first agent sample, but templates can be resolved
+	// before that sample arrives and start rendering it incrementally.
+	for _, resource := range []observableSource{
+		{Kind: "resource", Name: "cpu", Unit: "cores"},
+		{Kind: "resource", Name: "memory", Unit: "GiB"},
+		{Kind: "resource", Name: "gpu-utilization", Unit: "%"},
+		{Kind: "resource", Name: "gpu-memory", Unit: "GiB"},
+	} {
+		sources = append(sources, resource)
+	}
 	for _, stream := range []string{"stdout", "stderr"} {
 		exists, existsErr := a.files.AttemptLogExists(jobID, attemptID, stream)
 		if existsErr != nil {
