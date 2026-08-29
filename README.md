@@ -43,6 +43,8 @@ See [Architecture](docs/architecture.md), [Security](SECURITY.md), and [Operatio
 
 The semantic source-resolution contract is documented in
 [Dashboard templates](docs/dashboard-templates.md).
+Portable result sharing is documented in
+[Offline dashboard reports](docs/offline-dashboard-reports.md).
 
 ## Development
 

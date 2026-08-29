@@ -482,6 +482,22 @@ paths:
       responses:
         '204': {description: Dashboard deleted}
         '409': {$ref: '#/components/responses/Problem'}
+  /jobs/{jobId}/dashboard-reports:
+    post:
+      operationId: createDashboardReport
+      description: Generate a bounded, immutable and self-contained offline HTML snapshot of one or more dashboards for a job attempt. The report is returned directly and is not persisted.
+      parameters: [{$ref: '#/components/parameters/JobID'}, {$ref: '#/components/parameters/CSRFToken'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardReportRequest'}}}}
+      responses:
+        '200':
+          description: Self-contained offline report. X-JobDock-Report-Warning-Count identifies bounded or unavailable data sources documented inside the report.
+          headers:
+            Content-Disposition: {schema: {type: string}}
+            X-JobDock-Report-Warning-Count: {schema: {type: integer, minimum: 0}}
+          content: {text/html: {schema: {type: string}}}
+        '404': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
   /jobs/{jobId}/checkpoints:
     get:
       operationId: listJobCheckpoints
@@ -1779,6 +1795,18 @@ components:
         name: {type: string, minLength: 1, maxLength: 128}
         source_dashboard_id: {type: string, minLength: 1, maxLength: 256, description: When present, duplicate this dashboard's configuration and template provenance.}
         make_active: {type: boolean, default: true}
+    DashboardReportRequest:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, dashboard_ids]
+      properties:
+        attempt_id: {type: string, minLength: 1, maxLength: 256}
+        dashboard_ids:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 256}
     DashboardUpdate:
       type: object
       additionalProperties: false

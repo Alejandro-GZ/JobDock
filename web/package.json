@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && vite build --config vite.report.config.ts",
     "test": "vitest run",
+    "test:e2e:report": "playwright test e2e/dashboard-report.spec.ts",
     "lint": "tsc -b --pretty false"
   },
   "dependencies": {

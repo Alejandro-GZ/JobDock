@@ -43,6 +43,7 @@ type API struct {
 	loginMu       sync.Mutex
 	loginAttempts map[string][]time.Time
 	buildAnalyzer buildanalysis.Analyzer
+	version       string
 }
 
 type userContextKey struct{}
@@ -52,7 +53,16 @@ func New(cfg config.Server, repository *store.Store, files *filestore.Store, box
 }
 
 func NewWithBuildAnalyzer(cfg config.Server, repository *store.Store, files *filestore.Store, box *secretbox.Box, logger *slog.Logger, analyzer buildanalysis.Analyzer) *API {
-	return &API{config: cfg, store: repository, files: files, box: box, log: logger, webDir: os.Getenv("JOBDOCK_WEB_DIR"), loginAttempts: map[string][]time.Time{}, buildAnalyzer: analyzer}
+	return &API{config: cfg, store: repository, files: files, box: box, log: logger, webDir: os.Getenv("JOBDOCK_WEB_DIR"), loginAttempts: map[string][]time.Time{}, buildAnalyzer: analyzer, version: "dev"}
+}
+
+// SetVersion adds build provenance to generated artifacts without changing the
+// public API constructor used by tests and embedders.
+func (a *API) SetVersion(version string) *API {
+	if strings.TrimSpace(version) != "" {
+		a.version = version
+	}
+	return a
 }
 
 func (a *API) Handler() http.Handler {
@@ -121,6 +131,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/jobs/{id}/dashboards/{dashboardId}", a.withSession(false, true, a.putDashboard))
 	mux.HandleFunc("PATCH /api/v1/jobs/{id}/dashboards/{dashboardId}", a.withSession(false, true, a.patchDashboard))
 	mux.HandleFunc("DELETE /api/v1/jobs/{id}/dashboards/{dashboardId}", a.withSession(false, true, a.deleteDashboard))
+	mux.HandleFunc("POST /api/v1/jobs/{id}/dashboard-reports", a.withSession(false, true, a.createDashboardReport))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/checkpoints", a.withSession(false, false, a.jobCheckpoints))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/progress", a.withSession(false, false, a.jobProgress))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/matrices", a.withSession(false, false, a.jobMatrices))

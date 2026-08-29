@@ -65,7 +65,7 @@ func main() {
 		logger.Error("open file store", "error", err)
 		os.Exit(1)
 	}
-	api := httpapi.New(cfg, repository, files, box, logger)
+	api := httpapi.New(cfg, repository, files, box, logger).SetVersion(version)
 	if err = api.BootstrapAdmin(context.Background()); err != nil {
 		logger.Error("bootstrap administrator", "error", err)
 		os.Exit(1)
