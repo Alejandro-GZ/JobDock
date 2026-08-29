@@ -62,6 +62,9 @@ func TestDashboardTemplateResolverReportsMissingAmbiguousAndIncompatibleSlots(t 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			result := resolveDashboardTemplate(semanticTemplate(test.slot), test.catalog)
+			if result.Widgets == nil {
+				t.Fatal("empty template resolution widgets must serialize as an array")
+			}
 			if len(result.SlotResults) != 1 || result.SlotResults[0].Status != test.wantStatus || len(result.Widgets) != 0 || result.WidgetResults[0].Status != "unresolved" {
 				t.Fatalf("resolution: %#v", result)
 			}

@@ -75,7 +75,7 @@ describe("DashboardTemplatePicker",()=>{
   it("shows missing source diagnostics inside the affected preview widget",async()=>{
     vi.spyOn(api,"dashboardTemplates").mockResolvedValue([template]);
     vi.spyOn(api,"dashboardTemplateMatches").mockResolvedValue([{template_id:"training",compatibility:"incompatible",applicable:false,missing_required:1,ambiguous_sources:0}]);
-    vi.spyOn(api,"resolveDashboardTemplate").mockResolvedValue({template_id:"training",schema_version:1,template_version:3,attempt_id:"attempt",compatibility:"incompatible",widgets:[],widget_results:[{widget_id:"loss",status:"unresolved"}],slot_results:[{widget_id:"loss",slot_id:"loss",status:"missing",candidates:[],selected:[]}]});
+    vi.spyOn(api,"resolveDashboardTemplate").mockResolvedValue({template_id:"training",schema_version:1,template_version:3,attempt_id:"attempt",compatibility:"incompatible",widgets:null as unknown as DashboardWidget[],widget_results:[{widget_id:"loss",status:"unresolved"}],slot_results:[{widget_id:"loss",slot_id:"loss",status:"missing",candidates:[],selected:[]}]});
     const client=new QueryClient({defaultOptions:{queries:{retry:false}}}),user=userEvent.setup();
     render(<QueryClientProvider client={client}><Harness onApply={vi.fn(async()=>undefined)}/></QueryClientProvider>);
     await user.click(screen.getByRole("button",{name:"Open templates"}));
@@ -83,6 +83,17 @@ describe("DashboardTemplatePicker",()=>{
     expect(widget.textContent).toContain("Missing required: loss");
     expect(widget.textContent).toContain("Sample data");
     expect(screen.queryByText("Source resolution")).toBeNull();
+  });
+  it("keeps the application mounted when a legacy server returns null resolution collections",async()=>{
+    vi.spyOn(api,"dashboardTemplates").mockResolvedValue([template]);
+    vi.spyOn(api,"dashboardTemplateMatches").mockResolvedValue([{template_id:"training",compatibility:"incompatible",applicable:false,missing_required:1,ambiguous_sources:0}]);
+    vi.spyOn(api,"resolveDashboardTemplate").mockResolvedValue({template_id:"training",schema_version:1,template_version:3,attempt_id:"attempt",compatibility:"incompatible",widgets:null,widget_results:null,slot_results:null} as unknown as DashboardTemplateResolution);
+    const client=new QueryClient({defaultOptions:{queries:{retry:false}}}),user=userEvent.setup();
+    render(<QueryClientProvider client={client}><Harness onApply={vi.fn(async()=>undefined)}/></QueryClientProvider>);
+    await user.click(screen.getByRole("button",{name:"Open templates"}));
+    expect(await screen.findByLabelText("Template dashboard preview")).toBeTruthy();
+    expect(screen.getByRole("dialog",{name:"Dashboard templates"})).toBeTruthy();
+    expect((screen.getByRole("button",{name:"Apply template"}) as HTMLButtonElement).disabled).toBe(true);
   });
   it("groups, searches, and filters a large catalog without the old selector copy",async()=>{
     const vision:DashboardTemplate={...template,id:"vision",name:"Object detection",description:"Detection metrics.",category:"computer-vision"};

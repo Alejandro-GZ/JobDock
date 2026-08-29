@@ -603,7 +603,7 @@ func containsString(values []string, expected string) bool {
 }
 
 func compactDashboardWidgets(widgets []dashboardWidget) []dashboardWidget {
-	ordered := append([]dashboardWidget(nil), widgets...)
+	ordered := append([]dashboardWidget{}, widgets...)
 	sort.SliceStable(ordered, func(i, j int) bool {
 		if ordered[i].Position.Y != ordered[j].Position.Y {
 			return ordered[i].Position.Y < ordered[j].Position.Y
