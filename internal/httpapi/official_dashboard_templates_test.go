@@ -107,6 +107,21 @@ func TestOfficialDashboardTemplateCatalogIsDiverseValidAndFrameworkNeutral(t *te
 	}
 }
 
+func TestOfficialDashboardTemplateLayoutsFitWithoutOverlap(t *testing.T) {
+	for _, template := range officialDashboardTemplates() {
+		for index, widget := range template.Widgets {
+			if widget.Position.X < 0 || widget.Position.Y < 0 || widget.Position.X+widget.Size.Columns > 12 || widget.Position.Y+widget.Size.Rows > 12 {
+				t.Errorf("template %s widget %s exceeds the 12x12 dashboard: %dx%d@%d,%d", template.ID, widget.ID, widget.Size.Columns, widget.Size.Rows, widget.Position.X, widget.Position.Y)
+			}
+			for _, other := range template.Widgets[index+1:] {
+				if widget.Position.X < other.Position.X+other.Size.Columns && other.Position.X < widget.Position.X+widget.Size.Columns && widget.Position.Y < other.Position.Y+other.Size.Rows && other.Position.Y < widget.Position.Y+widget.Size.Rows {
+					t.Errorf("template %s overlaps widgets %s and %s", template.ID, widget.ID, other.ID)
+				}
+			}
+		}
+	}
+}
+
 func TestLiveMonitoringTemplatesIncludeAgentResourceTelemetry(t *testing.T) {
 	for _, id := range []string{"training-general", "data-pipeline", "language-model-pretraining", "llm-fine-tuning", "policy-optimization", "hpo-single-objective"} {
 		template := officialTemplateByID(id)

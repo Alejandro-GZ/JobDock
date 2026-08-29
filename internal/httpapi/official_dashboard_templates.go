@@ -244,9 +244,20 @@ func classificationDashboardTemplate() dashboardTemplate {
 func regressionDashboardTemplate() dashboardTemplate { return officialTemplateByID("regression") }
 
 func buildOfficialTemplate(spec officialTemplateSpec, index int) dashboardTemplate {
-	version := 3
+	version := 4
 	if spec.ID == "training-general" || spec.ID == "classification" || spec.ID == "regression" {
-		version = 4
+		version = 5
+	}
+	live := liveMonitoringTemplate(spec)
+	primaryRows, supportingY, supportingRows, bottomY, bottomRows := 4, 4, 4, 8, 4
+	if spec.Matrix {
+		primaryRows, supportingY, supportingRows, bottomY, bottomRows = 3, 3, 4, 7, 5
+	}
+	if live {
+		primaryRows, supportingY, supportingRows, bottomY, bottomRows = 3, 3, 3, 6, 3
+		if spec.Matrix {
+			primaryRows, supportingY, supportingRows, bottomY, bottomRows = 2, 2, 2, 4, 5
+		}
 	}
 	primaryType := map[string]string{"line": "lineplot", "bar": "barplot", "scatter": "scatterplot"}[spec.Style]
 	primarySlots := []dashboardTemplateSlot{officialMetricSlot("primary", spec.Primary, spec.Phase, 1, "error")}
@@ -256,7 +267,7 @@ func buildOfficialTemplate(spec officialTemplateSpec, index int) dashboardTempla
 		second.Role = "y"
 		primarySlots = append(primarySlots, second)
 	}
-	widgets := []dashboardTemplateWidget{officialWidget("primary", primaryType, 12, 4, 0, 0, primarySlots...)}
+	widgets := []dashboardTemplateWidget{officialWidget("primary", primaryType, 12, primaryRows, 0, 0, primarySlots...)}
 	widgets[0].Appearance = officialPlotAppearance(spec.Style, spec.Category)
 	remaining := spec.Supporting
 	if primaryType == "scatterplot" {
@@ -268,7 +279,7 @@ func buildOfficialTemplate(spec officialTemplateSpec, index int) dashboardTempla
 			slots = append(slots, officialMetricSlot(role, role, spec.Phase, 0, "omit_slot"))
 		}
 		width := 8
-		if index%3 == 1 {
+		if !spec.Gauge && index%3 == 1 {
 			width = 12
 		}
 		supportingType := "lineplot"
@@ -277,7 +288,7 @@ func buildOfficialTemplate(spec officialTemplateSpec, index int) dashboardTempla
 		if spec.Phase == "evaluation" && spec.Style == "bar" && len(slots) >= 3 {
 			supportingType = "starplot"
 		}
-		widget := officialWidget("supporting", supportingType, width, 4, 0, 4, slots...)
+		widget := officialWidget("supporting", supportingType, width, supportingRows, 0, supportingY, slots...)
 		if supportingType == "starplot" {
 			widget.Appearance = &dashboardWidgetAppearance{SchemaVersion: 1, ColorScheme: "warm", Legend: "auto"}
 		} else {
@@ -286,36 +297,37 @@ func buildOfficialTemplate(spec officialTemplateSpec, index int) dashboardTempla
 		widgets = append(widgets, widget)
 	}
 	if spec.Gauge {
-		widgets = append(widgets, officialGauge("summary", spec.Primary, spec.Phase, 4, 4, 8, 4))
+		widgets = append(widgets, officialGauge("summary", spec.Primary, spec.Phase, 4, supportingRows, 8, supportingY))
 	}
 	bottomX := 0
 	if spec.Matrix {
-		widget := officialWidget("matrix", "confusion_matrix", 3, 5, 0, 8, officialOptionalSlot("matrix", "matrix", 1))
+		widget := officialWidget("matrix", "confusion_matrix", 3, 5, 0, bottomY, officialOptionalSlot("matrix", "matrix", 1))
 		widget.Appearance = &dashboardWidgetAppearance{SchemaVersion: 1, MatrixMode: "normalized"}
 		widgets = append(widgets, widget)
 		bottomX = 3
 	}
 	if spec.Progress {
 		columns := 6
-		rows := 4
+		rows := bottomRows
 		if spec.Matrix {
-			columns, rows = 9, 5
+			columns = 9
 		}
-		widgets = append(widgets, officialWidget("progress", "progress", columns, rows, bottomX, 8, officialOptionalSlot("progress", "progress", 1)))
+		widgets = append(widgets, officialWidget("progress", "progress", columns, rows, bottomX, bottomY, officialOptionalSlot("progress", "progress", 1)))
 		bottomX += columns
 	}
 	if spec.Logs && bottomX < 12 {
-		widgets = append(widgets, officialWidget("logs", "logs", 12-bottomX, 4, bottomX, 8, officialOptionalSlot("logs", "log", 2)))
+		widgets = append(widgets, officialWidget("logs", "logs", 12-bottomX, bottomRows, bottomX, bottomY, officialOptionalSlot("logs", "log", 2)))
 	}
-	if liveMonitoringTemplate(spec) {
+	if live {
 		resources := dashboardTemplateSlot{ID: "resources", SourceTypes: []string{"resource"}, Cardinality: dashboardTemplateCardinality{Min: 0, Max: 4}, OnMissing: "omit_widget", OnAmbiguous: "omit_widget"}
-		widget := officialWidget("resource-telemetry", "lineplot", 12, 4, 0, 12, resources)
+		resourceY := bottomY + bottomRows
+		widget := officialWidget("resource-telemetry", "lineplot", 12, 12-resourceY, 0, resourceY, resources)
 		widget.XAxis = "time"
 		widget.Appearance = &dashboardWidgetAppearance{SchemaVersion: 1, ColorScheme: "warm", Legend: "auto"}
 		widgets = append(widgets, widget)
 	}
 	description := spec.Description
-	if liveMonitoringTemplate(spec) {
+	if live {
 		description += " Includes live agent-reported CPU, memory, and GPU telemetry."
 	}
 	return dashboardTemplate{ID: spec.ID, Name: spec.Name, Description: description, Category: spec.Category, SchemaVersion: dashboardTemplateSchemaVersion, Version: version, Widgets: widgets}
