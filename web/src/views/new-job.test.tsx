@@ -6,13 +6,13 @@ import userEvent from "@testing-library/user-event";
 import {MemoryRouter} from "react-router-dom";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {NewJob} from "./new-job";
-import type {Node} from "@/types";
+import type {Node,Secret} from "@/types";
 
-const {inventory}=vi.hoisted(()=>({inventory:[] as Node[]}));
-vi.mock("@/api",()=>({api:{nodes:async()=>inventory,secrets:async()=>[]}}));
+const {inventory,secretInventory}=vi.hoisted(()=>({inventory:[] as Node[],secretInventory:[] as Secret[]}));
+vi.mock("@/api",()=>({api:{nodes:async()=>inventory,secrets:async()=>secretInventory}}));
 
 describe("NewJob execution source",()=>{
-  beforeEach(()=>{inventory.splice(0);vi.stubGlobal("ResizeObserver",class{observe(){}unobserve(){}disconnect(){}})});
+  beforeEach(()=>{inventory.splice(0);secretInventory.splice(0);vi.stubGlobal("ResizeObserver",class{observe(){}unobserve(){}disconnect(){}})});
   afterEach(()=>{cleanup();vi.unstubAllGlobals()});
   it("offers Auto, Dockerfile, and OCI with progressive configuration",async()=>{
     const user=userEvent.setup(),client=new QueryClient({defaultOptions:{queries:{retry:false}}});
@@ -43,5 +43,18 @@ describe("NewJob execution source",()=>{
     await user.selectOptions(screen.getByLabelText("Memory unit"),"MiB");
     expect((screen.getByLabelText("Memory value") as HTMLInputElement).value).toBe("1024");
     expect(screen.queryByLabelText("GPU count")).toBeNull();
+  });
+  it("offers generic secrets to job configuration while keeping registry credentials separate",async()=>{
+    secretInventory.push({id:"one",name:"dummy-api-token",kind:"generic",created_at:new Date().toISOString()},{id:"two",name:"dummy-config-json",kind:"generic",created_at:new Date().toISOString()},{id:"registry",name:"dummy-registry",kind:"registry",created_at:new Date().toISOString()});
+    const user=userEvent.setup(),client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+    render(<QueryClientProvider client={client}><MemoryRouter><NewJob/></MemoryRouter></QueryClientProvider>);
+    await user.click(screen.getByRole("button",{name:/OCI image/}));
+    await user.type(screen.getByLabelText("Job name"),"secret job");
+    await user.type(screen.getByLabelText("OCI image"),"alpine:3");
+    await user.click(screen.getByRole("button",{name:/Continue/}));
+    await user.click(screen.getByRole("button",{name:/Continue/}));
+    await user.click(screen.getByRole("button",{name:"Add secret"}));
+    const selector=screen.getByLabelText("Secret") as HTMLSelectElement;
+    expect(Array.from(selector.options).map(option=>option.text)).toEqual(["Select secret","dummy-api-token","dummy-config-json"]);
   });
 });
