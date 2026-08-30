@@ -27,11 +27,17 @@ Terminal and CI usage is documented in the [CLI guide](docs/cli.md).
 ## Install a stable release
 
 A published release requires only Linux amd64, Docker Engine with the Compose
-plugin, `curl`, and `sha256sum`. Download its four assets, verify
-`SHA256SUMS`, start the supplied `docker-compose.yml`, and enroll hosts with the
-supplied `install-agent.sh`. The Compose file and installer are pinned to the
-verified image digests from that release; no repository clone, Go, Node.js, or
-local image build is involved.
+plugin, `curl`, and `sha256sum`. Install the current stable control plane with
+one command:
+
+```sh
+curl -fsSL https://github.com/Alejandro-GZ/JobDock/releases/latest/download/install-control-plane.sh | sudo sh
+```
+
+The bootstrap verifies the version-matched release payloads before installing
+them, starts the digest-pinned Compose project, waits for readiness, and prints
+the web URL and first-login credential. No repository clone, Go, Node.js,
+Python, or local image build is involved.
 
 See [Install a published release](docs/installing-release.md) for the complete
 server, builder, CPU-agent, and NVIDIA-agent procedure.

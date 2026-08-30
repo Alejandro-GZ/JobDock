@@ -67,7 +67,7 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 		t.Fatalf("prepare release assets: %v\n%s", runErr, output)
 	}
 
-	for _, name := range []string{"release-manifest.json", "docker-compose.yml", "install-agent.sh", "SHA256SUMS", "release-notes.md", wheelName, sdistName} {
+	for _, name := range []string{"release-manifest.json", "docker-compose.yml", "install-control-plane.sh", "install-agent.sh", "SHA256SUMS", "release-notes.md", wheelName, sdistName} {
 		if _, err = os.Stat(filepath.Join(outputPath, name)); err != nil {
 			t.Fatalf("expected release asset %s: %v", name, err)
 		}
@@ -84,6 +84,10 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 		t.Fatal("release agent installer is not pinned to the verified agent reference")
 	}
 	assertInstallerPullsDefaultReference(t, filepath.Join(outputPath, "install-agent.sh"), images[1]["reference"])
+	controlPlaneInstaller := readTestFile(t, filepath.Join(outputPath, "install-control-plane.sh"))
+	if !strings.Contains(controlPlaneInstaller, "sha256sum --check") || !strings.Contains(controlPlaneInstaller, "docker compose") || !strings.Contains(controlPlaneInstaller, `DEFAULT_VERSION="1.2.3-rc.1"`) {
+		t.Fatal("release control-plane installer is missing its pinned version, verification, or Compose startup")
+	}
 	notes := readTestFile(t, filepath.Join(outputPath, "release-notes.md"))
 	if !strings.Contains(notes, "## Highlights") || !strings.Contains(notes, "## Changes") || !strings.Contains(notes, commit) || !strings.Contains(notes, "pip install jobdock-sdk==1.2.3rc1") {
 		t.Fatal("release notes do not contain highlights, SDK installation, changes, and source commit context")

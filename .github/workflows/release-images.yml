@@ -314,6 +314,7 @@ jobs:
             "${latest[@]}" \
             release-assets/release-manifest.json \
             release-assets/docker-compose.yml \
+            release-assets/install-control-plane.sh \
             release-assets/install-agent.sh \
             release-assets/SHA256SUMS \
             release-assets/*.whl \

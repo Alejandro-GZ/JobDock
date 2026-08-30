@@ -10,6 +10,7 @@ manifest="$1"
 output_dir="$2"
 sdk_dir="$3"
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+repository="${GITHUB_REPOSITORY:-Alejandro-GZ/JobDock}"
 
 command -v jq >/dev/null 2>&1 || { printf 'jq is required\n' >&2; exit 1; }
 command -v sha256sum >/dev/null 2>&1 || { printf 'sha256sum is required\n' >&2; exit 1; }
@@ -51,6 +52,12 @@ mkdir -p -- "$output_dir"
 cp -- "$manifest" "$output_dir/release-manifest.json"
 cp -- "$sdk_dir/$wheel_filename" "$output_dir/$wheel_filename"
 cp -- "$sdk_dir/$sdist_filename" "$output_dir/$sdist_filename"
+awk \
+  -v version="$version" \
+  '$0 == "DEFAULT_VERSION=\"\"" {print "DEFAULT_VERSION=\"" version "\""; next}
+   {print}' \
+  "$script_dir/install-control-plane.sh" > "$output_dir/install-control-plane.sh"
+chmod 0755 "$output_dir/install-control-plane.sh"
 
 awk \
   -v server="$server_reference" \
@@ -72,6 +79,7 @@ cat > "$output_dir/release-notes.md" <<EOF
 
 - Publishes the version-matched JobDock server, agent, and builder as one verified release set.
 - Includes digest-pinned deployment assets for reproducible installation and auditing.
+- Adds the one-command, checksum-verifying control-plane bootstrap.
 - Publishes the matching Python SDK from the same verified release manifest.
 
 ## Components
@@ -94,10 +102,14 @@ cat > "$output_dir/release-notes.md" <<EOF
 Tag: \`$tag\`  
 Commit: \`$commit\`
 
+## Install
+
+\`curl -fsSL https://github.com/$repository/releases/latest/download/install-control-plane.sh | sudo sh\`
+
 ## Changes
 EOF
 
 (
   cd -- "$output_dir"
-  sha256sum release-manifest.json docker-compose.yml install-agent.sh "$wheel_filename" "$sdist_filename" > SHA256SUMS
+  sha256sum release-manifest.json docker-compose.yml install-control-plane.sh install-agent.sh "$wheel_filename" "$sdist_filename" > SHA256SUMS
 )
