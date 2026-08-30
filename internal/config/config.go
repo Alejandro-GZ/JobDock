@@ -18,6 +18,7 @@ type Server struct {
 	DatabasePath           string
 	PublicURL              string
 	AllowInsecureHTTP      bool
+	TrustProxyHeaders      bool
 	BootstrapUsername      string
 	BootstrapPassword      string
 	SetupToken             string
@@ -78,6 +79,7 @@ func LoadServer() (Server, error) {
 		DatabasePath:           env("JOBDOCK_DATABASE_PATH", filepath.Join(dataDir, "jobdock.db")),
 		PublicURL:              strings.TrimRight(env("JOBDOCK_PUBLIC_URL", "http://localhost:8080"), "/"),
 		AllowInsecureHTTP:      envBool("JOBDOCK_ALLOW_INSECURE_HTTP", false),
+		TrustProxyHeaders:      envBool("JOBDOCK_TRUST_PROXY_HEADERS", false),
 		BootstrapUsername:      env("JOBDOCK_BOOTSTRAP_ADMIN_USERNAME", "admin"),
 		SessionTTL:             envDuration("JOBDOCK_SESSION_TTL", 24*time.Hour),
 		HeartbeatOfflineAfter:  envDuration("JOBDOCK_HEARTBEAT_OFFLINE_AFTER", 30*time.Second),
@@ -246,7 +248,7 @@ func envInt64(key string, fallback int64) int64 {
 }
 
 func validateServerEnvironment() error {
-	if err := validateBoolEnvironment("JOBDOCK_ALLOW_INSECURE_HTTP"); err != nil {
+	if err := validateBoolEnvironment("JOBDOCK_ALLOW_INSECURE_HTTP", "JOBDOCK_TRUST_PROXY_HEADERS"); err != nil {
 		return err
 	}
 	if err := validateDurationEnvironment(

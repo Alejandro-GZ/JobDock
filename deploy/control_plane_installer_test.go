@@ -28,6 +28,9 @@ func TestControlPlaneInstallerContract(t *testing.T) {
 		"use the supported upgrade flow",
 		"One-time setup token:",
 		"overrides.env",
+		"--mode must be domain, proxy, or local",
+		"local mode requires explicit --allow-insecure-http",
+		"HTTPS readiness failed",
 	} {
 		if !strings.Contains(installer, required) {
 			t.Fatalf("control-plane installer is missing %q", required)
@@ -64,16 +67,20 @@ func TestControlPlaneInstallerIsVerifiedAndIdempotent(t *testing.T) {
 
 	digest := strings.Repeat("a", 64)
 	assets := map[string]string{
-		"release-manifest.json": "{\n  \"schema_version\": 2,\n  \"version\": \"1.2.3\",\n  \"tag\": \"v1.2.3\",\n  \"images\": [\n    {\"image\": \"ghcr.io/alejandro-gz/jobdock-server\", \"reference\": \"ghcr.io/alejandro-gz/jobdock-server@sha256:" + digest + "\"},\n    {\"image\": \"ghcr.io/alejandro-gz/jobdock-builder\", \"reference\": \"ghcr.io/alejandro-gz/jobdock-builder@sha256:" + digest + "\"}\n  ]\n}",
-		"docker-compose.yml":    "services:\n  jobdock-server:\n    image: \"ghcr.io/alejandro-gz/jobdock-server@sha256:" + digest + "\"\n  jobdock-builder:\n    image: \"ghcr.io/alejandro-gz/jobdock-builder@sha256:" + digest + "\"\n",
-		"install-agent.sh":      "#!/bin/sh\nexit 0\n",
+		"release-manifest.json":     "{\n  \"schema_version\": 2,\n  \"version\": \"1.2.3\",\n  \"tag\": \"v1.2.3\",\n  \"images\": [\n    {\"image\": \"ghcr.io/alejandro-gz/jobdock-server\", \"reference\": \"ghcr.io/alejandro-gz/jobdock-server@sha256:" + digest + "\"},\n    {\"image\": \"ghcr.io/alejandro-gz/jobdock-builder\", \"reference\": \"ghcr.io/alejandro-gz/jobdock-builder@sha256:" + digest + "\"}\n  ]\n}",
+		"docker-compose.yml":        "services:\n  jobdock-server:\n    image: \"ghcr.io/alejandro-gz/jobdock-server@sha256:" + digest + "\"\n  jobdock-builder:\n    image: \"ghcr.io/alejandro-gz/jobdock-builder@sha256:" + digest + "\"\n",
+		"install-agent.sh":          "#!/bin/sh\nexit 0\n",
+		"docker-compose.domain.yml": "services:\n  caddy:\n    image: caddy:2.10.2-alpine\n",
+		"docker-compose.proxy.yml":  "services:\n  jobdock-server:\n    ports: [\"127.0.0.1:18080:8080\"]\n",
+		"docker-compose.local.yml":  "services:\n  jobdock-server:\n    ports: [\"18080:8080\"]\n",
+		"Caddyfile":                 "{$JOBDOCK_DOMAIN} { reverse_proxy jobdock-server:8080 }\n",
 	}
 	for name, contents := range assets {
 		if err := os.WriteFile(filepath.Join(release, name), []byte(contents), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	checksum := exec.Command("sha256sum", "release-manifest.json", "docker-compose.yml", "install-agent.sh")
+	checksum := exec.Command("sha256sum", "release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-agent.sh")
 	checksum.Dir = release
 	output, err := checksum.Output()
 	if err != nil {
@@ -124,7 +131,7 @@ cp "$JOBDOCK_TEST_RELEASE_DIR/$asset" "$output"
 		"JOBDOCK_TEST_DOCKER_CALLS="+calls,
 	)
 	installer := filepath.Join("..", "deploy", "install-control-plane.sh")
-	run := exec.Command("sh", installer, "--version", "1.2.3", "--port", "18080")
+	run := exec.Command("sh", installer, "--version", "1.2.3", "--mode", "local", "--allow-insecure-http", "--port", "18080")
 	run.Env = environment
 	firstOutput, err := run.CombinedOutput()
 	if err != nil {
@@ -135,6 +142,8 @@ cp "$JOBDOCK_TEST_RELEASE_DIR/$asset" "$output"
 	}
 	for _, path := range []string{
 		filepath.Join(config, "docker-compose.yml"),
+		filepath.Join(config, "docker-compose.exposure.yml"),
+		filepath.Join(config, "Caddyfile"),
 		filepath.Join(config, "jobdock.env"),
 		filepath.Join(config, "overrides.env"),
 		filepath.Join(config, "install-state"),
@@ -217,12 +226,48 @@ cp "$JOBDOCK_TEST_RELEASE_DIR/$asset" "$output"
 		}
 	}
 
+	for mode, arguments := range map[string][]string{
+		"domain": {"--version", "1.2.3", "--mode", "domain", "--domain", "dock.example.test"},
+		"proxy":  {"--version", "1.2.3", "--mode", "proxy", "--public-url", "https://dock.example.test"},
+	} {
+		modeConfig := filepath.Join(root, mode+"-etc")
+		modeData := filepath.Join(root, mode+"-data")
+		modeEnvironment := append(withoutEnvironment(environment, "JOBDOCK_INSTALL_CONFIG_DIR", "JOBDOCK_INSTALL_DATA_DIR"),
+			"JOBDOCK_INSTALL_CONFIG_DIR="+modeConfig,
+			"JOBDOCK_INSTALL_DATA_DIR="+modeData,
+		)
+		modeRun := exec.Command("sh", append([]string{installer}, arguments...)...)
+		modeRun.Env = modeEnvironment
+		if modeOutput, modeErr := modeRun.CombinedOutput(); modeErr != nil {
+			t.Fatalf("%s install failed: %v\n%s", mode, modeErr, modeOutput)
+		}
+		modeDefaults := readTestFile(t, filepath.Join(modeConfig, "jobdock.env"))
+		if !strings.Contains(modeDefaults, "JOBDOCK_EXPOSURE_MODE="+mode) || !strings.Contains(modeDefaults, "JOBDOCK_ALLOW_INSECURE_HTTP=false") || !strings.Contains(modeDefaults, "JOBDOCK_TRUST_PROXY_HEADERS=true") {
+			t.Fatalf("%s install has incorrect exposure defaults:\n%s", mode, modeDefaults)
+		}
+		exposure := readTestFile(t, filepath.Join(modeConfig, "docker-compose.exposure.yml"))
+		if (mode == "domain") != strings.Contains(exposure, "caddy:") {
+			t.Fatalf("%s install selected the wrong Compose exposure:\n%s", mode, exposure)
+		}
+	}
+	invalidDomainConfig := filepath.Join(root, "invalid-domain-etc")
+	invalidDomainEnvironment := append(withoutEnvironment(environment, "JOBDOCK_INSTALL_CONFIG_DIR"), "JOBDOCK_INSTALL_CONFIG_DIR="+invalidDomainConfig)
+	invalidDomainRun := exec.Command("sh", installer, "--version", "1.2.3", "--mode", "domain", "--domain", "-invalid.example.test")
+	invalidDomainRun.Env = invalidDomainEnvironment
+	invalidDomainOutput, invalidDomainErr := invalidDomainRun.CombinedOutput()
+	if invalidDomainErr == nil || !strings.Contains(string(invalidDomainOutput), "valid fully qualified DNS name") {
+		t.Fatalf("invalid domain was not rejected: %v\n%s", invalidDomainErr, invalidDomainOutput)
+	}
+	if _, statErr := os.Stat(invalidDomainConfig); !os.IsNotExist(statErr) {
+		t.Fatal("invalid domain mutated the target")
+	}
+
 	tamperedConfig := filepath.Join(root, "tampered-etc")
 	if err = os.WriteFile(filepath.Join(release, "docker-compose.yml"), []byte("tampered"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	tamperedEnvironment := append(withoutEnvironment(environment, "JOBDOCK_INSTALL_CONFIG_DIR"), "JOBDOCK_INSTALL_CONFIG_DIR="+tamperedConfig)
-	run = exec.Command("sh", installer, "--version", "1.2.3")
+	run = exec.Command("sh", installer, "--version", "1.2.3", "--mode", "local", "--allow-insecure-http")
 	run.Env = tamperedEnvironment
 	tamperedOutput, tamperedErr := run.CombinedOutput()
 	if tamperedErr == nil || !strings.Contains(string(tamperedOutput), "checksum verification failed") {

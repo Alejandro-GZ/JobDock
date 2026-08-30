@@ -10,8 +10,12 @@ HEALTH_TIMEOUT="${JOBDOCK_INSTALL_HEALTH_TIMEOUT:-180}"
 DEFAULT_VERSION=""
 VERSION="$DEFAULT_VERSION"
 HTTP_PORT="8080"
+PORT_SET=false
 PUBLIC_URL=""
 ADMIN_USERNAME="admin"
+MODE=""
+DOMAIN=""
+ALLOW_INSECURE_HTTP=false
 
 usage() {
   cat <<'EOF'
@@ -21,8 +25,11 @@ Usage: install-control-plane.sh [options]
 
 Options:
   --version VERSION       Install an explicit stable version (default: current stable)
+  --mode MODE             Exposure mode: domain, proxy, or local
+  --domain DOMAIN         Public DNS name for domain mode
   --port PORT             Publish the web console on this host port (default: 8080)
-  --public-url URL        Public URL advertised by JobDock (default: http://localhost:PORT)
+  --public-url URL        Required HTTPS URL for proxy mode
+  --allow-insecure-http   Explicitly permit HTTP in local/LAN mode
   --admin-username NAME   Bootstrap administrator username (default: admin)
   --help                  Show this help
 
@@ -45,9 +52,20 @@ while [ "$#" -gt 0 ]; do
       VERSION="$2"
       shift 2
       ;;
+    --mode)
+      [ "$#" -ge 2 ] || fail "--mode requires a value"
+      MODE="$2"
+      shift 2
+      ;;
+    --domain)
+      [ "$#" -ge 2 ] || fail "--domain requires a value"
+      DOMAIN="$2"
+      shift 2
+      ;;
     --port)
       [ "$#" -ge 2 ] || fail "--port requires a value"
       HTTP_PORT="$2"
+      PORT_SET=true
       shift 2
       ;;
     --public-url)
@@ -59,6 +77,10 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || fail "--admin-username requires a value"
       ADMIN_USERNAME="$2"
       shift 2
+      ;;
+    --allow-insecure-http)
+      ALLOW_INSECURE_HTTP=true
+      shift
       ;;
     --help|-h)
       usage
@@ -84,6 +106,50 @@ esac
 [ "$HTTP_PORT" -ge 1 ] && [ "$HTTP_PORT" -le 65535 ] || fail "--port must be an integer from 1 to 65535"
 printf '%s\n' "$ADMIN_USERNAME" | grep -Eq '^[A-Za-z0-9_.@-]{3,64}$' || fail "--admin-username must contain 3 to 64 safe characters"
 
+existing_environment="$CONFIG_DIR/jobdock.env"
+stored_mode=""
+if [ -f "$existing_environment" ]; then
+  stored_mode=$(awk -F= '$1 == "JOBDOCK_EXPOSURE_MODE" {print $2; exit}' "$existing_environment")
+  if [ -n "$stored_mode" ]; then
+    if [ "$PORT_SET" = "false" ]; then
+      HTTP_PORT=$(awk -F= '$1 == "JOBDOCK_HTTP_PORT" {print $2; exit}' "$existing_environment")
+      [ -n "$HTTP_PORT" ] || HTTP_PORT=8080
+    fi
+    [ -n "$PUBLIC_URL" ] || PUBLIC_URL=$(awk -F= '$1 == "JOBDOCK_PUBLIC_URL" {sub(/^[^=]*=/, ""); print; exit}' "$existing_environment")
+    [ -n "$DOMAIN" ] || DOMAIN=$(awk -F= '$1 == "JOBDOCK_DOMAIN" {print $2; exit}' "$existing_environment")
+  fi
+fi
+if [ -n "$stored_mode" ]; then
+  [ -z "$MODE" ] || [ "$MODE" = "$stored_mode" ] || fail "this installation uses $stored_mode mode; changing exposure mode requires the supported reconfiguration flow"
+  MODE="$stored_mode"
+fi
+case "$MODE" in
+  domain)
+    [ -n "$DOMAIN" ] || fail "domain mode requires --domain"
+    printf '%s\n' "$DOMAIN" | awk '
+      length($0) > 253 || $0 ~ /[^A-Za-z0-9.-]/ || $0 ~ /\.\./ {exit 1}
+      {count=split($0, labels, "."); if (count < 2 || labels[count] !~ /^[A-Za-z][A-Za-z0-9-]*$/) exit 1; for (i=1; i<=count; i++) if (labels[i] !~ /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/ || length(labels[i]) > 63) exit 1}
+    ' || fail "--domain must be a valid fully qualified DNS name"
+    expected_public_url="https://$DOMAIN"
+    [ -z "$PUBLIC_URL" ] || [ "$PUBLIC_URL" = "$expected_public_url" ] || fail "domain mode public URL must be $expected_public_url"
+    PUBLIC_URL="$expected_public_url"
+    ;;
+  proxy)
+    case "$PUBLIC_URL" in https://*) ;; *) fail "proxy mode requires --public-url with an https:// URL" ;; esac
+    ;;
+  local)
+    [ "$ALLOW_INSECURE_HTTP" = "true" ] || [ "$stored_mode" = "local" ] || fail "local mode requires explicit --allow-insecure-http"
+    [ -n "$PUBLIC_URL" ] || PUBLIC_URL="http://localhost:$HTTP_PORT"
+    case "$PUBLIC_URL" in http://*) ;; *) fail "local mode requires an http:// public URL" ;; esac
+    ;;
+  "") fail "--mode is required for a new installation (domain, proxy, or local)" ;;
+  *) fail "--mode must be domain, proxy, or local" ;;
+esac
+case "$HTTP_PORT" in
+  ''|*[!0-9]*) fail "stored HTTP port must be an integer from 1 to 65535" ;;
+esac
+[ "$HTTP_PORT" -ge 1 ] && [ "$HTTP_PORT" -le 65535 ] || fail "stored HTTP port must be an integer from 1 to 65535"
+
 for command_name in curl sha256sum docker mktemp awk grep od tr base64 dd wc install id mkdir chmod chown sleep mv cat; do
   command -v "$command_name" >/dev/null 2>&1 || fail "$command_name is required"
 done
@@ -101,7 +167,6 @@ else
   printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || fail "the current GitHub release is not a stable semantic version"
 fi
 
-[ -n "$PUBLIC_URL" ] || PUBLIC_URL="http://localhost:$HTTP_PORT"
 case "$PUBLIC_URL" in
   http://*|https://*) ;;
   *) fail "--public-url must start with http:// or https://" ;;
@@ -119,7 +184,7 @@ download() {
 
 printf 'Resolving JobDock %s...\n' "$VERSION"
 download SHA256SUMS
-for asset in release-manifest.json docker-compose.yml install-agent.sh; do
+for asset in release-manifest.json docker-compose.yml docker-compose.domain.yml docker-compose.proxy.yml docker-compose.local.yml Caddyfile install-agent.sh; do
   download "$asset"
   awk -v expected="$asset" '$2 == expected || $2 == "*" expected {print}' "$temporary/SHA256SUMS" > "$temporary/$asset.sha256"
   [ -s "$temporary/$asset.sha256" ] || fail "SHA256SUMS does not cover $asset"
@@ -161,6 +226,10 @@ release_dir="$RELEASES_DIR/$VERSION"
 secrets_dir="$CONFIG_DIR/secrets"
 mkdir -p "$CONFIG_DIR" "$secrets_dir" "$release_dir" "$DATA_DIR/server" "$DATA_DIR/builder" "$DATA_DIR/buildkit"
 chmod 0750 "$CONFIG_DIR" "$DATA_DIR" "$DATA_DIR/server" "$DATA_DIR/builder" "$DATA_DIR/buildkit"
+if [ "$MODE" = "domain" ]; then
+  mkdir -p "$DATA_DIR/caddy/data" "$DATA_DIR/caddy/config"
+  chmod 0750 "$DATA_DIR/caddy" "$DATA_DIR/caddy/data" "$DATA_DIR/caddy/config"
+fi
 chmod 0700 "$secrets_dir"
 chown 10001:10001 "$DATA_DIR/server"
 chown 10002:10002 "$DATA_DIR/builder"
@@ -168,9 +237,14 @@ chown 1000:1000 "$DATA_DIR/buildkit"
 
 install -m 0644 "$temporary/release-manifest.json" "$release_dir/release-manifest.json"
 install -m 0644 "$temporary/docker-compose.yml" "$release_dir/docker-compose.yml"
+for deployment_asset in docker-compose.domain.yml docker-compose.proxy.yml docker-compose.local.yml Caddyfile; do
+  install -m 0644 "$temporary/$deployment_asset" "$release_dir/$deployment_asset"
+done
 install -m 0755 "$temporary/install-agent.sh" "$release_dir/install-agent.sh"
 install -m 0644 "$temporary/SHA256SUMS" "$release_dir/SHA256SUMS"
 install -m 0644 "$temporary/docker-compose.yml" "$CONFIG_DIR/docker-compose.yml"
+install -m 0644 "$temporary/docker-compose.$MODE.yml" "$CONFIG_DIR/docker-compose.exposure.yml"
+install -m 0644 "$temporary/Caddyfile" "$CONFIG_DIR/Caddyfile"
 install -m 0644 "$temporary/release-manifest.json" "$CONFIG_DIR/release-manifest.json"
 
 environment_file="$CONFIG_DIR/jobdock.env"
@@ -243,8 +317,17 @@ if [ ! -f "$environment_file" ]; then
   {
     printf 'COMPOSE_PROJECT_NAME=jobdock\n'
     printf 'JOBDOCK_HTTP_PORT=%s\n' "$HTTP_PORT"
+    printf 'JOBDOCK_EXPOSURE_MODE=%s\n' "$MODE"
     printf 'JOBDOCK_PUBLIC_URL=%s\n' "$PUBLIC_URL"
-    printf 'JOBDOCK_ALLOW_INSECURE_HTTP=%s\n' "$(case "$PUBLIC_URL" in http://*) printf true;; *) printf false;; esac)"
+    printf 'JOBDOCK_ALLOW_INSECURE_HTTP=%s\n' "$(case "$MODE" in local) printf true;; *) printf false;; esac)"
+    printf 'JOBDOCK_TRUST_PROXY_HEADERS=%s\n' "$(case "$MODE" in domain|proxy) printf true;; *) printf false;; esac)"
+    printf 'JOBDOCK_BIND_ADDRESS=%s\n' "$(case "$MODE" in proxy) printf 127.0.0.1;; *) printf 0.0.0.0;; esac)"
+    if [ "$MODE" = "domain" ]; then
+      printf 'JOBDOCK_DOMAIN=%s\n' "$DOMAIN"
+      printf 'JOBDOCK_CADDYFILE_PATH=%s/Caddyfile\n' "$CONFIG_DIR"
+      printf 'JOBDOCK_CADDY_DATA_DIR=%s/caddy/data\n' "$DATA_DIR"
+      printf 'JOBDOCK_CADDY_CONFIG_DIR=%s/caddy/config\n' "$DATA_DIR"
+    fi
     printf 'JOBDOCK_BOOTSTRAP_ADMIN_USERNAME=%s\n' "$ADMIN_USERNAME"
     printf 'JOBDOCK_DATA_DIR=%s/server\n' "$DATA_DIR"
     printf 'JOBDOCK_BUILDER_DATA_DIR=%s/builder\n' "$DATA_DIR"
@@ -266,10 +349,31 @@ ensure_environment() {
   value="$2"
   grep -q "^$key=" "$environment_file" || printf '%s=%s\n' "$key" "$value" >> "$environment_file"
 }
+set_environment() {
+  key="$1"
+  value="$2"
+  updated_environment="$environment_file.tmp.$$"
+  awk -v key="$key" 'index($0, key "=") != 1' "$environment_file" > "$updated_environment"
+  printf '%s=%s\n' "$key" "$value" >> "$updated_environment"
+  mv "$updated_environment" "$environment_file"
+}
+set_environment JOBDOCK_EXPOSURE_MODE "$MODE"
+set_environment JOBDOCK_HTTP_PORT "$HTTP_PORT"
+set_environment JOBDOCK_PUBLIC_URL "$PUBLIC_URL"
+set_environment JOBDOCK_ALLOW_INSECURE_HTTP "$(case "$MODE" in local) printf true;; *) printf false;; esac)"
+set_environment JOBDOCK_TRUST_PROXY_HEADERS "$(case "$MODE" in domain|proxy) printf true;; *) printf false;; esac)"
+set_environment JOBDOCK_BIND_ADDRESS "$(case "$MODE" in proxy) printf 127.0.0.1;; *) printf 0.0.0.0;; esac)"
+if [ "$MODE" = "domain" ]; then
+  set_environment JOBDOCK_DOMAIN "$DOMAIN"
+  set_environment JOBDOCK_CADDYFILE_PATH "$CONFIG_DIR/Caddyfile"
+  set_environment JOBDOCK_CADDY_DATA_DIR "$DATA_DIR/caddy/data"
+  set_environment JOBDOCK_CADDY_CONFIG_DIR "$DATA_DIR/caddy/config"
+fi
 ensure_environment JOBDOCK_SETUP_SECRET_PATH "$setup_secret"
 ensure_environment JOBDOCK_MASTER_KEY_SECRET_PATH "$master_key_secret"
 ensure_environment JOBDOCK_SERVER_BUILDER_TOKEN_SECRET_PATH "$server_builder_secret"
 ensure_environment JOBDOCK_BUILDER_TOKEN_SECRET_PATH "$builder_secret"
+chmod 0640 "$environment_file"
 
 if [ ! -f "$overrides_file" ]; then
   umask 027
@@ -281,21 +385,32 @@ fi
 chmod 0640 "$overrides_file"
 
 compose() {
-  docker compose --project-name jobdock --env-file "$environment_file" --env-file "$overrides_file" -f "$CONFIG_DIR/docker-compose.yml" "$@"
+  docker compose --project-name jobdock --env-file "$environment_file" --env-file "$overrides_file" -f "$CONFIG_DIR/docker-compose.yml" -f "$CONFIG_DIR/docker-compose.exposure.yml" "$@"
 }
 
 printf 'Validating effective configuration...\n'
 compose config --quiet || fail "effective configuration is invalid; review $overrides_file"
 printf 'Pulling verified images...\n'
 compose pull || fail "image pull failed; verified configuration remains in $CONFIG_DIR"
+if [ "$MODE" = "domain" ]; then
+  compose run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile || fail "Caddy configuration is invalid; review $CONFIG_DIR/Caddyfile and $overrides_file"
+fi
 printf 'Starting the JobDock control plane...\n'
-compose up -d || fail "service startup failed; inspect with: docker compose --env-file $environment_file --env-file $overrides_file -f $CONFIG_DIR/docker-compose.yml ps"
+compose up -d || fail "service startup failed; inspect with: docker compose --env-file $environment_file --env-file $overrides_file -f $CONFIG_DIR/docker-compose.yml -f $CONFIG_DIR/docker-compose.exposure.yml ps"
 
 elapsed=0
-while ! curl --fail --silent --show-error "http://127.0.0.1:$HTTP_PORT/health/ready" >/dev/null 2>&1; do
+case "$MODE" in
+  domain) readiness_url="$PUBLIC_URL/health/ready" ;;
+  *) readiness_url="http://127.0.0.1:$HTTP_PORT/health/ready" ;;
+esac
+while ! curl --fail --silent --show-error "$readiness_url" >/dev/null 2>&1; do
   if [ "$elapsed" -ge "$HEALTH_TIMEOUT" ]; then
     compose ps >&2 || true
-    fail "readiness did not succeed within ${HEALTH_TIMEOUT}s; inspect with: docker compose --env-file $environment_file --env-file $overrides_file -f $CONFIG_DIR/docker-compose.yml logs"
+    if [ "$MODE" = "domain" ]; then
+      compose logs --tail=100 caddy >&2 || true
+      fail "HTTPS readiness failed for $DOMAIN within ${HEALTH_TIMEOUT}s; verify that DNS points to this host and inbound TCP 80/443 and UDP 443 are reachable; the latest Caddy diagnostics are printed above"
+    fi
+    fail "readiness did not succeed within ${HEALTH_TIMEOUT}s; inspect with: docker compose --env-file $environment_file --env-file $overrides_file -f $CONFIG_DIR/docker-compose.yml -f $CONFIG_DIR/docker-compose.exposure.yml logs"
   fi
   sleep 1
   elapsed=$((elapsed + 1))
@@ -311,6 +426,7 @@ chmod 0640 "$state_file"
 
 printf '\nJobDock %s is healthy.\n' "$VERSION"
 printf 'Web console: %s\n' "$PUBLIC_URL"
+printf 'Exposure mode: %s\n' "$MODE"
 printf 'Configuration: %s\n' "$CONFIG_DIR"
 printf 'Persistent data: %s\n' "$DATA_DIR"
 if [ "$new_setup_token" = "true" ]; then

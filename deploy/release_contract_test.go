@@ -41,6 +41,10 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 		"gh release create",
 		"deploy/prepare-release-assets.sh",
 		"release-assets/docker-compose.yml",
+		"release-assets/docker-compose.domain.yml",
+		"release-assets/docker-compose.proxy.yml",
+		"release-assets/docker-compose.local.yml",
+		"release-assets/Caddyfile",
 		"release-assets/install-control-plane.sh",
 		"release-assets/install-agent.sh",
 		"release-assets/SHA256SUMS",
@@ -79,7 +83,7 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 		}
 	}
 	assets := readReleaseFile(t, "deploy", "prepare-release-assets.sh")
-	for _, required := range []string{"release-manifest.json", "docker-compose.yml", "install-control-plane.sh", "install-agent.sh", "SHA256SUMS", "## Highlights", "## Changes", "sha256sum", "pip install jobdock-sdk==", "SDK wheel checksum mismatch", "SDK sdist checksum mismatch"} {
+	for _, required := range []string{"release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-control-plane.sh", "install-agent.sh", "SHA256SUMS", "## Highlights", "## Changes", "sha256sum", "pip install jobdock-sdk==", "SDK wheel checksum mismatch", "SDK sdist checksum mismatch"} {
 		if !strings.Contains(assets, required) {
 			t.Fatalf("release asset packager is missing %q", required)
 		}
@@ -116,7 +120,7 @@ func TestReleaseInstallationIsDocumentedSeparatelyFromDevelopment(t *testing.T) 
 	guide := readReleaseFile(t, "docs", "installing-release.md")
 	for _, required := range []string{
 		"Go, Node.js, Python, Git, and the JobDock repository are not required",
-		"install-control-plane.sh | sudo sh",
+		"--mode domain --domain dock.example.com",
 		"verifies `SHA256SUMS`",
 		"/etc/jobdock",
 		"/var/lib/jobdock",

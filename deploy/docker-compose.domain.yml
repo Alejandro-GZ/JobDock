@@ -1,0 +1,28 @@
+services:
+  jobdock-server:
+    environment:
+      JOBDOCK_TRUST_PROXY_HEADERS: "true"
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    depends_on:
+      jobdock-server:
+        condition: service_healthy
+    environment:
+      JOBDOCK_DOMAIN: "${JOBDOCK_DOMAIN:?Set the public JobDock domain}"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - "${JOBDOCK_CADDYFILE_PATH:-/etc/jobdock/Caddyfile}:/etc/caddy/Caddyfile:ro"
+      - "${JOBDOCK_CADDY_DATA_DIR:-/var/lib/jobdock/caddy/data}:/data"
+      - "${JOBDOCK_CADDY_CONFIG_DIR:-/var/lib/jobdock/caddy/config}:/config"
+    cap_drop: [ALL]
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - default

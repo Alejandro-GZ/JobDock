@@ -2,12 +2,11 @@ services:
   jobdock-server:
     image: "@@JOBDOCK_SERVER_REFERENCE@@"
     restart: unless-stopped
-    ports:
-      - "${JOBDOCK_HTTP_PORT:-8080}:8080"
     environment:
       JOBDOCK_LISTEN_ADDR: ":8080"
       JOBDOCK_PUBLIC_URL: "${JOBDOCK_PUBLIC_URL:-http://localhost:8080}"
-      JOBDOCK_ALLOW_INSECURE_HTTP: "${JOBDOCK_ALLOW_INSECURE_HTTP:-true}"
+      JOBDOCK_ALLOW_INSECURE_HTTP: "${JOBDOCK_ALLOW_INSECURE_HTTP:-false}"
+      JOBDOCK_TRUST_PROXY_HEADERS: "${JOBDOCK_TRUST_PROXY_HEADERS:-false}"
       JOBDOCK_BOOTSTRAP_ADMIN_USERNAME: "${JOBDOCK_BOOTSTRAP_ADMIN_USERNAME:-admin}"
       JOBDOCK_SETUP_TOKEN_FILE: "/run/secrets/jobdock_setup_token"
       JOBDOCK_MASTER_KEY_FILE: "/run/secrets/jobdock_master_key"

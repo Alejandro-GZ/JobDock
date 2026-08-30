@@ -6,6 +6,22 @@
 - Keep the server data volume and agent state/workspace volumes on durable filesystems.
 - Treat every agent as host-administrative software: access to the Docker socket can control the host.
 - Put JobDock on a trusted private network or VPN and restrict public access at the firewall or reverse proxy.
+
+### Exposure modes
+
+The supported release installer requires one explicit exposure mode. `domain`
+runs the versioned Caddy edge, publishes only TCP 80/443 and UDP 443, redirects
+HTTP to HTTPS, renews certificates automatically, and applies HSTS. `proxy`
+does not run Caddy and binds JobDock to `127.0.0.1:8080` by default; the external
+proxy must pass `Host`, `X-Forwarded-Proto`, and `X-Forwarded-For`, preserve
+streaming responses, and disable buffering for SSE routes. `local` publishes
+plain HTTP only after the installer receives `--allow-insecure-http`; do not use
+it on an untrusted network.
+
+Only domain and proxy deployments trust forwarded client metadata. Do not make
+the proxy-mode loopback port publicly reachable while proxy-header trust is
+enabled. HSTS belongs at the external proxy in proxy mode and is deliberately
+absent from local mode.
 - Run `jobdock-builder` and `buildkitd` as separate services. Neither service may mount the host Docker socket.
 
 ## Isolated source builder

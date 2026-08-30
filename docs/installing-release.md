@@ -17,15 +17,17 @@ Go, Node.js, Python, Git, and the JobDock repository are not required.
 
 ## Install the current stable release
 
-Run the official bootstrap from the latest stable GitHub Release:
+For a public domain, point its A/AAAA record at the host, allow inbound TCP
+80/443 and UDP 443, then run:
 
 ```sh
-curl -fsSL https://github.com/Alejandro-GZ/JobDock/releases/latest/download/install-control-plane.sh | sudo sh
+curl -fsSL https://github.com/Alejandro-GZ/JobDock/releases/latest/download/install-control-plane.sh \
+  | sudo sh -s -- --mode domain --domain dock.example.com
 ```
 
 The bootstrap performs all preflight checks before modifying system paths. It
 then resolves the stable release tag, downloads only `SHA256SUMS`, the release
-manifest, the digest-pinned Compose file, and the matching agent installer. It
+manifest, the digest-pinned Compose files, Caddy configuration, and the matching agent installer. It
 verifies `SHA256SUMS` before installing any downloaded payload.
 
 After starting the services, it waits for `/health/ready`. Success is reported
@@ -41,23 +43,44 @@ Pass a stable semantic version after the shell command:
 
 ```sh
 curl -fsSL https://github.com/Alejandro-GZ/JobDock/releases/latest/download/install-control-plane.sh \
-  | sudo sh -s -- --version 0.3.0
+  | sudo sh -s -- --version 0.3.0 --mode domain --domain dock.example.com
 ```
 
 The selected tag controls every downloaded asset. The generated Compose file
 contains the server and builder references by immutable digest. It does not use `latest`
 for installed JobDock components.
 
-The initial local HTTP endpoint and port can be selected explicitly:
+## Exposure modes
+
+`domain` is the recommended internet-facing mode. It runs Caddy, exposes only
+80/443, obtains and renews the certificate automatically, redirects HTTP to
+HTTPS, and applies HSTS. The JobDock server port remains private to Compose.
+Certificate failures report the domain and the DNS/port checks to perform.
+
+`proxy` is for an existing reverse proxy on the same host. It does not start
+Caddy and binds JobDock to loopback by default:
 
 ```sh
 curl -fsSL https://github.com/Alejandro-GZ/JobDock/releases/latest/download/install-control-plane.sh \
-  | sudo sh -s -- --port 8080 --public-url http://dock.internal:8080
+  | sudo sh -s -- --mode proxy --public-url https://dock.example.com --port 8080
 ```
 
-Integrated production exposure and TLS modes are documented separately as they
-become available. Do not expose the local HTTP mode directly to an untrusted
-network.
+Forward the original `Host`, `X-Forwarded-Proto`, and `X-Forwarded-For` headers.
+Disable response buffering for SSE, especially `/api/v1/jobs/*/series/stream`,
+log tails, and job update streams. Configure HTTPS redirects and HSTS at that
+proxy, not in JobDock.
+
+`local` is intended only for trusted LAN/development use and requires an
+explicit insecure opt-in:
+
+```sh
+curl -fsSL https://github.com/Alejandro-GZ/JobDock/releases/latest/download/install-control-plane.sh \
+  | sudo sh -s -- --mode local --allow-insecure-http --port 8080 \
+      --public-url http://dock.internal:8080
+```
+
+Do not expose local mode to an untrusted network. The chosen mode is persisted;
+reinstallation reuses it and refuses an accidental mode change.
 
 ## Host layout and repeatability
 
@@ -101,6 +124,7 @@ sudo docker compose \
   --env-file /etc/jobdock/jobdock.env \
   --env-file /etc/jobdock/overrides.env \
   -f /etc/jobdock/docker-compose.yml \
+  -f /etc/jobdock/docker-compose.exposure.yml \
   ps
 ```
 
@@ -114,8 +138,7 @@ installer stored with the installed release:
 
 ```sh
 sudo /usr/local/lib/jobdock/releases/0.3.0/install-agent.sh \
-  --server http://dock.internal:8080 \
-  --allow-insecure-http \
+  --server https://dock.example.com \
   --token YOUR_ONE_TIME_TOKEN \
   --name cpu-01 \
   --labels zone=lab

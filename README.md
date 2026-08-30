@@ -31,7 +31,8 @@ plugin, `curl`, and `sha256sum`. Install the current stable control plane with
 one command:
 
 ```sh
-curl -fsSL https://github.com/Alejandro-GZ/JobDock/releases/latest/download/install-control-plane.sh | sudo sh
+curl -fsSL https://github.com/Alejandro-GZ/JobDock/releases/latest/download/install-control-plane.sh \
+  | sudo sh -s -- --mode domain --domain dock.example.com
 ```
 
 The bootstrap verifies the version-matched release payloads before installing

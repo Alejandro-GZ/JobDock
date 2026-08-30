@@ -1,0 +1,9 @@
+{$JOBDOCK_DOMAIN} {
+	encode zstd gzip
+
+	header Strict-Transport-Security "max-age=31536000"
+
+	reverse_proxy jobdock-server:8080 {
+		flush_interval -1
+	}
+}

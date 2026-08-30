@@ -67,7 +67,7 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 		t.Fatalf("prepare release assets: %v\n%s", runErr, output)
 	}
 
-	for _, name := range []string{"release-manifest.json", "docker-compose.yml", "install-control-plane.sh", "install-agent.sh", "SHA256SUMS", "release-notes.md", wheelName, sdistName} {
+	for _, name := range []string{"release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-control-plane.sh", "install-agent.sh", "SHA256SUMS", "release-notes.md", wheelName, sdistName} {
 		if _, err = os.Stat(filepath.Join(outputPath, name)); err != nil {
 			t.Fatalf("expected release asset %s: %v", name, err)
 		}
@@ -78,6 +78,20 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 	}
 	if strings.Contains(compose, "build:") {
 		t.Fatal("release Compose file must not contain local image build instructions")
+	}
+	domainCompose := readTestFile(t, filepath.Join(outputPath, "docker-compose.domain.yml"))
+	if !strings.Contains(domainCompose, "caddy:2.10.2-alpine") || !strings.Contains(domainCompose, `"80:80"`) || !strings.Contains(domainCompose, `"443:443"`) {
+		t.Fatal("domain deployment does not publish the versioned Caddy edge on 80/443")
+	}
+	proxyCompose := readTestFile(t, filepath.Join(outputPath, "docker-compose.proxy.yml"))
+	if strings.Contains(proxyCompose, "caddy:") || !strings.Contains(proxyCompose, "127.0.0.1") {
+		t.Fatal("proxy deployment must expose only the loopback server without Caddy")
+	}
+	caddyfile := readTestFile(t, filepath.Join(outputPath, "Caddyfile"))
+	for _, required := range []string{"Strict-Transport-Security", "flush_interval -1", "reverse_proxy jobdock-server:8080"} {
+		if !strings.Contains(caddyfile, required) {
+			t.Fatalf("release Caddyfile is missing %q", required)
+		}
 	}
 	installer := readTestFile(t, filepath.Join(outputPath, "install-agent.sh"))
 	if !strings.Contains(installer, `DEFAULT_VERSION="1.2.3-rc.1"`) || !strings.Contains(installer, `DEFAULT_IMAGE_REFERENCE="`+images[1]["reference"]+`"`) {

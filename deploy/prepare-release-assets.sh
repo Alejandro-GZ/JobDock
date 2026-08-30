@@ -64,6 +64,10 @@ awk \
   -v builder="$builder_reference" \
   '{gsub(/@@JOBDOCK_SERVER_REFERENCE@@/, server); gsub(/@@JOBDOCK_BUILDER_REFERENCE@@/, builder); print}' \
   "$script_dir/docker-compose.release.yml.tmpl" > "$output_dir/docker-compose.yml"
+for deployment_asset in docker-compose.domain.yml docker-compose.proxy.yml docker-compose.local.yml; do
+  cp -- "$script_dir/$deployment_asset" "$output_dir/$deployment_asset"
+done
+cp -- "$script_dir/Caddyfile.release" "$output_dir/Caddyfile"
 
 awk \
   -v version="$version" \
@@ -104,12 +108,12 @@ Commit: \`$commit\`
 
 ## Install
 
-\`curl -fsSL https://github.com/$repository/releases/latest/download/install-control-plane.sh | sudo sh\`
+\`curl -fsSL https://github.com/$repository/releases/latest/download/install-control-plane.sh | sudo sh -s -- --mode domain --domain dock.example.com\`
 
 ## Changes
 EOF
 
 (
   cd -- "$output_dir"
-  sha256sum release-manifest.json docker-compose.yml install-control-plane.sh install-agent.sh "$wheel_filename" "$sdist_filename" > SHA256SUMS
+  sha256sum release-manifest.json docker-compose.yml docker-compose.domain.yml docker-compose.proxy.yml docker-compose.local.yml Caddyfile install-control-plane.sh install-agent.sh "$wheel_filename" "$sdist_filename" > SHA256SUMS
 )

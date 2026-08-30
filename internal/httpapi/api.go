@@ -234,7 +234,7 @@ func (a *API) setupStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) setupAdmin(w http.ResponseWriter, r *http.Request) {
-	client := clientAddress(r.RemoteAddr)
+	client := a.clientAddress(r)
 	if !a.allowLogin(client) {
 		writeProblem(w, http.StatusTooManyRequests, "rate_limited", "Too many setup attempts")
 		return
@@ -282,7 +282,7 @@ func (a *API) setupAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
-	client := clientAddress(r.RemoteAddr)
+	client := a.clientAddress(r)
 	if !a.allowLogin(client) {
 		writeProblem(w, http.StatusTooManyRequests, "rate_limited", "Too many login attempts")
 		return
@@ -1567,6 +1567,19 @@ func clientAddress(remote string) string {
 		return host
 	}
 	return remote
+}
+
+func (a *API) clientAddress(r *http.Request) string {
+	if a.config.TrustProxyHeaders {
+		forwarded := strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0]
+		if address := strings.TrimSpace(forwarded); net.ParseIP(address) != nil {
+			return address
+		}
+		if address := strings.TrimSpace(r.Header.Get("X-Real-IP")); net.ParseIP(address) != nil {
+			return address
+		}
+	}
+	return clientAddress(r.RemoteAddr)
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) bool {

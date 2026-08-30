@@ -67,6 +67,11 @@ func TestServerRejectsInvalidOverridesBeforeStartup(t *testing.T) {
 	if _, err := LoadServer(); err == nil || !strings.Contains(err.Error(), "JOBDOCK_ALLOW_INSECURE_HTTP") {
 		t.Fatalf("invalid boolean was not rejected: %v", err)
 	}
+	t.Setenv("JOBDOCK_ALLOW_INSECURE_HTTP", "false")
+	t.Setenv("JOBDOCK_TRUST_PROXY_HEADERS", "sometimes")
+	if _, err := LoadServer(); err == nil || !strings.Contains(err.Error(), "JOBDOCK_TRUST_PROXY_HEADERS") {
+		t.Fatalf("invalid proxy-header boolean was not rejected: %v", err)
+	}
 }
 
 func TestServerRejectsShortSetupToken(t *testing.T) {

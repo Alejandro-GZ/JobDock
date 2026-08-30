@@ -314,6 +314,10 @@ jobs:
             "${latest[@]}" \
             release-assets/release-manifest.json \
             release-assets/docker-compose.yml \
+            release-assets/docker-compose.domain.yml \
+            release-assets/docker-compose.proxy.yml \
+            release-assets/docker-compose.local.yml \
+            release-assets/Caddyfile \
             release-assets/install-control-plane.sh \
             release-assets/install-agent.sh \
             release-assets/SHA256SUMS \
