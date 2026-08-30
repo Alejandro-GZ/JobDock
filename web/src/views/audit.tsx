@@ -84,8 +84,8 @@ export function Audit() {
 
   return <div className="w-full space-y-4 pb-8">
     <div className="sticky top-0 z-10 rounded-lg border bg-background/95 p-2.5 shadow-sm backdrop-blur">
-      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(14rem,1fr)_10rem_11rem_11rem_9rem_9rem_auto]">
-        <div className="relative"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input aria-label="Search audit events" className="pl-8" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search actions, people, resources or IDs" /></div>
+      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(14rem,0.9fr)_minmax(9rem,0.75fr)_minmax(9rem,0.75fr)_minmax(12.5rem,1fr)_9.5rem_9.5rem_auto]">
+        <div className="relative"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input aria-label="Search audit events" className="pl-8" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search" /></div>
         <FilterSelect label="All categories" value={params.get("category") ?? "all"} onChange={value => setFilter("category", value)}>{categories.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</FilterSelect>
         <FilterSelect label="All actors" value={params.get("actor") ?? "all"} onChange={value => setFilter("actor", value)}><SelectItem value="system">System</SelectItem>{(users.data ?? []).map(user => <SelectItem key={user.id} value={user.id}>{user.username}</SelectItem>)}</FilterSelect>
         <FilterSelect label="All resources" value={params.get("target") ?? "all"} onChange={value => setFilter("target", value)}>{targetTypes.map(type => <SelectItem key={type} value={type}>{humanizeKey(type)}</SelectItem>)}</FilterSelect>
