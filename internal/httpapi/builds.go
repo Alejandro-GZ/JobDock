@@ -323,7 +323,7 @@ func (a *API) deleteBuild(w http.ResponseWriter, r *http.Request) {
 	if err := a.files.DeleteBuild(build.ID); err != nil {
 		a.log.Error("delete build files", "error", err, "build_id", build.ID)
 	}
-	_ = a.store.Audit(r.Context(), currentUser(r).ID, "build.delete", "build", build.ID, map[string]any{})
+	_ = a.store.AuditWithLabels(r.Context(), currentUser(r).ID, currentUser(r).Username, "build.delete", "build", build.ID, build.Name, map[string]any{})
 	w.WriteHeader(http.StatusNoContent)
 }
 

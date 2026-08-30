@@ -296,12 +296,62 @@ func (a *API) createUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, user)
 }
 func (a *API) listAudit(w http.ResponseWriter, r *http.Request) {
-	items, err := a.store.ListAudit(r.Context(), 200)
+	query := r.URL.Query()
+	filter := store.AuditFilter{Category: query.Get("category"), ActorID: query.Get("actor_id"), TargetType: query.Get("target_type"), Query: query.Get("q")}
+	var err error
+	if value := query.Get("before"); value != "" {
+		filter.Before, err = strconv.ParseInt(value, 10, 64)
+		if err != nil || filter.Before < 1 {
+			writeProblem(w, http.StatusUnprocessableEntity, "invalid_audit_cursor", "Audit cursor must be a positive event ID")
+			return
+		}
+	}
+	if value := query.Get("limit"); value != "" {
+		filter.Limit, err = strconv.Atoi(value)
+		if err != nil || filter.Limit < 1 || filter.Limit > 200 {
+			writeProblem(w, http.StatusUnprocessableEntity, "invalid_audit_limit", "Audit limit must be between 1 and 200")
+			return
+		}
+	}
+	if len(filter.Query) > 128 || !auditValueAllowed(filter.Category, []string{"", "authentication", "users", "jobs", "builds", "nodes", "secrets", "dashboards", "tokens", "system"}) || !auditValueAllowed(filter.TargetType, []string{"", "user", "job", "build", "node", "secret", "dashboard", "personal_access_token", "enrollment_token"}) {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_audit_filter", "Audit filters contain an unsupported value")
+		return
+	}
+	if value := query.Get("from"); value != "" {
+		parsed, parseErr := time.Parse(time.RFC3339, value)
+		if parseErr != nil {
+			writeProblem(w, http.StatusUnprocessableEntity, "invalid_audit_range", "Audit dates must use RFC3339")
+			return
+		}
+		filter.From = &parsed
+	}
+	if value := query.Get("to"); value != "" {
+		parsed, parseErr := time.Parse(time.RFC3339, value)
+		if parseErr != nil {
+			writeProblem(w, http.StatusUnprocessableEntity, "invalid_audit_range", "Audit dates must use RFC3339")
+			return
+		}
+		filter.To = &parsed
+	}
+	if filter.From != nil && filter.To != nil && filter.From.After(*filter.To) {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_audit_range", "Audit range start must not be after its end")
+		return
+	}
+	page, err := a.store.QueryAudit(r.Context(), filter)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": items})
+	writeJSON(w, 200, page)
+}
+
+func auditValueAllowed(value string, allowed []string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
@@ -772,11 +822,16 @@ func (a *API) createSecret(w http.ResponseWriter, r *http.Request) {
 func (a *API) deleteSecret(w http.ResponseWriter, r *http.Request) {
 	user := currentUser(r)
 	id := r.PathValue("id")
+	metadata, err := a.store.SecretMetadata(r.Context(), user.ID, id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	if err := a.store.DeleteSecret(r.Context(), user.ID, id); err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	_ = a.store.Audit(r.Context(), user.ID, "secret.delete", "secret", id, map[string]any{})
+	_ = a.store.AuditWithLabels(r.Context(), user.ID, user.Username, "secret.delete", "secret", id, metadata.Name, map[string]any{})
 	w.WriteHeader(204)
 }
 

@@ -110,6 +110,30 @@ func TestLoginAndIdempotentJobCreation(t *testing.T) {
 	if err != nil || len(auditEvents) == 0 || auditEvents[0].Action != "node.metadata.update" {
 		t.Fatalf("metadata audit event: %#v %v", auditEvents, err)
 	}
+	auditRequest, _ := http.NewRequest("GET", server.URL+"/api/v1/audit?limit=1&category=nodes&q=GPU", nil)
+	auditRequest.AddCookie(cookie)
+	auditResponse, err := http.DefaultClient.Do(auditRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var auditPage store.AuditPage
+	if decodeErr := json.NewDecoder(auditResponse.Body).Decode(&auditPage); decodeErr != nil {
+		t.Fatal(decodeErr)
+	}
+	auditResponse.Body.Close()
+	if auditResponse.StatusCode != http.StatusOK || len(auditPage.Items) != 1 || auditPage.Items[0].ActorLabel != "admin" || auditPage.Items[0].TargetLabel != "GPU worker" || !auditPage.Items[0].TargetAvailable {
+		t.Fatalf("filtered audit response: status=%d page=%#v", auditResponse.StatusCode, auditPage)
+	}
+	invalidAudit, _ := http.NewRequest("GET", server.URL+"/api/v1/audit?before=invalid", nil)
+	invalidAudit.AddCookie(cookie)
+	invalidAuditResponse, err := http.DefaultClient.Do(invalidAudit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidAuditResponse.Body.Close()
+	if invalidAuditResponse.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid audit cursor status: %d", invalidAuditResponse.StatusCode)
+	}
 	createMember, _ := http.NewRequest("POST", server.URL+"/api/v1/users", bytes.NewBufferString(`{"username":"member","password":"correct member battery","role":"member"}`))
 	createMember.Header.Set("Content-Type", "application/json")
 	createMember.Header.Set("X-CSRF-Token", session.CSRF)

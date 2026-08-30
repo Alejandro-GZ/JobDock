@@ -344,6 +344,11 @@ func (a *API) deleteDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID, jobID, dashboardID := currentUser(r).ID, r.PathValue("id"), r.PathValue("dashboardId")
+	dashboard, err := a.store.Dashboard(r.Context(), userID, jobID, dashboardID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	fallback, err := a.store.DeleteDashboard(r.Context(), userID, jobID, dashboardID)
 	if err == store.ErrConflict {
 		writeProblem(w, http.StatusConflict, "last_dashboard", "A job must retain at least one dashboard")
@@ -353,7 +358,7 @@ func (a *API) deleteDashboard(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	_ = a.store.Audit(r.Context(), userID, "dashboard.delete", "dashboard", dashboardID, map[string]any{"job_id": jobID, "active_dashboard_id": fallback})
+	_ = a.store.AuditWithLabels(r.Context(), userID, currentUser(r).Username, "dashboard.delete", "dashboard", dashboardID, dashboard.Name, map[string]any{"job_id": jobID, "active_dashboard_id": fallback})
 	w.WriteHeader(http.StatusNoContent)
 }
 

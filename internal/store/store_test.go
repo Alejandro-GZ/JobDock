@@ -253,6 +253,44 @@ func TestEmptyCollectionsAreJSONArrays(t *testing.T) {
 	}
 }
 
+func TestAuditSnapshotsAndCursorFilters(t *testing.T) {
+	ctx := context.Background()
+	repository, err := store.Open(t.TempDir() + "/jobdock.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	user := domain.User{ID: ids.New(), Username: "operator", Role: domain.RoleAdmin, CreatedAt: time.Now().UTC()}
+	if err = repository.CreateUser(ctx, user, "hash"); err != nil {
+		t.Fatal(err)
+	}
+	node := domain.Node{ID: ids.New(), Name: "gpu-worker", Status: domain.NodeOnline, ProtocolVersion: 1, CPUTotalMillis: 1000, MemoryTotalBytes: 1024, WorkspaceFreeBytes: 1024, Labels: map[string]string{}, LastHeartbeat: time.Now().UTC(), CreatedAt: time.Now().UTC()}
+	if err = repository.UpsertNode(ctx, node, "audit-credential"); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.Audit(ctx, user.ID, "node.drain", "node", node.ID, map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.UpdateNodeMetadata(ctx, node.ID, "renamed-worker", map[string]string{}); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.Audit(ctx, user.ID, "node.resume", "node", node.ID, map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := repository.QueryAudit(ctx, store.AuditFilter{Limit: 1, Category: "nodes", ActorID: user.ID, Query: "worker"})
+	if err != nil || len(page.Items) != 1 || page.NextCursor == 0 {
+		t.Fatalf("first audit page: %#v %v", page, err)
+	}
+	if page.Items[0].ActorLabel != "operator" || page.Items[0].TargetLabel != "renamed-worker" || !page.Items[0].TargetAvailable {
+		t.Fatalf("latest audit labels: %#v", page.Items[0])
+	}
+	older, err := repository.QueryAudit(ctx, store.AuditFilter{Limit: 10, Before: page.NextCursor, Category: "nodes"})
+	if err != nil || len(older.Items) != 1 || older.Items[0].TargetLabel != "gpu-worker" {
+		t.Fatalf("immutable historical label: %#v %v", older, err)
+	}
+}
+
 func TestJobUpdatesAreIsolatedByOwner(t *testing.T) {
 	ctx := context.Background()
 	repository, err := store.Open(t.TempDir() + "/jobdock.db")

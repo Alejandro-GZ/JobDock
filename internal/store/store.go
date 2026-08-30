@@ -48,13 +48,32 @@ type SecretMetadata struct {
 }
 
 type AuditEvent struct {
-	ID         int64          `json:"id"`
-	ActorID    string         `json:"actor_id,omitempty"`
-	Action     string         `json:"action"`
-	TargetType string         `json:"target_type"`
-	TargetID   string         `json:"target_id"`
-	Metadata   map[string]any `json:"metadata"`
-	CreatedAt  time.Time      `json:"created_at"`
+	ID              int64          `json:"id"`
+	ActorID         string         `json:"actor_id,omitempty"`
+	ActorLabel      string         `json:"actor_label,omitempty"`
+	Action          string         `json:"action"`
+	TargetType      string         `json:"target_type"`
+	TargetID        string         `json:"target_id"`
+	TargetLabel     string         `json:"target_label,omitempty"`
+	TargetAvailable bool           `json:"target_available"`
+	Metadata        map[string]any `json:"metadata"`
+	CreatedAt       time.Time      `json:"created_at"`
+}
+
+type AuditFilter struct {
+	Before     int64
+	Limit      int
+	Category   string
+	ActorID    string
+	TargetType string
+	From       *time.Time
+	To         *time.Time
+	Query      string
+}
+
+type AuditPage struct {
+	Items      []AuditEvent `json:"items"`
+	NextCursor int64        `json:"next_cursor,omitempty"`
 }
 
 type JobUpdate struct {
@@ -972,6 +991,18 @@ func (s *Store) ListSecrets(ctx context.Context, ownerID string) ([]SecretMetada
 	return result, rows.Err()
 }
 
+func (s *Store) SecretMetadata(ctx context.Context, ownerID, id string) (SecretMetadata, error) {
+	var item SecretMetadata
+	var created, updated string
+	err := s.db.QueryRowContext(ctx, `SELECT id,owner_id,name,kind,created_at,updated_at FROM secrets WHERE owner_id=? AND id=?`, ownerID, id).Scan(&item.ID, &item.OwnerID, &item.Name, &item.Kind, &created, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return item, ErrNotFound
+	}
+	item.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	item.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	return item, err
+}
+
 func (s *Store) SecretCiphertext(ctx context.Context, ownerID, name string) ([]byte, string, error) {
 	var value []byte
 	var kind string
@@ -995,32 +1026,137 @@ func (s *Store) DeleteSecret(ctx context.Context, ownerID, id string) error {
 }
 
 func (s *Store) Audit(ctx context.Context, actorID, action, targetType, targetID string, metadata map[string]any) error {
+	return s.AuditWithLabels(ctx, actorID, "", action, targetType, targetID, "", metadata)
+}
+
+func (s *Store) AuditWithLabels(ctx context.Context, actorID, actorLabel, action, targetType, targetID, targetLabel string, metadata map[string]any) error {
+	if actorLabel == "" {
+		if actorID == "" {
+			actorLabel = "System"
+		} else {
+			_ = s.db.QueryRowContext(ctx, `SELECT username FROM users WHERE id=?`, actorID).Scan(&actorLabel)
+		}
+	}
+	if targetLabel == "" {
+		targetLabel = auditMetadataLabel(metadata)
+	}
+	if targetLabel == "" {
+		targetLabel = s.auditTargetLabel(ctx, targetType, targetID)
+	}
 	data, _ := json.Marshal(metadata)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO audit_events(actor_id,action,target_type,target_id,metadata_json,created_at) VALUES(?,?,?,?,?,?)`, nullable(actorID), action, targetType, targetID, data, formatTime(time.Now().UTC()))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO audit_events(actor_id,actor_label,action,target_type,target_id,target_label,metadata_json,created_at) VALUES(?,?,?,?,?,?,?,?)`, nullable(actorID), nullable(actorLabel), action, targetType, targetID, nullable(targetLabel), data, formatTime(time.Now().UTC()))
 	return err
 }
 
-func (s *Store) ListAudit(ctx context.Context, limit int) ([]AuditEvent, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 200
+func auditMetadataLabel(metadata map[string]any) string {
+	for _, key := range []string{"name", "username"} {
+		if value, ok := metadata[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(actor_id,''),action,target_type,target_id,metadata_json,created_at FROM audit_events ORDER BY id DESC LIMIT ?`, limit)
+	return ""
+}
+
+func (s *Store) auditTargetLabel(ctx context.Context, targetType, targetID string) string {
+	queries := map[string]string{
+		"user":                  `SELECT username FROM users WHERE id=?`,
+		"node":                  `SELECT COALESCE(name_override,name) FROM nodes WHERE id=?`,
+		"job":                   `SELECT json_extract(spec_json,'$.name') FROM jobs WHERE id=?`,
+		"secret":                `SELECT name FROM secrets WHERE id=?`,
+		"build":                 `SELECT name FROM builds WHERE id=?`,
+		"dashboard":             `SELECT name FROM job_dashboards WHERE id=?`,
+		"personal_access_token": `SELECT name FROM personal_access_tokens WHERE id=?`,
+	}
+	query, ok := queries[targetType]
+	if !ok {
+		return ""
+	}
+	var label string
+	_ = s.db.QueryRowContext(ctx, query, targetID).Scan(&label)
+	return label
+}
+
+func (s *Store) ListAudit(ctx context.Context, limit int) ([]AuditEvent, error) {
+	page, err := s.QueryAudit(ctx, AuditFilter{Limit: limit})
+	return page.Items, err
+}
+
+func (s *Store) QueryAudit(ctx context.Context, filter AuditFilter) (AuditPage, error) {
+	if filter.Limit <= 0 || filter.Limit > 200 {
+		filter.Limit = 50
+	}
+	where, args := []string{"1=1"}, make([]any, 0, 8)
+	if filter.Before > 0 {
+		where, args = append(where, "id < ?"), append(args, filter.Before)
+	}
+	if filter.ActorID != "" {
+		if filter.ActorID == "system" {
+			where = append(where, "actor_id IS NULL")
+		} else {
+			where, args = append(where, "actor_id = ?"), append(args, filter.ActorID)
+		}
+	}
+	if filter.TargetType != "" {
+		where, args = append(where, "target_type = ?"), append(args, filter.TargetType)
+	}
+	if filter.From != nil {
+		where, args = append(where, "created_at >= ?"), append(args, formatTime(filter.From.UTC()))
+	}
+	if filter.To != nil {
+		where, args = append(where, "created_at <= ?"), append(args, formatTime(filter.To.UTC()))
+	}
+	if filter.Category != "" {
+		prefixes := map[string]string{"authentication": "auth.%", "users": "user.%", "jobs": "job.%", "builds": "build.%", "nodes": "node.%", "secrets": "secret.%", "dashboards": "dashboard.%", "tokens": "auth.pat.%"}
+		if filter.Category == "system" {
+			where = append(where, "actor_id IS NULL")
+		} else if prefix, ok := prefixes[filter.Category]; ok {
+			where, args = append(where, "action LIKE ?"), append(args, prefix)
+			if filter.Category == "authentication" {
+				where = append(where, "action NOT LIKE 'auth.pat.%'")
+			}
+		}
+	}
+	if query := strings.TrimSpace(filter.Query); query != "" {
+		like := "%" + query + "%"
+		where = append(where, "(action LIKE ? OR target_id LIKE ? OR COALESCE(target_label,'') LIKE ? OR COALESCE(actor_label,'') LIKE ?)")
+		args = append(args, like, like, like, like)
+	}
+	args = append(args, filter.Limit+1)
+	availability := `CASE target_type
+		WHEN 'user' THEN EXISTS(SELECT 1 FROM users WHERE users.id=audit_events.target_id)
+		WHEN 'node' THEN EXISTS(SELECT 1 FROM nodes WHERE nodes.id=audit_events.target_id AND nodes.deleted_at IS NULL)
+		WHEN 'job' THEN EXISTS(SELECT 1 FROM jobs WHERE jobs.id=audit_events.target_id AND jobs.deleted_at IS NULL)
+		WHEN 'secret' THEN EXISTS(SELECT 1 FROM secrets WHERE secrets.id=audit_events.target_id)
+		WHEN 'build' THEN EXISTS(SELECT 1 FROM builds WHERE builds.id=audit_events.target_id)
+		WHEN 'dashboard' THEN EXISTS(SELECT 1 FROM job_dashboards WHERE job_dashboards.id=audit_events.target_id)
+		WHEN 'personal_access_token' THEN EXISTS(SELECT 1 FROM personal_access_tokens WHERE personal_access_tokens.id=audit_events.target_id)
+		ELSE 0 END`
+	statement := `SELECT id,COALESCE(actor_id,''),COALESCE(actor_label,''),action,target_type,target_id,COALESCE(target_label,''),` + availability + `,metadata_json,created_at FROM audit_events WHERE ` + strings.Join(where, " AND ") + ` ORDER BY id DESC LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, statement, args...)
 	if err != nil {
-		return nil, err
+		return AuditPage{}, err
 	}
 	defer rows.Close()
 	result := make([]AuditEvent, 0)
 	for rows.Next() {
 		var event AuditEvent
 		var metadata, created string
-		if err := rows.Scan(&event.ID, &event.ActorID, &event.Action, &event.TargetType, &event.TargetID, &metadata, &created); err != nil {
-			return nil, err
+		if err := rows.Scan(&event.ID, &event.ActorID, &event.ActorLabel, &event.Action, &event.TargetType, &event.TargetID, &event.TargetLabel, &event.TargetAvailable, &metadata, &created); err != nil {
+			return AuditPage{}, err
 		}
 		_ = json.Unmarshal([]byte(metadata), &event.Metadata)
 		event.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 		result = append(result, event)
 	}
-	return result, rows.Err()
+	if err = rows.Err(); err != nil {
+		return AuditPage{}, err
+	}
+	page := AuditPage{Items: result}
+	if len(result) > filter.Limit {
+		page.Items = result[:filter.Limit]
+		page.NextCursor = page.Items[len(page.Items)-1].ID
+	}
+	return page, nil
 }
 
 func (s *Store) ClaimIdempotency(ctx context.Context, userID, key, method, path string) (bool, int, []byte, error) {

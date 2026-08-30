@@ -698,7 +698,19 @@ paths:
   /audit:
     get:
       operationId: listAuditEvents
-      responses: {'200': {description: Administrator-only audit events}}
+      description: Return an administrator-only, reverse-chronological audit trail with immutable display labels.
+      parameters:
+        - {name: before, in: query, description: Return events with IDs lower than this cursor, schema: {type: integer, format: int64, minimum: 1}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+        - {name: category, in: query, schema: {type: string, enum: [authentication, users, jobs, builds, nodes, secrets, dashboards, tokens, system]}}
+        - {name: actor_id, in: query, description: User UUID or the literal system, schema: {type: string}}
+        - {name: target_type, in: query, schema: {type: string, enum: [user, job, build, node, secret, dashboard, personal_access_token, enrollment_token]}}
+        - {name: from, in: query, schema: {type: string, format: date-time}}
+        - {name: to, in: query, schema: {type: string, format: date-time}}
+        - {name: q, in: query, schema: {type: string, maxLength: 128}}
+      responses:
+        '200': {description: Audit event page, content: {application/json: {schema: {$ref: '#/components/schemas/AuditPage'}}}}
+        '422': {$ref: '#/components/responses/Problem'}
   /nodes/enrollment-tokens:
     post:
       operationId: createEnrollmentToken
@@ -1025,6 +1037,26 @@ components:
       type: object
       required: [items]
       properties: {items: {type: array, items: {$ref: '#/components/schemas/User'}}}
+    AuditEvent:
+      type: object
+      required: [id, action, target_type, target_id, target_available, metadata, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        actor_id: {type: string, format: uuid}
+        actor_label: {type: string, description: Immutable actor name captured when the event was recorded}
+        action: {type: string}
+        target_type: {type: string}
+        target_id: {type: string}
+        target_label: {type: string, description: Immutable target name captured when the event was recorded}
+        target_available: {type: boolean, description: Whether the target can currently be opened}
+        metadata: {type: object, additionalProperties: true}
+        created_at: {type: string, format: date-time}
+    AuditPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AuditEvent'}}
+        next_cursor: {type: integer, format: int64, minimum: 1}
     PersonalAccessToken:
       type: object
       required: [id, user_id, name, prefix, scopes, created_at]

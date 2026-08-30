@@ -1,4 +1,4 @@
-import type{AuditEvent,Build,BuildPlan,Checkpoint,DistributionObservation,Job,JobAttempt,JobEvent,JobSpec,JobTelemetrySummaryResponse,MatrixObservation,MetricSeriesResponse,Node,NodeDetail,PersonalAccessToken,ProgressState,ResourceSeriesResponse,Secret,TablePage,User}from "./types";
+import type{AuditPage,AuditQuery,Build,BuildPlan,Checkpoint,DistributionObservation,Job,JobAttempt,JobEvent,JobSpec,JobTelemetrySummaryResponse,MatrixObservation,MetricSeriesResponse,Node,NodeDetail,PersonalAccessToken,ProgressState,ResourceSeriesResponse,Secret,TablePage,User}from "./types";
 import { jobFormData } from "@/lib/job-inputs";
 import { buildFormData,type BuildMode,type DockerfileConfig } from "@/lib/builds";
 import { dashboardSchemaVersion,type DashboardAppearance,type DashboardList,type DashboardPreference,type DashboardTemplate,type DashboardTemplateMatch,type DashboardTemplateOverride,type DashboardTemplateReference,type DashboardTemplateResolution,type DashboardWidget } from "@/lib/dashboard-widgets";
@@ -48,7 +48,7 @@ export const api={
   nodes:async()=> (await request<{items:Node[]|null}>("/nodes")).items??[],node:(id:string)=>request<NodeDetail>(`/nodes/${id}`),enrollmentToken:()=>request<{token:string;expires_at:string}>("/nodes/enrollment-tokens",{method:"POST"}),setNode:(id:string,action:"drain"|"resume")=>request(`/nodes/${id}/${action}`,{method:"POST"}),updateNode:(id:string,name:string,labels:Record<string,string>)=>request(`/nodes/${id}`,{method:"PATCH",body:JSON.stringify({name,labels})}),deleteNode:(id:string)=>request<void>(`/nodes/${id}`,{method:"DELETE"}),
   secrets:async()=> (await request<{items:Secret[]|null}>("/secrets")).items??[],createSecret:(name:string,value:string,kind:string)=>request<Secret>("/secrets",{method:"POST",body:JSON.stringify({name,value,kind})}),deleteSecret:(id:string)=>request<void>(`/secrets/${id}`,{method:"DELETE"}),
   users:async()=> (await request<{items:User[]|null}>("/users")).items??[],createUser:(username:string,password:string,role:string)=>request<User>("/users",{method:"POST",body:JSON.stringify({username,password,role})}),
-  audit:async()=> (await request<{items:AuditEvent[]|null}>("/audit")).items??[],
+  audit:(filters:AuditQuery={})=>{const query=new URLSearchParams();for(const [key,value] of Object.entries(filters))if(value!==undefined&&value!=="")query.set(key,String(value));return request<AuditPage>(`/audit${query.size?`?${query}`:""}`)},
   tokens:()=>request<{items:PersonalAccessToken[];available_scopes:string[]}>("/auth/tokens"),
   createToken:(name:string,scopes:string[],expires_at?:string)=>request<{token:string;personal_access_token:PersonalAccessToken}>("/auth/tokens",{method:"POST",body:JSON.stringify({name,scopes,expires_at:expires_at||undefined})}),
   revokeToken:(id:string)=>request<void>(`/auth/tokens/${id}`,{method:"DELETE"}),
