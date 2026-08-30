@@ -43,6 +43,32 @@ func TestValidateJobSpec(t *testing.T) {
 	}
 }
 
+func TestValidateSecretTargetsByInjectionMode(t *testing.T) {
+	base := JobSpec{Name: "secret-job", Image: "alpine:3", Resources: Resources{CPUMillis: 100, MemoryBytes: 1024}}
+	for _, ref := range []SecretRef{
+		{Name: "configuration", Target: "config.json", Mode: "file"},
+		{Name: "token", Target: "API_TOKEN", Mode: "env"},
+	} {
+		spec := base
+		spec.SecretRefs = []SecretRef{ref}
+		if err := ValidateJobSpec(spec); err != nil {
+			t.Fatalf("expected %s target %q to be valid: %v", ref.Mode, ref.Target, err)
+		}
+	}
+	for _, ref := range []SecretRef{
+		{Name: "configuration", Target: "../config.json", Mode: "file"},
+		{Name: "configuration", Target: "directory/config.json", Mode: "file"},
+		{Name: "token", Target: "INVALID-NAME", Mode: "env"},
+		{Name: "token", Target: "JOBDOCK_JOB_ID", Mode: "env"},
+	} {
+		spec := base
+		spec.SecretRefs = []SecretRef{ref}
+		if err := ValidateJobSpec(spec); err == nil {
+			t.Fatalf("expected %s target %q to be rejected", ref.Mode, ref.Target)
+		}
+	}
+}
+
 func TestValidateExplicitHardwareAffinity(t *testing.T) {
 	spec := JobSpec{Name: "hardware-job", Image: "alpine", TargetNodeID: "node", Resources: Resources{CPUMillis: 1000, CPUPackageID: "0", MemoryBytes: 1024, GPU: GPURequest{Count: 2, UUIDs: []string{"GPU-1", "GPU-2"}}}}
 	if err := ValidateJobSpec(spec); err != nil {

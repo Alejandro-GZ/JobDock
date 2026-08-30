@@ -164,11 +164,17 @@ func ValidateJobSpec(spec JobSpec) error {
 		}
 	}
 	for _, ref := range spec.SecretRefs {
-		if ref.Name == "" || !envName.MatchString(ref.Target) {
-			return errors.New("secret references require a name and valid target")
-		}
 		if ref.Mode != "file" && ref.Mode != "env" {
 			return errors.New("secret mode must be file or env")
+		}
+		if strings.TrimSpace(ref.Name) == "" {
+			return errors.New("secret references require a name")
+		}
+		if ref.Mode == "env" && (!envName.MatchString(ref.Target) || strings.HasPrefix(ref.Target, "JOBDOCK_")) {
+			return errors.New("environment secret targets must be valid, non-reserved variable names")
+		}
+		if ref.Mode == "file" && !validSecretFilename(ref.Target) {
+			return errors.New("file secret targets must be safe filenames of at most 255 characters")
 		}
 	}
 	if len(spec.Inputs) > 1024 {
@@ -194,4 +200,8 @@ func ValidateJobSpec(spec JobSpec) error {
 		}
 	}
 	return nil
+}
+
+func validSecretFilename(value string) bool {
+	return value != "" && len(value) <= 255 && value != "." && value != ".." && path.Base(value) == value && !strings.ContainsAny(value, "\\\x00")
 }
