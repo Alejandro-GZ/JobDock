@@ -253,6 +253,30 @@ func TestEmptyCollectionsAreJSONArrays(t *testing.T) {
 	}
 }
 
+func TestListUsersIncludesRecordedActivityAndRunningJobs(t *testing.T) {
+	ctx := context.Background()
+	repository, err := store.Open(t.TempDir() + "/jobdock.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	user := domain.User{ID: ids.New(), Username: "operator", Role: domain.RoleMember, CreatedAt: time.Now().UTC()}
+	if err = repository.CreateUser(ctx, user, "hash"); err != nil {
+		t.Fatal(err)
+	}
+	job := domain.Job{ID: ids.New(), OwnerID: user.ID, Spec: domain.JobSpec{Name: "active", Image: "alpine", Resources: domain.Resources{CPUMillis: 100, MemoryBytes: 1024}}, Status: domain.JobRunning, DesiredStatus: domain.JobRunning, ObservedStatus: domain.JobRunning, CreatedAt: time.Now().UTC()}
+	if err = repository.CreateJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	if err = repository.Audit(ctx, user.ID, "auth.login", "user", user.ID, map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	users, err := repository.ListUsers(ctx)
+	if err != nil || len(users) != 1 || users[0].LastSeenAt == nil || users[0].JobsRunning != 1 {
+		t.Fatalf("user operational summary = %#v, %v", users, err)
+	}
+}
+
 func TestAuditSnapshotsAndCursorFilters(t *testing.T) {
 	ctx := context.Background()
 	repository, err := store.Open(t.TempDir() + "/jobdock.db")

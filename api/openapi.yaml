@@ -1027,12 +1027,14 @@ components:
       properties: {user: {$ref: '#/components/schemas/User'}, csrf_token: {type: string}}
     User:
       type: object
-      required: [id, username, role, created_at]
+      required: [id, username, role, created_at, jobs_running]
       properties:
         id: {type: string, format: uuid}
         username: {type: string}
         role: {type: string, enum: [admin, member]}
         created_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time, description: Timestamp of the user's latest recorded audit activity.}
+        jobs_running: {type: integer, minimum: 0, description: Number of jobs currently in RUNNING state.}
     UserList:
       type: object
       required: [items]

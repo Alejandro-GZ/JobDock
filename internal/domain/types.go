@@ -57,10 +57,12 @@ const (
 )
 
 type User struct {
-	ID        string    `json:"id"`
-	Username  string    `json:"username"`
-	Role      Role      `json:"role"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          string     `json:"id"`
+	Username    string     `json:"username"`
+	Role        Role       `json:"role"`
+	CreatedAt   time.Time  `json:"created_at"`
+	LastSeenAt  *time.Time `json:"last_seen_at,omitempty"`
+	JobsRunning int        `json:"jobs_running"`
 }
 
 type BuildSource struct {

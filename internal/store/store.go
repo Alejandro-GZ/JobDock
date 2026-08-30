@@ -175,7 +175,11 @@ func (s *Store) UserByUsername(ctx context.Context, username string) (domain.Use
 }
 
 func (s *Store) ListUsers(ctx context.Context) ([]domain.User, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, username, role, created_at FROM users ORDER BY username`)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT u.id, u.username, u.role, u.created_at,
+			(SELECT MAX(a.created_at) FROM audit_events a WHERE a.actor_id=u.id),
+			(SELECT COUNT(*) FROM jobs j WHERE j.owner_id=u.id AND j.status='RUNNING')
+		FROM users u ORDER BY u.username`)
 	if err != nil {
 		return nil, err
 	}
@@ -184,10 +188,17 @@ func (s *Store) ListUsers(ctx context.Context) ([]domain.User, error) {
 	for rows.Next() {
 		var user domain.User
 		var created string
-		if err := rows.Scan(&user.ID, &user.Username, &user.Role, &created); err != nil {
+		var lastSeen sql.NullString
+		if err := rows.Scan(&user.ID, &user.Username, &user.Role, &created, &lastSeen, &user.JobsRunning); err != nil {
 			return nil, err
 		}
 		user.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		if lastSeen.Valid {
+			parsed, err := time.Parse(time.RFC3339Nano, lastSeen.String)
+			if err == nil {
+				user.LastSeenAt = &parsed
+			}
+		}
 		users = append(users, user)
 	}
 	return users, rows.Err()

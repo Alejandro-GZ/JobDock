@@ -58,10 +58,11 @@ export function Secrets() {
   const submit = () => { setSubmitted(true); if (valid) create.mutate(); };
 
   return <div className="space-y-4">
-    <div className="flex items-center justify-between gap-4">
-      <div><h1 className="text-xl font-semibold">Secrets</h1><p className="mt-0.5 text-xs text-muted-foreground">Encrypted credentials for workloads and private image pulls.</p></div>
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+      <div className="relative min-w-0 flex-1 sm:max-w-sm"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/><Input aria-label="Search secrets" className="pl-9" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search"/></div>
+      <div className="flex rounded-md border bg-muted/20 p-0.5" aria-label="Secret type filter">{filters.map(option => <Button key={option.value} size="sm" variant={filter === option.value ? "secondary" : "ghost"} className="h-7 px-2.5 text-xs" aria-pressed={filter === option.value} onClick={() => setFilter(option.value)}>{option.label}{query.data && <span className="text-[10px] text-muted-foreground">{option.value === "all" ? query.data.length : query.data.filter(secret => secret.kind === option.value).length}</span>}</Button>)}</div>
       <Dialog open={open} onOpenChange={next => next ? setOpen(true) : close()}>
-        <DialogTrigger asChild><Button size="sm"><Plus className="size-4" />New secret</Button></DialogTrigger>
+        <DialogTrigger asChild><Button size="sm" className="sm:ml-auto"><Plus className="size-4" />New secret</Button></DialogTrigger>
         <DialogContent className="sm:max-w-xl">
           <DialogHeader><DialogTitle>Create secret</DialogTitle><DialogDescription>Values are encrypted, write-only, and never returned by the API.</DialogDescription></DialogHeader>
           <div className="space-y-5">
@@ -81,11 +82,6 @@ export function Secrets() {
           <DialogFooter><Button variant="outline" onClick={close}>Cancel</Button><Button onClick={submit} disabled={create.isPending}>{create.isPending ? <><LoaderCircle className="size-4 animate-spin"/>Creating…</> : "Create secret"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
-
-    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-      <div className="relative min-w-0 flex-1 sm:max-w-sm"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/><Input aria-label="Search secrets" className="pl-9" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search"/></div>
-      <div className="flex rounded-md border bg-muted/20 p-0.5" aria-label="Secret type filter">{filters.map(option => <Button key={option.value} size="sm" variant={filter === option.value ? "secondary" : "ghost"} className="h-7 px-2.5 text-xs" aria-pressed={filter === option.value} onClick={() => setFilter(option.value)}>{option.label}{query.data && <span className="text-[10px] text-muted-foreground">{option.value === "all" ? query.data.length : query.data.filter(secret => secret.kind === option.value).length}</span>}</Button>)}</div>
     </div>
 
     {query.isPending ? <SecretSkeleton/> : query.isError ? <EmptyState icon={Server} title="Secrets could not be loaded" detail={query.error.message} action={<Button size="sm" variant="outline" onClick={() => query.refetch()}>Try again</Button>} /> : (query.data?.length ?? 0) === 0 ? <EmptyState icon={KeyRound} title="No secrets yet" detail="Create a job secret or registry credential to get started." action={<Button size="sm" onClick={() => setOpen(true)}><Plus className="size-4"/>New secret</Button>} /> : items.length === 0 ? <EmptyState icon={Search} title="No matching secrets" detail="Change the search or type filter." action={<Button size="sm" variant="outline" onClick={() => { setSearch(""); setFilter("all"); }}>Clear filters</Button>} /> : <div className="overflow-hidden rounded-md border"><Table>
