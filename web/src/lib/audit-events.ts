@@ -9,6 +9,7 @@ const descriptors: Record<string, Descriptor> = {
   "auth.pat.create": { category: "tokens", verb: () => "created personal access token" },
   "auth.pat.revoke": { category: "tokens", verb: () => "revoked personal access token" },
   "user.bootstrap": { category: "users", verb: () => "bootstrapped administrator" },
+  "user.setup": { category: "users", verb: () => "completed first-run setup for administrator" },
   "user.create": { category: "users", verb: () => "created user" },
   "job.create": { category: "jobs", verb: () => "created job" },
   "job.stop": { category: "jobs", verb: () => "requested job to stop" },

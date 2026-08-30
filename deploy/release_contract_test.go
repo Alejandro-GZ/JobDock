@@ -68,9 +68,14 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 		t.Fatal("legacy agent-only release workflow must not coexist with the release set")
 	}
 	template := readReleaseFile(t, "deploy", "docker-compose.release.yml.tmpl")
-	for _, required := range []string{"@@JOBDOCK_SERVER_REFERENCE@@", "@@JOBDOCK_BUILDER_REFERENCE@@"} {
+	for _, required := range []string{"@@JOBDOCK_SERVER_REFERENCE@@", "@@JOBDOCK_BUILDER_REFERENCE@@", "JOBDOCK_SETUP_TOKEN_FILE", "JOBDOCK_MASTER_KEY_FILE", "JOBDOCK_BUILDER_TOKEN_FILE", "secrets:"} {
 		if !strings.Contains(template, required) {
 			t.Fatalf("release Compose template is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD:", "JOBDOCK_BUILDER_TOKEN:"} {
+		if strings.Contains(template, forbidden) {
+			t.Fatalf("release Compose template persists sensitive environment variable %q", forbidden)
 		}
 	}
 	assets := readReleaseFile(t, "deploy", "prepare-release-assets.sh")

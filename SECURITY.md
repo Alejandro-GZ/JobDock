@@ -9,7 +9,6 @@ JobDock v0.1 is for trusted small teams running cooperative workloads. Docker co
 - Job containers receive no Docker socket, privileged mode, host network, host PID namespace, added Linux capabilities, or published ports.
 - Attempt credentials are mounted as read-only files and scoped to one job.
 
-Secrets are encrypted with AES-256-GCM. The master key lives outside SQLite and must be protected and backed up separately. Secret values are never returned to browser clients. File-mounted secrets are preferred; environment injection is available only as an explicit compatibility choice because container configuration can expose environment data to host administrators.
+Secrets are encrypted with AES-256-GCM. The master key lives outside SQLite and must be protected and backed up separately. Official deployments keep the master key, first-run token, and builder credential in restrictive files mounted only into their consuming services; they are not persisted in container environment values. The first-run token becomes unusable after the initial administrator is created. Secret values are never returned to browser clients. Environment injection into jobs is available only as an explicit compatibility choice because container configuration can expose environment data to host administrators.
 
 Report suspected vulnerabilities privately to the repository maintainers. Do not open a public issue containing credentials, exploit details, or affected deployment information.
-

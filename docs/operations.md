@@ -10,8 +10,10 @@
 
 ## Isolated source builder
 
-Generate a random builder credential of at least 32 characters and set the same
-`JOBDOCK_BUILDER_TOKEN` for the server and builder. Treat it as a scoped service
+The official installer generates a random builder credential and mounts
+separate restrictive copies into the server and builder through
+`JOBDOCK_BUILDER_TOKEN_FILE`. For manual development deployments, the legacy
+`JOBDOCK_BUILDER_TOKEN` environment value remains supported. Treat it as a scoped service
 credential: it can claim build work, download only assigned source archives,
 append build logs, and report results, but it cannot access users, secrets,
 jobs, nodes, or administrative APIs.
@@ -56,7 +58,7 @@ database and server data directory together.
 
 ## Backup and restore
 
-Stop the server or use SQLite's online backup mechanism, then copy the database, `jobs/`, and `master.key` from the same point in time. The encryption key is mandatory for restoring secrets. Restore into an empty data directory with the same or newer compatible JobDock version.
+Stop the server or use SQLite's online backup mechanism, then copy the database, `jobs/`, and `/etc/jobdock/secrets/master-key` from the same point in time. The encryption key is mandatory for restoring secrets. Restore into an empty data directory with the same or newer compatible JobDock version. Legacy development installs may still keep `master.key` inside the server data directory.
 
 ## Capacity defaults
 

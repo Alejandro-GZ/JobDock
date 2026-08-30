@@ -1,5 +1,6 @@
 export type Role="admin"|"member";
 export type User={id:string;username:string;role:Role;created_at:string;last_seen_at?:string;jobs_running?:number};
+export type SetupStatus={required:boolean;enabled:boolean;suggested_username:string};
 export type BuildStatus="CREATED"|"ANALYZING"|"BUILDING"|"SUCCEEDED"|"FAILED"|"CANCELLED";
 export type BuildSource={filename:string;size:number;sha256:string};
 export type Build={id:string;owner_id:string;name:string;mode:"RAILPACK"|"DOCKERFILE";status:BuildStatus;source:BuildSource;context_path?:string;dockerfile_path?:string;oci_digest?:string;artifact_reference?:string;artifact_available:boolean;failure_reason?:string;created_at:string;started_at?:string;finished_at?:string;version:number};

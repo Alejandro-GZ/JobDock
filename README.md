@@ -35,8 +35,9 @@ curl -fsSL https://github.com/Alejandro-GZ/JobDock/releases/latest/download/inst
 ```
 
 The bootstrap verifies the version-matched release payloads before installing
-them, starts the digest-pinned Compose project, waits for readiness, and prints
-the web URL and first-login credential. No repository clone, Go, Node.js,
+them, generates file-mounted internal secrets, starts the digest-pinned Compose
+project, waits for readiness, and prints the web URL and one-time setup token.
+No repository clone, Go, Node.js,
 Python, or local image build is involved.
 
 See [Install a published release](docs/installing-release.md) for the complete

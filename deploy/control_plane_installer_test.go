@@ -21,10 +21,13 @@ func TestControlPlaneInstallerContract(t *testing.T) {
 		"/var/lib/jobdock",
 		"@sha256:",
 		"compose pull",
+		"compose config --quiet",
 		"compose up -d",
 		"/health/ready",
 		"is healthy",
 		"use the supported upgrade flow",
+		"One-time setup token:",
+		"overrides.env",
 	} {
 		if !strings.Contains(installer, required) {
 			t.Fatalf("control-plane installer is missing %q", required)
@@ -127,18 +130,40 @@ cp "$JOBDOCK_TEST_RELEASE_DIR/$asset" "$output"
 	if err != nil {
 		t.Fatalf("first install failed: %v\n%s", err, firstOutput)
 	}
-	if !strings.Contains(string(firstOutput), "JobDock 1.2.3 is healthy") || !strings.Contains(string(firstOutput), "Bootstrap password:") {
+	if !strings.Contains(string(firstOutput), "JobDock 1.2.3 is healthy") || !strings.Contains(string(firstOutput), "One-time setup token:") {
 		t.Fatalf("installer did not report actionable success:\n%s", firstOutput)
 	}
 	for _, path := range []string{
 		filepath.Join(config, "docker-compose.yml"),
 		filepath.Join(config, "jobdock.env"),
+		filepath.Join(config, "overrides.env"),
 		filepath.Join(config, "install-state"),
+		filepath.Join(config, "secrets", "setup-token"),
+		filepath.Join(config, "secrets", "master-key"),
+		filepath.Join(config, "secrets", "server-builder-token"),
+		filepath.Join(config, "secrets", "builder-token"),
 		filepath.Join(data, "server"),
 		filepath.Join(releases, "1.2.3", "release-manifest.json"),
 	} {
 		if _, err = os.Stat(path); err != nil {
 			t.Fatalf("expected installed path %s: %v", path, err)
+		}
+	}
+	for path, want := range map[string]os.FileMode{
+		filepath.Join(config, "secrets"):                         0o700,
+		filepath.Join(config, "jobdock.env"):                     0o640,
+		filepath.Join(config, "overrides.env"):                   0o640,
+		filepath.Join(config, "secrets", "setup-token"):          0o400,
+		filepath.Join(config, "secrets", "master-key"):           0o400,
+		filepath.Join(config, "secrets", "server-builder-token"): 0o400,
+		filepath.Join(config, "secrets", "builder-token"):        0o400,
+	} {
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			t.Fatalf("stat installed path %s: %v", path, statErr)
+		}
+		if info.Mode().Perm() != want {
+			t.Fatalf("installed path %s has permissions %v, want %v", path, info.Mode().Perm(), want)
 		}
 	}
 	environmentPath := filepath.Join(config, "jobdock.env")
@@ -148,6 +173,13 @@ cp "$JOBDOCK_TEST_RELEASE_DIR/$asset" "$output"
 	}
 	if !strings.Contains(string(before), "JOBDOCK_DATA_DIR="+data+"/server") {
 		t.Fatal("generated environment does not use the stable data directory")
+	}
+	if strings.Contains(string(before), "JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD=") || strings.Contains(string(before), "JOBDOCK_BUILDER_TOKEN=") {
+		t.Fatal("generated environment contains plaintext credentials")
+	}
+	setupToken, err := os.ReadFile(filepath.Join(config, "secrets", "setup-token"))
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err = os.WriteFile(filepath.Join(data, "preserved"), []byte("state"), 0o600); err != nil {
 		t.Fatal(err)
@@ -163,8 +195,11 @@ cp "$JOBDOCK_TEST_RELEASE_DIR/$asset" "$output"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(before) != string(after) || strings.Contains(string(secondOutput), "Bootstrap password:") {
+	if string(before) != string(after) || strings.Contains(string(secondOutput), "One-time setup token:") {
 		t.Fatal("same-version reinstall replaced configuration or reprinted credentials")
+	}
+	if preservedToken, readErr := os.ReadFile(filepath.Join(config, "secrets", "setup-token")); readErr != nil || string(preservedToken) != string(setupToken) {
+		t.Fatal("same-version reinstall replaced the setup credential")
 	}
 	if contents, err := os.ReadFile(filepath.Join(data, "preserved")); err != nil || string(contents) != "state" {
 		t.Fatal("same-version reinstall did not preserve persistent state")
@@ -176,7 +211,7 @@ cp "$JOBDOCK_TEST_RELEASE_DIR/$asset" "$output"
 		t.Fatalf("current-stable resolution failed: %v\n%s", err, stableOutput)
 	}
 	dockerCalls := readTestFile(t, calls)
-	for _, expected := range []string{"info", "compose version", "pull", "up -d"} {
+	for _, expected := range []string{"info", "compose version", "config --quiet", "pull", "up -d"} {
 		if !strings.Contains(dockerCalls, expected) {
 			t.Fatalf("installer did not call Docker %q:\n%s", expected, dockerCalls)
 		}

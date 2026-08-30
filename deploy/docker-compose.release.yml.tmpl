@@ -9,17 +9,22 @@ services:
       JOBDOCK_PUBLIC_URL: "${JOBDOCK_PUBLIC_URL:-http://localhost:8080}"
       JOBDOCK_ALLOW_INSECURE_HTTP: "${JOBDOCK_ALLOW_INSECURE_HTTP:-true}"
       JOBDOCK_BOOTSTRAP_ADMIN_USERNAME: "${JOBDOCK_BOOTSTRAP_ADMIN_USERNAME:-admin}"
-      JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD: "${JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD:?Set a bootstrap password of at least 12 characters}"
+      JOBDOCK_SETUP_TOKEN_FILE: "/run/secrets/jobdock_setup_token"
+      JOBDOCK_MASTER_KEY_FILE: "/run/secrets/jobdock_master_key"
       JOBDOCK_TELEMETRY_RAW_RETENTION: "${JOBDOCK_TELEMETRY_RAW_RETENTION:-24h}"
       JOBDOCK_TELEMETRY_RETENTION: "${JOBDOCK_TELEMETRY_RETENTION:-720h}"
       JOBDOCK_MAX_INPUT_BYTES: "${JOBDOCK_MAX_INPUT_BYTES:-10737418240}"
       JOBDOCK_BUILD_ANALYSIS_TIMEOUT: "${JOBDOCK_BUILD_ANALYSIS_TIMEOUT:-2m}"
-      JOBDOCK_BUILDER_TOKEN: "${JOBDOCK_BUILDER_TOKEN:?Set a random builder token of at least 32 characters}"
+      JOBDOCK_BUILDER_TOKEN_FILE: "/run/secrets/jobdock_server_builder_token"
       JOBDOCK_BUILDER_LEASE: "${JOBDOCK_BUILDER_LEASE:-30s}"
       JOBDOCK_MAX_BUILD_ARTIFACT_BYTES: "${JOBDOCK_MAX_BUILD_ARTIFACT_BYTES:-21474836480}"
       JOBDOCK_BUILD_ARTIFACT_RETENTION: "${JOBDOCK_BUILD_ARTIFACT_RETENTION:-720h}"
     volumes:
       - "${JOBDOCK_DATA_DIR:-/var/lib/jobdock/server}:/var/lib/jobdock"
+    secrets:
+      - jobdock_setup_token
+      - jobdock_master_key
+      - jobdock_server_builder_token
     read_only: true
     tmpfs:
       - /tmp:rw,exec,size=512m,mode=1777
@@ -47,7 +52,7 @@ services:
     environment:
       JOBDOCK_SERVER_URL: "http://jobdock-server:8080"
       JOBDOCK_ALLOW_INSECURE_HTTP: "true"
-      JOBDOCK_BUILDER_TOKEN: "${JOBDOCK_BUILDER_TOKEN:?Set a random builder token of at least 32 characters}"
+      JOBDOCK_BUILDER_TOKEN_FILE: "/run/secrets/jobdock_builder_token"
       JOBDOCK_BUILDKIT_ADDRESS: "tcp://buildkitd:1234"
       JOBDOCK_BUILDER_LEASE: "${JOBDOCK_BUILDER_LEASE:-30s}"
       JOBDOCK_BUILD_TIMEOUT: "${JOBDOCK_BUILD_TIMEOUT:-30m}"
@@ -56,6 +61,8 @@ services:
       JOBDOCK_RAILPACK_FRONTEND: "${JOBDOCK_RAILPACK_FRONTEND:-ghcr.io/railwayapp/railpack-frontend:v0.36.0}"
     volumes:
       - "${JOBDOCK_BUILDER_DATA_DIR:-/var/lib/jobdock/builder}:/var/lib/jobdock-builder"
+    secrets:
+      - jobdock_builder_token
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -99,3 +106,13 @@ networks:
   builder-control:
     internal: true
   builder-backend:
+
+secrets:
+  jobdock_setup_token:
+    file: "${JOBDOCK_SETUP_SECRET_PATH:-/etc/jobdock/secrets/setup-token}"
+  jobdock_master_key:
+    file: "${JOBDOCK_MASTER_KEY_SECRET_PATH:-/etc/jobdock/secrets/master-key}"
+  jobdock_server_builder_token:
+    file: "${JOBDOCK_SERVER_BUILDER_TOKEN_SECRET_PATH:-/etc/jobdock/secrets/server-builder-token}"
+  jobdock_builder_token:
+    file: "${JOBDOCK_BUILDER_TOKEN_SECRET_PATH:-/etc/jobdock/secrets/builder-token}"

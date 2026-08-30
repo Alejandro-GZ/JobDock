@@ -1,4 +1,4 @@
-import type{AuditPage,AuditQuery,Build,BuildPlan,Checkpoint,DistributionObservation,Job,JobAttempt,JobEvent,JobSpec,JobTelemetrySummaryResponse,MatrixObservation,MetricSeriesResponse,Node,NodeDetail,PersonalAccessToken,ProgressState,ResourceSeriesResponse,Secret,TablePage,User}from "./types";
+import type{AuditPage,AuditQuery,Build,BuildPlan,Checkpoint,DistributionObservation,Job,JobAttempt,JobEvent,JobSpec,JobTelemetrySummaryResponse,MatrixObservation,MetricSeriesResponse,Node,NodeDetail,PersonalAccessToken,ProgressState,ResourceSeriesResponse,Secret,SetupStatus,TablePage,User}from "./types";
 import { jobFormData } from "@/lib/job-inputs";
 import { buildFormData,type BuildMode,type DockerfileConfig } from "@/lib/builds";
 import { dashboardSchemaVersion,type DashboardAppearance,type DashboardList,type DashboardPreference,type DashboardTemplate,type DashboardTemplateMatch,type DashboardTemplateOverride,type DashboardTemplateReference,type DashboardTemplateResolution,type DashboardWidget } from "@/lib/dashboard-widgets";
@@ -7,6 +7,8 @@ let csrfToken="";
 export class APIError extends Error{constructor(public status:number,public code:string,message:string){super(message)}}
 async function request<T>(path:string,options:RequestInit={}):Promise<T>{const headers=new Headers(options.headers);if(options.body&&!(options.body instanceof FormData))headers.set("Content-Type","application/json");if(options.method&&!['GET','HEAD'].includes(options.method)){headers.set("X-CSRF-Token",csrfToken);if(!headers.has("Idempotency-Key")&&(path==="/jobs"||path==="/builds"||path.endsWith("/stop")||path.endsWith("/rerun")||path.endsWith("/confirm")||path.endsWith("/cancel")||options.method==="DELETE"))headers.set("Idempotency-Key",idempotencyKey())}const response=await fetch(`/api/v1${path}`,{...options,headers,credentials:"same-origin"});if(!response.ok){const problem=await response.json().catch(()=>({}));throw new APIError(response.status,problem.code??"request_failed",problem.detail??response.statusText)}if(response.status===204)return undefined as T;return response.json() as Promise<T>}
 export const api={
+  setupStatus:()=>request<SetupStatus>("/auth/setup"),
+  async setup(token:string,username:string,password:string){const result=await request<{user:User;csrf_token:string}>("/auth/setup",{method:"POST",body:JSON.stringify({token,username,password})});csrfToken=result.csrf_token;return result.user},
   async me(){const result=await request<{user:User;csrf_token:string}>("/auth/me");csrfToken=result.csrf_token;return result.user},
   async login(username:string,password:string){const result=await request<{user:User;csrf_token:string}>("/auth/login",{method:"POST",body:JSON.stringify({username,password})});csrfToken=result.csrf_token;return result.user},
   logout:()=>request<void>("/auth/logout",{method:"POST"}),

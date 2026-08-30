@@ -29,9 +29,11 @@ manifest, the digest-pinned Compose file, and the matching agent installer. It
 verifies `SHA256SUMS` before installing any downloaded payload.
 
 After starting the services, it waits for `/health/ready`. Success is reported
-only after readiness passes, together with the web URL and the generated
-bootstrap administrator password. Store that password when it is printed; a
-same-version reinstall does not print or replace it.
+only after readiness passes, together with the web URL and a one-time setup
+token. Open the web console, enter that token, and choose the permanent
+administrator username and password. The token becomes unusable as soon as the
+first administrator is created. Store it when it is printed; a same-version
+reinstall does not print or replace it.
 
 ## Install an explicit version
 
@@ -63,7 +65,8 @@ The installer is independent of the current working directory and uses:
 
 | Path | Purpose |
 | --- | --- |
-| `/etc/jobdock` | Effective Compose, release manifest, private environment and install state |
+| `/etc/jobdock` | Effective Compose, release manifest, non-secret defaults, overrides and install state |
+| `/etc/jobdock/secrets` | File-mounted setup, encryption and internal service credentials |
 | `/var/lib/jobdock` | Persistent server, builder and BuildKit data |
 | `/usr/local/lib/jobdock/releases/VERSION` | Verified, versioned release assets |
 
@@ -73,6 +76,16 @@ reconciles the Compose services, and preserves the existing configuration,
 credentials, database, logs, artifacts, and build cache. Installing a different
 version through this command is refused until the supported upgrade flow is
 used.
+
+Setup, master-key, and builder credentials are generated from the operating
+system CSPRNG. They are stored as restrictive files and mounted into only the
+services that consume them; they are not persisted as container environment
+values. The server and builder read those values through their corresponding
+`JOBDOCK_*_FILE` settings.
+
+Advanced tuning belongs in `/etc/jobdock/overrides.env`. The bootstrap loads it
+after the generated defaults and validates the effective Compose configuration
+before pulling or starting services. Do not edit the generated Compose file.
 
 If image pull, startup, or readiness fails, the bootstrap exits non-zero and
 prints the exact Compose command needed to inspect status or logs. It never
@@ -86,6 +99,7 @@ The generated project can be inspected without a repository checkout:
 sudo docker compose \
   --project-name jobdock \
   --env-file /etc/jobdock/jobdock.env \
+  --env-file /etc/jobdock/overrides.env \
   -f /etc/jobdock/docker-compose.yml \
   ps
 ```

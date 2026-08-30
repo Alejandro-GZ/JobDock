@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,6 +20,7 @@ type Server struct {
 	AllowInsecureHTTP      bool
 	BootstrapUsername      string
 	BootstrapPassword      string
+	SetupToken             string
 	MasterKey              []byte
 	SessionTTL             time.Duration
 	HeartbeatOfflineAfter  time.Duration
@@ -66,6 +68,9 @@ type Builder struct {
 }
 
 func LoadServer() (Server, error) {
+	if err := validateServerEnvironment(); err != nil {
+		return Server{}, err
+	}
 	dataDir := env("JOBDOCK_DATA_DIR", ".jobdock/server")
 	c := Server{
 		ListenAddr:             env("JOBDOCK_LISTEN_ADDR", ":8080"),
@@ -102,6 +107,16 @@ func LoadServer() (Server, error) {
 		return c, err
 	}
 	c.BootstrapPassword = password
+	if c.BootstrapPassword != "" && len(c.BootstrapPassword) < 12 {
+		return c, errors.New("JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD must contain at least 12 characters")
+	}
+	c.SetupToken, err = valueOrFile("JOBDOCK_SETUP_TOKEN", "JOBDOCK_SETUP_TOKEN_FILE")
+	if err != nil {
+		return c, err
+	}
+	if c.SetupToken != "" && len(c.SetupToken) < 32 {
+		return c, errors.New("JOBDOCK_SETUP_TOKEN must contain at least 32 characters")
+	}
 	c.BuilderToken, err = valueOrFile("JOBDOCK_BUILDER_TOKEN", "JOBDOCK_BUILDER_TOKEN_FILE")
 	if err != nil {
 		return c, err
@@ -123,10 +138,20 @@ func LoadServer() (Server, error) {
 	if !c.AllowInsecureHTTP && strings.HasPrefix(c.PublicURL, "http://") {
 		return c, errors.New("plain HTTP requires JOBDOCK_ALLOW_INSECURE_HTTP=true")
 	}
+	publicURL, parseErr := url.Parse(c.PublicURL)
+	if parseErr != nil || publicURL.Host == "" || (publicURL.Scheme != "http" && publicURL.Scheme != "https") {
+		return c, errors.New("JOBDOCK_PUBLIC_URL must be an absolute HTTP or HTTPS URL")
+	}
+	if len(strings.TrimSpace(c.BootstrapUsername)) < 3 || len(strings.TrimSpace(c.BootstrapUsername)) > 64 {
+		return c, errors.New("JOBDOCK_BOOTSTRAP_ADMIN_USERNAME must contain between 3 and 64 characters")
+	}
 	return c, nil
 }
 
 func LoadBuilder() (Builder, error) {
+	if err := validateBuilderEnvironment(); err != nil {
+		return Builder{}, err
+	}
 	token, err := valueOrFile("JOBDOCK_BUILDER_TOKEN", "JOBDOCK_BUILDER_TOKEN_FILE")
 	if err != nil {
 		return Builder{}, err
@@ -218,6 +243,73 @@ func envInt64(key string, fallback int64) int64 {
 		return fallback
 	}
 	return parsed
+}
+
+func validateServerEnvironment() error {
+	if err := validateBoolEnvironment("JOBDOCK_ALLOW_INSECURE_HTTP"); err != nil {
+		return err
+	}
+	if err := validateDurationEnvironment(
+		"JOBDOCK_SESSION_TTL",
+		"JOBDOCK_HEARTBEAT_OFFLINE_AFTER",
+		"JOBDOCK_JOB_LOST_AFTER",
+		"JOBDOCK_TELEMETRY_RAW_RETENTION",
+		"JOBDOCK_TELEMETRY_RETENTION",
+		"JOBDOCK_BUILD_ANALYSIS_TIMEOUT",
+		"JOBDOCK_BUILDER_LEASE",
+		"JOBDOCK_BUILD_ARTIFACT_RETENTION",
+	); err != nil {
+		return err
+	}
+	return validateInt64Environment(
+		"JOBDOCK_MAX_LOG_BYTES",
+		"JOBDOCK_MAX_OUTPUT_BYTES",
+		"JOBDOCK_MAX_INPUT_BYTES",
+		"JOBDOCK_MAX_BUILD_ARTIFACT_BYTES",
+	)
+}
+
+func validateBuilderEnvironment() error {
+	if err := validateBoolEnvironment("JOBDOCK_ALLOW_INSECURE_HTTP"); err != nil {
+		return err
+	}
+	if err := validateDurationEnvironment("JOBDOCK_BUILDER_POLL_INTERVAL", "JOBDOCK_BUILDER_LEASE", "JOBDOCK_BUILD_TIMEOUT"); err != nil {
+		return err
+	}
+	return validateInt64Environment("JOBDOCK_MAX_INPUT_BYTES", "JOBDOCK_MAX_BUILD_ARTIFACT_BYTES")
+}
+
+func validateBoolEnvironment(keys ...string) error {
+	for _, key := range keys {
+		if value := os.Getenv(key); value != "" {
+			if _, err := strconv.ParseBool(value); err != nil {
+				return fmt.Errorf("%s must be true or false", key)
+			}
+		}
+	}
+	return nil
+}
+
+func validateDurationEnvironment(keys ...string) error {
+	for _, key := range keys {
+		if value := os.Getenv(key); value != "" {
+			if _, err := time.ParseDuration(value); err != nil {
+				return fmt.Errorf("%s must be a valid duration", key)
+			}
+		}
+	}
+	return nil
+}
+
+func validateInt64Environment(keys ...string) error {
+	for _, key := range keys {
+		if value := os.Getenv(key); value != "" {
+			if _, err := strconv.ParseInt(value, 10, 64); err != nil {
+				return fmt.Errorf("%s must be an integer", key)
+			}
+		}
+	}
+	return nil
 }
 
 func valueOrFile(valueKey, fileKey string) (string, error) {

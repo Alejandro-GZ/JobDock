@@ -8,6 +8,25 @@ servers:
 security:
   - sessionCookie: []
 paths:
+  /auth/setup:
+    get:
+      security: []
+      operationId: getSetupStatus
+      responses:
+        '200': {description: First-run setup state without exposing the setup credential, content: {application/json: {schema: {$ref: '#/components/schemas/SetupStatus'}}}}
+    post:
+      security: []
+      operationId: setupAdministrator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetupRequest'}
+      responses:
+        '200': {description: Initial administrator created and authenticated; the setup credential is permanently unusable afterwards, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}
+        '401': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
   /auth/login:
     post:
       security: []
@@ -1016,6 +1035,22 @@ components:
       description: RFC 9457-style problem detail
       content: {application/json: {schema: {$ref: '#/components/schemas/Problem'}}}
   schemas:
+    SetupStatus:
+      type: object
+      required: [required, enabled, suggested_username]
+      additionalProperties: false
+      properties:
+        required: {type: boolean}
+        enabled: {type: boolean, description: Whether this unconfigured instance has a setup credential available}
+        suggested_username: {type: string, minLength: 3, maxLength: 64}
+    SetupRequest:
+      type: object
+      required: [token, username, password]
+      additionalProperties: false
+      properties:
+        token: {type: string, format: password, minLength: 32}
+        username: {type: string, minLength: 3, maxLength: 64}
+        password: {type: string, format: password, minLength: 12}
     LoginRequest:
       type: object
       required: [username, password]

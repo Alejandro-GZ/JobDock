@@ -84,7 +84,7 @@ esac
 [ "$HTTP_PORT" -ge 1 ] && [ "$HTTP_PORT" -le 65535 ] || fail "--port must be an integer from 1 to 65535"
 printf '%s\n' "$ADMIN_USERNAME" | grep -Eq '^[A-Za-z0-9_.@-]{3,64}$' || fail "--admin-username must contain 3 to 64 safe characters"
 
-for command_name in curl sha256sum docker mktemp awk grep od tr install id mkdir chmod chown sleep; do
+for command_name in curl sha256sum docker mktemp awk grep od tr base64 dd wc install id mkdir chmod chown sleep mv cat; do
   command -v "$command_name" >/dev/null 2>&1 || fail "$command_name is required"
 done
 docker info >/dev/null 2>&1 || fail "Docker Engine is not available or the daemon is not running"
@@ -149,15 +149,19 @@ for component in server builder; do
 done
 
 state_file="$CONFIG_DIR/install-state"
+existing_install=false
 if [ -f "$state_file" ]; then
+  existing_install=true
   installed_version=$(awk -F= '$1 == "version" {print $2}' "$state_file")
   [ -z "$installed_version" ] || [ "$installed_version" = "$VERSION" ] || fail "JobDock $installed_version is installed; use the supported upgrade flow to install $VERSION"
 fi
 
 printf 'Installing verified assets into stable system paths...\n'
 release_dir="$RELEASES_DIR/$VERSION"
-mkdir -p "$CONFIG_DIR" "$release_dir" "$DATA_DIR/server" "$DATA_DIR/builder" "$DATA_DIR/buildkit"
+secrets_dir="$CONFIG_DIR/secrets"
+mkdir -p "$CONFIG_DIR" "$secrets_dir" "$release_dir" "$DATA_DIR/server" "$DATA_DIR/builder" "$DATA_DIR/buildkit"
 chmod 0750 "$CONFIG_DIR" "$DATA_DIR" "$DATA_DIR/server" "$DATA_DIR/builder" "$DATA_DIR/buildkit"
+chmod 0700 "$secrets_dir"
 chown 10001:10001 "$DATA_DIR/server"
 chown 10002:10002 "$DATA_DIR/builder"
 chown 1000:1000 "$DATA_DIR/buildkit"
@@ -170,41 +174,128 @@ install -m 0644 "$temporary/docker-compose.yml" "$CONFIG_DIR/docker-compose.yml"
 install -m 0644 "$temporary/release-manifest.json" "$CONFIG_DIR/release-manifest.json"
 
 environment_file="$CONFIG_DIR/jobdock.env"
-new_credentials=false
-if [ ! -f "$environment_file" ]; then
-  admin_password=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
-  builder_token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+overrides_file="$CONFIG_DIR/overrides.env"
+legacy_builder_token=""
+if [ -f "$environment_file" ]; then
+  legacy_builder_token=$(awk -F= '$1 == "JOBDOCK_BUILDER_TOKEN" {sub(/^[^=]*=/, ""); print; exit}' "$environment_file")
+fi
+
+write_secret() {
+  destination="$1"
+  owner="$2"
+  value="$3"
+  temporary_secret="$destination.tmp.$$"
   umask 077
+  printf '%s\n' "$value" > "$temporary_secret"
+  chmod 0400 "$temporary_secret"
+  chown "$owner" "$temporary_secret"
+  mv "$temporary_secret" "$destination"
+}
+
+server_builder_secret="$secrets_dir/server-builder-token"
+builder_secret="$secrets_dir/builder-token"
+if [ -f "$server_builder_secret" ]; then
+  builder_token=$(cat "$server_builder_secret")
+elif [ -f "$builder_secret" ]; then
+  builder_token=$(cat "$builder_secret")
+elif [ -n "$legacy_builder_token" ]; then
+  builder_token="$legacy_builder_token"
+else
+  builder_token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+fi
+[ ${#builder_token} -ge 32 ] || fail "the existing builder credential is invalid"
+[ ! -f "$builder_secret" ] || [ "$(cat "$builder_secret")" = "$builder_token" ] || fail "server and builder credential files do not match"
+[ -f "$server_builder_secret" ] || write_secret "$server_builder_secret" 10001:10001 "$builder_token"
+[ -f "$builder_secret" ] || write_secret "$builder_secret" 10002:10002 "$builder_token"
+chmod 0400 "$server_builder_secret" "$builder_secret"
+chown 10001:10001 "$server_builder_secret"
+chown 10002:10002 "$builder_secret"
+
+master_key_secret="$secrets_dir/master-key"
+if [ ! -f "$master_key_secret" ]; then
+  if [ -f "$DATA_DIR/server/master.key" ]; then
+    master_key=$(cat "$DATA_DIR/server/master.key")
+  else
+    master_key=$(dd if=/dev/urandom bs=32 count=1 2>/dev/null | base64 | tr -d '\n')
+  fi
+  write_secret "$master_key_secret" 10001:10001 "$master_key"
+fi
+decoded_key_bytes=$(base64 -d < "$master_key_secret" 2>/dev/null | wc -c | tr -d ' ')
+[ "$decoded_key_bytes" = "32" ] || fail "the master key must be base64 for exactly 32 bytes"
+chmod 0400 "$master_key_secret"
+chown 10001:10001 "$master_key_secret"
+
+setup_secret="$secrets_dir/setup-token"
+new_setup_token=false
+if [ ! -f "$setup_secret" ]; then
+  setup_token=$(od -An -N48 -tx1 /dev/urandom | tr -d ' \n')
+  write_secret "$setup_secret" 10001:10001 "$setup_token"
+  if [ "$existing_install" = "false" ]; then
+    new_setup_token=true
+  fi
+fi
+[ "$(wc -c < "$setup_secret" | tr -d ' ')" -ge 33 ] || fail "the setup token file is invalid"
+chmod 0400 "$setup_secret"
+chown 10001:10001 "$setup_secret"
+
+if [ ! -f "$environment_file" ]; then
+  umask 027
   {
     printf 'COMPOSE_PROJECT_NAME=jobdock\n'
     printf 'JOBDOCK_HTTP_PORT=%s\n' "$HTTP_PORT"
     printf 'JOBDOCK_PUBLIC_URL=%s\n' "$PUBLIC_URL"
     printf 'JOBDOCK_ALLOW_INSECURE_HTTP=%s\n' "$(case "$PUBLIC_URL" in http://*) printf true;; *) printf false;; esac)"
     printf 'JOBDOCK_BOOTSTRAP_ADMIN_USERNAME=%s\n' "$ADMIN_USERNAME"
-    printf 'JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD=%s\n' "$admin_password"
-    printf 'JOBDOCK_BUILDER_TOKEN=%s\n' "$builder_token"
     printf 'JOBDOCK_DATA_DIR=%s/server\n' "$DATA_DIR"
     printf 'JOBDOCK_BUILDER_DATA_DIR=%s/builder\n' "$DATA_DIR"
     printf 'JOBDOCK_BUILDKIT_DATA_DIR=%s/buildkit\n' "$DATA_DIR"
+    printf 'JOBDOCK_SETUP_SECRET_PATH=%s\n' "$setup_secret"
+    printf 'JOBDOCK_MASTER_KEY_SECRET_PATH=%s\n' "$master_key_secret"
+    printf 'JOBDOCK_SERVER_BUILDER_TOKEN_SECRET_PATH=%s\n' "$server_builder_secret"
+    printf 'JOBDOCK_BUILDER_TOKEN_SECRET_PATH=%s\n' "$builder_secret"
   } > "$environment_file"
-  chmod 0600 "$environment_file"
-  new_credentials=true
+else
+  sanitized_environment="$environment_file.tmp.$$"
+  awk '$0 !~ /^JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD=/ && $0 !~ /^JOBDOCK_BUILDER_TOKEN=/' "$environment_file" > "$sanitized_environment"
+  mv "$sanitized_environment" "$environment_file"
 fi
+chmod 0640 "$environment_file"
+
+ensure_environment() {
+  key="$1"
+  value="$2"
+  grep -q "^$key=" "$environment_file" || printf '%s=%s\n' "$key" "$value" >> "$environment_file"
+}
+ensure_environment JOBDOCK_SETUP_SECRET_PATH "$setup_secret"
+ensure_environment JOBDOCK_MASTER_KEY_SECRET_PATH "$master_key_secret"
+ensure_environment JOBDOCK_SERVER_BUILDER_TOKEN_SECRET_PATH "$server_builder_secret"
+ensure_environment JOBDOCK_BUILDER_TOKEN_SECRET_PATH "$builder_secret"
+
+if [ ! -f "$overrides_file" ]; then
+  umask 027
+  {
+    printf '# Stable advanced overrides for the generated JobDock deployment.\n'
+    printf '# Add supported JOBDOCK_* values here; do not edit docker-compose.yml.\n'
+  } > "$overrides_file"
+fi
+chmod 0640 "$overrides_file"
 
 compose() {
-  docker compose --project-name jobdock --env-file "$environment_file" -f "$CONFIG_DIR/docker-compose.yml" "$@"
+  docker compose --project-name jobdock --env-file "$environment_file" --env-file "$overrides_file" -f "$CONFIG_DIR/docker-compose.yml" "$@"
 }
 
+printf 'Validating effective configuration...\n'
+compose config --quiet || fail "effective configuration is invalid; review $overrides_file"
 printf 'Pulling verified images...\n'
 compose pull || fail "image pull failed; verified configuration remains in $CONFIG_DIR"
 printf 'Starting the JobDock control plane...\n'
-compose up -d || fail "service startup failed; inspect with: docker compose --env-file $environment_file -f $CONFIG_DIR/docker-compose.yml ps"
+compose up -d || fail "service startup failed; inspect with: docker compose --env-file $environment_file --env-file $overrides_file -f $CONFIG_DIR/docker-compose.yml ps"
 
 elapsed=0
 while ! curl --fail --silent --show-error "http://127.0.0.1:$HTTP_PORT/health/ready" >/dev/null 2>&1; do
   if [ "$elapsed" -ge "$HEALTH_TIMEOUT" ]; then
     compose ps >&2 || true
-    fail "readiness did not succeed within ${HEALTH_TIMEOUT}s; inspect with: docker compose --env-file $environment_file -f $CONFIG_DIR/docker-compose.yml logs"
+    fail "readiness did not succeed within ${HEALTH_TIMEOUT}s; inspect with: docker compose --env-file $environment_file --env-file $overrides_file -f $CONFIG_DIR/docker-compose.yml logs"
   fi
   sleep 1
   elapsed=$((elapsed + 1))
@@ -222,8 +313,8 @@ printf '\nJobDock %s is healthy.\n' "$VERSION"
 printf 'Web console: %s\n' "$PUBLIC_URL"
 printf 'Configuration: %s\n' "$CONFIG_DIR"
 printf 'Persistent data: %s\n' "$DATA_DIR"
-if [ "$new_credentials" = "true" ]; then
-  printf 'Bootstrap username: %s\n' "$ADMIN_USERNAME"
-  printf 'Bootstrap password: %s\n' "$admin_password"
-  printf 'Store this password now; it will not be printed on reinstall.\n'
+if [ "$new_setup_token" = "true" ]; then
+  printf 'Suggested administrator username: %s\n' "$ADMIN_USERNAME"
+  printf 'One-time setup token: %s\n' "$setup_token"
+  printf 'Open the web console to create the permanent administrator. This token will not be printed again.\n'
 fi

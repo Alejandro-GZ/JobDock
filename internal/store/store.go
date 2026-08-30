@@ -163,6 +163,26 @@ func (s *Store) CreateUser(ctx context.Context, user domain.User, passwordHash s
 	return mapConstraint(err)
 }
 
+// CreateInitialAdmin atomically creates the first account. The conditional
+// insert makes a setup token single-use even when concurrent requests race.
+func (s *Store) CreateInitialAdmin(ctx context.Context, user domain.User, passwordHash string) error {
+	result, err := s.db.ExecContext(ctx, `
+		INSERT INTO users(id, username, password_hash, role, created_at)
+		SELECT ?,?,?,?,?
+		WHERE NOT EXISTS (SELECT 1 FROM users)`, user.ID, user.Username, passwordHash, user.Role, formatTime(user.CreatedAt))
+	if err != nil {
+		return mapConstraint(err)
+	}
+	created, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if created != 1 {
+		return ErrConflict
+	}
+	return nil
+}
+
 func (s *Store) UserByUsername(ctx context.Context, username string) (domain.User, string, error) {
 	var user domain.User
 	var hash, created string

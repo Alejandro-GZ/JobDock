@@ -79,6 +79,8 @@ func (a *API) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /metrics", a.metrics)
 	mux.HandleFunc("GET /install-agent.sh", a.agentInstaller)
+	mux.HandleFunc("GET /api/v1/auth/setup", a.setupStatus)
+	mux.HandleFunc("POST /api/v1/auth/setup", a.setupAdmin)
 	mux.HandleFunc("POST /api/v1/auth/login", a.login)
 	mux.HandleFunc("POST /api/v1/auth/logout", a.withSession(false, true, a.logout))
 	mux.HandleFunc("GET /api/v1/auth/me", a.withSession(false, false, a.me))
@@ -201,18 +203,82 @@ func (a *API) BootstrapAdmin(ctx context.Context) error {
 	if count > 0 {
 		return nil
 	}
+	if a.config.SetupToken != "" {
+		return nil
+	}
 	if a.config.BootstrapPassword == "" {
-		return errors.New("initial admin requires JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD or password file")
+		return errors.New("initial admin requires JOBDOCK_SETUP_TOKEN_FILE or a legacy bootstrap password")
 	}
 	hash, err := auth.HashPassword(a.config.BootstrapPassword)
 	if err != nil {
 		return err
 	}
 	user := domain.User{ID: ids.New(), Username: a.config.BootstrapUsername, Role: domain.RoleAdmin, CreatedAt: time.Now().UTC()}
-	if err := a.store.CreateUser(ctx, user, hash); err != nil {
+	if err := a.store.CreateInitialAdmin(ctx, user, hash); err != nil {
 		return err
 	}
 	return a.store.Audit(ctx, user.ID, "user.bootstrap", "user", user.ID, map[string]any{"username": user.Username})
+}
+
+func (a *API) setupStatus(w http.ResponseWriter, r *http.Request) {
+	count, err := a.store.UserCount(r.Context())
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "database_error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"required":           count == 0,
+		"enabled":            count == 0 && a.config.SetupToken != "",
+		"suggested_username": a.config.BootstrapUsername,
+	})
+}
+
+func (a *API) setupAdmin(w http.ResponseWriter, r *http.Request) {
+	client := clientAddress(r.RemoteAddr)
+	if !a.allowLogin(client) {
+		writeProblem(w, http.StatusTooManyRequests, "rate_limited", "Too many setup attempts")
+		return
+	}
+	var body struct {
+		Token    string `json:"token"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if a.config.SetupToken == "" {
+		writeProblem(w, http.StatusConflict, "setup_unavailable", "First-run setup is not enabled")
+		return
+	}
+	want, got := auth.TokenHash(a.config.SetupToken), auth.TokenHash(body.Token)
+	if body.Token == "" || subtle.ConstantTimeCompare([]byte(want), []byte(got)) != 1 {
+		a.recordLogin(client)
+		writeProblem(w, http.StatusUnauthorized, "invalid_setup_token", "Setup token is invalid")
+		return
+	}
+	body.Username = strings.TrimSpace(body.Username)
+	if len(body.Username) < 3 || len(body.Username) > 64 {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_username", "Username must contain between 3 and 64 characters")
+		return
+	}
+	hash, err := auth.HashPassword(body.Password)
+	if err != nil {
+		writeProblem(w, http.StatusUnprocessableEntity, "invalid_password", err.Error())
+		return
+	}
+	user := domain.User{ID: ids.New(), Username: body.Username, Role: domain.RoleAdmin, CreatedAt: time.Now().UTC()}
+	if err = a.store.CreateInitialAdmin(r.Context(), user, hash); errors.Is(err, store.ErrConflict) {
+		writeProblem(w, http.StatusConflict, "setup_complete", "First-run setup has already been completed")
+		return
+	} else if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "database_error", err.Error())
+		return
+	}
+	_ = a.store.AuditWithLabels(r.Context(), user.ID, user.Username, "user.setup", "user", user.ID, user.Username, map[string]any{})
+	if err = a.writeSession(w, r, user); err != nil {
+		writeProblem(w, http.StatusInternalServerError, "session_failed", "Unable to create session")
+	}
 }
 
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
@@ -234,15 +300,22 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusUnauthorized, "invalid_credentials", "Invalid username or password")
 		return
 	}
-	token, csrf := ids.Token(32), ids.Token(24)
-	expires := time.Now().UTC().Add(a.config.SessionTTL)
-	if err := a.store.CreateSession(r.Context(), auth.TokenHash(token), csrf, user.ID, expires); err != nil {
+	if err := a.writeSession(w, r, user); err != nil {
 		writeProblem(w, 500, "session_failed", "Unable to create session")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "jobdock_session", Value: token, Path: "/", Expires: expires, HttpOnly: true, Secure: !a.config.AllowInsecureHTTP, SameSite: http.SameSiteStrictMode})
 	_ = a.store.Audit(r.Context(), user.ID, "auth.login", "user", user.ID, map[string]any{})
+}
+
+func (a *API) writeSession(w http.ResponseWriter, r *http.Request, user domain.User) error {
+	token, csrf := ids.Token(32), ids.Token(24)
+	expires := time.Now().UTC().Add(a.config.SessionTTL)
+	if err := a.store.CreateSession(r.Context(), auth.TokenHash(token), csrf, user.ID, expires); err != nil {
+		return err
+	}
+	http.SetCookie(w, &http.Cookie{Name: "jobdock_session", Value: token, Path: "/", Expires: expires, HttpOnly: true, Secure: !a.config.AllowInsecureHTTP, SameSite: http.SameSiteStrictMode})
 	writeJSON(w, http.StatusOK, map[string]any{"user": user, "csrf_token": csrf})
+	return nil
 }
 
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {
