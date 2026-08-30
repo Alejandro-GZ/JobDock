@@ -26,6 +26,18 @@ describe("ObservationPlot",()=>{
     expect(screen.getByText("Step")).toBeTruthy();
   });
 
+  it("shows every visible source in the shared hover tooltip",()=>{
+    vi.spyOn(HTMLElement.prototype,"getBoundingClientRect").mockReturnValue({width:720,height:250,top:0,left:0,right:720,bottom:250,x:0,y:0,toJSON:()=>({})});
+    render(<ObservationPlot type="lineplot" title="Training" series={[loss,duration]} xAxis="step"/>);
+    const plot=screen.getByRole("img",{name:/Training lineplot with 4 points/i});
+    fireEvent.pointerMove(plot,{clientX:680,clientY:100});
+    const tooltip=document.querySelector("[data-plot-tooltip]")!;
+    expect(tooltip.textContent).toContain("loss");
+    expect(tooltip.textContent).toContain("duration");
+    expect(tooltip.textContent).toMatch(/0[,.]4 ratio/);
+    expect(tooltip.textContent).toContain("5 seconds");
+  });
+
   it("matches explicit scatter X and Y sources by step and fills its tile",async()=>{
     const user=userEvent.setup();
     vi.spyOn(HTMLElement.prototype,"getBoundingClientRect").mockReturnValue({width:360,height:180,top:0,left:0,right:360,bottom:180,x:0,y:0,toJSON:()=>({})});
@@ -83,7 +95,8 @@ describe("ObservationPlot",()=>{
     expect(plot.getAttribute("data-missing-values")).toBe("zero");
     expect(container.querySelectorAll("[data-bar-mark]")).toHaveLength(6);
     fireEvent.pointerMove(plot,{clientX:720,clientY:100});
-    expect(screen.getByText(/loss: 0 \(missing\)/i)).toBeTruthy();
+    expect(screen.getByText("loss")).toBeTruthy();
+    expect(screen.getByText("0 (missing)")).toBeTruthy();
   });
   it.each(["barplot","stacked_bar"] as const)("keeps the first and last %s marks inside the vertical axes",async type=>{
     vi.spyOn(HTMLElement.prototype,"getBoundingClientRect").mockReturnValue({width:360,height:180,top:0,left:0,right:360,bottom:180,x:0,y:0,toJSON:()=>({})});

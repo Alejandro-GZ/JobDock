@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Star, TriangleAlert, X } from "lucide-react";
+import { Clock3, Star, TriangleAlert, X } from "lucide-react";
 import { createRoot } from "react-dom/client";
+import jobDockLogo from "@/assets/jobdock-logo.svg?inline";
 import { ObservabilityDashboard, type NumericWidgetSource } from "@/components/observability-dashboard";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DashboardAppearance, DashboardWidget } from "@/lib/dashboard-widgets";
@@ -44,18 +45,26 @@ function App(){
   if(!dashboard)return <div className="grid h-dvh place-items-center text-sm text-muted-foreground">No dashboards were included in this report.</div>;
   const warnings=manifest.warnings.filter(item=>!item.dashboard_id||item.dashboard_id===dashboard.id);
   return <TooltipProvider delayDuration={250}>
-    <main className="relative flex h-dvh min-h-0 min-w-0 overflow-hidden bg-background text-foreground" aria-label={`${manifest.job.name} metrics report`}>
-      <ReadOnlyDashboardRail dashboards={manifest.dashboards} activeID={dashboard.id} onSelect={setActiveID}/>
-      <section className="min-h-0 min-w-0 flex-1 pl-2">
-        <ObservabilityDashboard key={dashboard.id} jobID={manifest.job.id} attemptID={manifest.attempt.id} ready numericSources={numericSources} observableSources={observableSources} progress={manifest.sources.progress} matrices={Object.values(manifest.sources.matrices)} distributions={distributions} markers={markers} initialWidgets={dashboard.config.widgets} dashboardAppearance={dashboard.config.appearance} sourceWarnings={warnings.map(item=>({widgetID:item.widget_id,source:item.source,message:item.message}))}/>
-      </section>
+    <main className="flex h-dvh min-h-0 min-w-0 flex-col overflow-hidden bg-background text-foreground" aria-label={`${manifest.job.name} metrics report`}>
+      <ReportHeader/>
+      <div className="relative flex min-h-0 min-w-0 flex-1">
+        <ReadOnlyDashboardRail dashboards={manifest.dashboards} activeID={dashboard.id} onSelect={setActiveID}/>
+        <section className="min-h-0 min-w-0 flex-1 pl-2">
+          <ObservabilityDashboard key={dashboard.id} jobID={manifest.job.id} attemptID={manifest.attempt.id} ready numericSources={numericSources} observableSources={observableSources} progress={manifest.sources.progress} matrices={Object.values(manifest.sources.matrices)} distributions={distributions} markers={markers} initialWidgets={dashboard.config.widgets} dashboardAppearance={dashboard.config.appearance} sourceWarnings={warnings.map(item=>({widgetID:item.widget_id,source:item.source,message:item.message}))}/>
+        </section>
       {manifest.warnings.length>0&&<div className="absolute right-2 top-2 z-[80]">
         <Tooltip><TooltipTrigger asChild><button type="button" aria-label={`${manifest.warnings.length} export notes`} onClick={()=>setNotesOpen(value=>!value)} className="grid size-8 place-items-center rounded-md border border-amber-500/30 bg-background/90 text-amber-600 shadow-sm backdrop-blur hover:bg-amber-500/10 dark:text-amber-300"><TriangleAlert className="size-4"/></button></TooltipTrigger><TooltipContent side="left">Export notes</TooltipContent></Tooltip>
         {notesOpen&&<aside role="dialog" aria-label="Export notes" className="absolute right-0 top-10 w-80 max-w-[calc(100vw-4rem)] rounded-md border bg-popover p-3 text-popover-foreground shadow-xl"><div className="mb-2 flex items-center justify-between"><strong className="text-xs">Export notes</strong><button type="button" aria-label="Close export notes" onClick={()=>setNotesOpen(false)} className="rounded p-1 hover:bg-accent"><X className="size-3.5"/></button></div><ul className="max-h-64 space-y-2 overflow-auto text-xs text-muted-foreground">{manifest.warnings.map((warning,index)=><li key={`${warning.code}-${index}`}><span className="font-medium text-foreground">{warning.code.replaceAll("_"," ")}</span><br/>{warning.message}</li>)}</ul></aside>}
       </div>}
+      </div>
       <p data-report-trace className="sr-only">JobDock {manifest.jobdock_version}. Offline report schema {manifest.schema_version}. Job {manifest.job.id}. Attempt {manifest.attempt.id}. Generated {manifest.generated_at}.</p>
     </main>
   </TooltipProvider>;
+}
+
+function ReportHeader(){
+  const status=manifest.attempt.status||manifest.job.status,runtime=executionTime(manifest.attempt.started_at??manifest.job.started_at,manifest.attempt.finished_at??manifest.job.finished_at??manifest.generated_at);
+  return <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background px-3"><span className="grid h-9 w-[136px] shrink-0 place-items-center rounded bg-white px-2 shadow-sm"><img src={jobDockLogo} alt="JobDock" className="block h-7 w-auto"/></span><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold" title={manifest.job.name}>{manifest.job.name}</p><p className="truncate text-[10px] text-muted-foreground">Attempt {manifest.attempt.attempt_number}</p></div><div className="flex shrink-0 items-center gap-3"><span className="flex items-center gap-1.5 text-xs text-muted-foreground" title="Execution time"><Clock3 className="size-3.5"/><span className="font-mono tabular-nums">{runtime}</span></span><span data-report-status={status} className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold tracking-wide ${statusClass(status)}`}>{status}</span></div></header>;
 }
 
 function ReadOnlyDashboardRail({dashboards,activeID,onSelect}:{dashboards:DashboardReportDashboard[];activeID:string;onSelect:(id:string)=>void}){
@@ -90,5 +99,7 @@ function dashboardInitials(name:string){const words=name.trim().split(/\s+/).fil
 function cores(value:number){return`${value.toFixed(2)} cores`}
 function gib(value:number){return`${value.toFixed(2)} GiB`}
 function percent(value:number){return`${value.toFixed(1)}%`}
+function executionTime(start:string|undefined,end:string){if(!start)return"Not started";const milliseconds=Math.max(0,Date.parse(end)-Date.parse(start));if(!Number.isFinite(milliseconds))return"Unavailable";const seconds=Math.floor(milliseconds/1000),hours=Math.floor(seconds/3600),minutes=Math.floor(seconds%3600/60),remaining=seconds%60;return hours>0?`${hours}h ${minutes}m ${remaining}s`:minutes>0?`${minutes}m ${remaining}s`:`${remaining}s`}
+function statusClass(status:string){switch(status){case"SUCCEEDED":return"border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";case"FAILED":case"LOST":return"border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300";case"CANCELLED":return"border-slate-500/30 bg-slate-500/10 text-slate-700 dark:text-slate-300";default:return"border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300"}}
 
 createRoot(document.getElementById("root")!).render(<QueryClientProvider client={queryClient}><App/></QueryClientProvider>);
