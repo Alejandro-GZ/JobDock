@@ -15,6 +15,7 @@ services:
       JOBDOCK_MAX_INPUT_BYTES: "${JOBDOCK_MAX_INPUT_BYTES:-10737418240}"
       JOBDOCK_BUILD_ANALYSIS_TIMEOUT: "${JOBDOCK_BUILD_ANALYSIS_TIMEOUT:-2m}"
       JOBDOCK_BUILDER_TOKEN_FILE: "/run/secrets/jobdock_server_builder_token"
+      JOBDOCK_BUILDER_ENABLED: "${JOBDOCK_BUILDER_ENABLED:-true}"
       JOBDOCK_BUILDER_LEASE: "${JOBDOCK_BUILDER_LEASE:-30s}"
       JOBDOCK_MAX_BUILD_ARTIFACT_BYTES: "${JOBDOCK_MAX_BUILD_ARTIFACT_BYTES:-21474836480}"
       JOBDOCK_BUILD_ARTIFACT_RETENTION: "${JOBDOCK_BUILD_ARTIFACT_RETENTION:-720h}"
@@ -41,6 +42,7 @@ services:
       - builder-control
 
   jobdock-builder:
+    profiles: ["builder"]
     image: "@@JOBDOCK_BUILDER_REFERENCE@@"
     restart: unless-stopped
     depends_on:
@@ -73,6 +75,7 @@ services:
       - builder-backend
 
   buildkitd:
+    profiles: ["builder"]
     image: moby/buildkit:v0.30.0-rootless
     restart: unless-stopped
     command:

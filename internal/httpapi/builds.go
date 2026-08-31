@@ -21,6 +21,10 @@ const buildMetadataLimit = 64 << 10
 const buildLogChunkLimit = 4 << 20
 
 func (a *API) createBuild(w http.ResponseWriter, r *http.Request) {
+	if !a.sourceBuildsEnabled() {
+		writeProblem(w, http.StatusServiceUnavailable, "source_builds_disabled", "Source builds are disabled for this deployment; submit a prebuilt OCI image instead")
+		return
+	}
 	user := currentUser(r)
 	idem, proceed := a.beginIdempotency(w, r, user.ID)
 	if !proceed {
@@ -230,7 +234,7 @@ func (a *API) confirmBuild(w http.ResponseWriter, r *http.Request) {
 	if !proceed {
 		return
 	}
-	if a.config.BuilderToken == "" {
+	if !a.sourceBuildsEnabled() {
 		idem.abort(r.Context())
 		writeProblem(w, http.StatusServiceUnavailable, "builder_not_configured", "Configure an isolated jobdock-builder before starting builds")
 		return

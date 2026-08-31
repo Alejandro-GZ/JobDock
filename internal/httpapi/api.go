@@ -83,6 +83,7 @@ func (a *API) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "version": a.version, "database_schema": schema})
 	})
 	mux.HandleFunc("GET /metrics", a.metrics)
+	mux.HandleFunc("GET /api/v1/capabilities", a.withSession(false, false, a.capabilities))
 	mux.HandleFunc("GET /install-agent.sh", a.agentInstaller)
 	mux.HandleFunc("POST /api/v1/nodes/enrollment-status", a.enrollmentStatus)
 	mux.HandleFunc("GET /api/v1/auth/setup", a.setupStatus)
@@ -193,6 +194,23 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/job-context/checkpoints/{sync}", a.withJob(a.sdkCheckpointStatus))
 	mux.HandleFunc("/", a.serveWeb)
 	return a.securityHeaders(a.requestLog(mux))
+}
+
+func (a *API) sourceBuildsEnabled() bool {
+	return !a.config.BuilderDisabled && a.config.BuilderToken != ""
+}
+
+func (a *API) capabilities(w http.ResponseWriter, _ *http.Request) {
+	enabled := a.sourceBuildsEnabled()
+	reason := ""
+	if !enabled {
+		if a.config.BuilderDisabled {
+			reason = "Source builds are disabled for this deployment. OCI image jobs remain available."
+		} else {
+			reason = "The isolated builder credential is not configured."
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"source_builds": map[string]any{"enabled": enabled, "reason": reason}})
 }
 
 func (a *API) agentInstaller(w http.ResponseWriter, _ *http.Request) {
@@ -1535,7 +1553,7 @@ func (a *API) withBuilder(next http.HandlerFunc) http.HandlerFunc {
 			writeProblem(w, http.StatusUpgradeRequired, "incompatible_protocol", "Builder protocol version is not supported")
 			return
 		}
-		if a.config.BuilderToken == "" {
+		if !a.sourceBuildsEnabled() {
 			writeProblem(w, http.StatusServiceUnavailable, "builder_not_configured", "The isolated builder is not configured")
 			return
 		}

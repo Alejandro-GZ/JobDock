@@ -106,6 +106,55 @@ def multipart(metadata: dict[str, Any], archive: Path) -> tuple[bytes, str]:
     return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
 
 
+def exercise_oci_only(server_image: str, agent_image: str, root: Path) -> None:
+    """Prove the minimal release runs OCI jobs without builder or BuildKit."""
+    prefix = "jobdock-oci-only-" + uuid.uuid4().hex[:10]
+    network, volume = prefix, prefix + "-server"
+    server_name, agent_name = prefix + "-server", prefix + "-agent"
+    agent_root = root / "oci-only-agent"
+    agent_root.mkdir(mode=0o700)
+    port = free_port()
+    password = "release-oci-only-admin-password"
+    try:
+        command("docker", "network", "create", network)
+        command("docker", "volume", "create", volume)
+        command(
+            "docker", "run", "-d", "--name", server_name, "--network", network,
+            "--network-alias", "jobdock-server", "-p", f"127.0.0.1:{port}:8080",
+            "-v", f"{volume}:/var/lib/jobdock", "-e", "JOBDOCK_LISTEN_ADDR=:8080",
+            "-e", "JOBDOCK_PUBLIC_URL=http://jobdock-server:8080", "-e", "JOBDOCK_ALLOW_INSECURE_HTTP=true",
+            "-e", "JOBDOCK_BUILDER_ENABLED=false", "-e", "JOBDOCK_BOOTSTRAP_ADMIN_USERNAME=admin",
+            "-e", f"JOBDOCK_BOOTSTRAP_ADMIN_PASSWORD={password}", server_image,
+        )
+        api = API(f"http://127.0.0.1:{port}")
+        wait_for("OCI-only server readiness", 90, lambda: api.request("GET", "/health/ready", timeout=5)[0] == 200)
+        api.login("admin", password)
+        capability = api.json("GET", "/api/v1/capabilities")["source_builds"]
+        if capability["enabled"] or not capability["reason"]:
+            raise AssertionError(f"OCI-only capability is incorrect: {capability}")
+        enrollment = api.json("POST", "/api/v1/nodes/enrollment-tokens", {}, mutate=True)["token"]
+        command(
+            "docker", "run", "-d", "--name", agent_name, "--network", network,
+            "-v", "/var/run/docker.sock:/var/run/docker.sock", "-v", f"{agent_root}:{agent_root}",
+            "-e", "JOBDOCK_SERVER_URL=http://jobdock-server:8080", "-e", "JOBDOCK_ALLOW_INSECURE_HTTP=true",
+            "-e", f"JOBDOCK_ENROLLMENT_TOKEN={enrollment}", "-e", "JOBDOCK_NODE_NAME=oci-only-release-node",
+            "-e", "JOBDOCK_GPU_MODE=disabled", "-e", f"JOBDOCK_AGENT_STATE_DIR={agent_root}/state",
+            "-e", f"JOBDOCK_WORKSPACE_DIR={agent_root}/jobs", agent_image,
+        )
+        wait_for("OCI-only agent enrollment", 120, lambda: any(node["status"] == "ONLINE" for node in api.json("GET", "/api/v1/nodes").get("items", [])))
+        job = api.json("POST", "/api/v1/jobs", {
+            "name": "release-oci-only", "image": "alpine:3.20", "command": ["sh", "-c", "echo release-oci-only-ok"],
+            "resources": {"cpu_millis": 100, "memory_bytes": 134217728, "gpu": {"count": 0, "min_vram_bytes": 0}},
+        }, mutate=True)
+        finished = wait_for("OCI-only job", 300, lambda: (current if (current := api.json("GET", f"/api/v1/jobs/{job['id']}"))["status"] in TERMINAL_JOB_STATES else False))
+        if finished["status"] != "SUCCEEDED":
+            raise AssertionError(f"OCI-only job failed: {finished}")
+    finally:
+        command("docker", "rm", "-f", agent_name, server_name, check=False)
+        command("docker", "volume", "rm", "-f", volume, check=False)
+        command("docker", "network", "rm", network, check=False)
+
+
 def main() -> None:
     references = {
         component: os.environ[f"JOBDOCK_RELEASE_{component.upper()}_IMAGE"]
@@ -128,6 +177,7 @@ def main() -> None:
         for reference in references.values():
             command("docker", "pull", reference)
         command("docker", "pull", "alpine:3.20")
+        exercise_oci_only(references["server"], references["agent"], root)
         command("docker", "network", "create", network)
         for volume in volumes:
             command("docker", "volume", "create", volume)

@@ -15,6 +15,8 @@ from one stable GitHub Release.
 
 Go, Node.js, Python, Git, and the JobDock repository are not required.
 
+Source builds are enabled by default and remain the recommended installation. For a smaller control plane that only runs prebuilt OCI images, add `--builder disabled` to the installer command. The server stays fully operational while `jobdock-builder` and BuildKit are omitted. Re-run the same versioned installer with `--builder enabled` later to activate source builds without reinstalling or migrating data.
+
 ## Install the current stable release
 
 For a public domain, point its A/AAAA record at the host, allow inbound TCP

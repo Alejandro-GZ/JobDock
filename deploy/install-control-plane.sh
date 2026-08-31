@@ -21,6 +21,7 @@ UPGRADE=false
 ASSUME_YES=false
 NO_BACKUP=false
 ALLOW_IRREVERSIBLE=false
+BUILDER_MODE=""
 
 usage() {
   cat <<'EOF'
@@ -36,6 +37,7 @@ Options:
   --public-url URL        Required HTTPS URL for proxy mode
   --allow-insecure-http   Explicitly permit HTTP in local/LAN mode
   --admin-username NAME   Bootstrap administrator username (default: admin)
+  --builder MODE          Source builds: enabled (recommended) or disabled
   --upgrade               Upgrade an existing installation transactionally
   --yes                   Apply the displayed upgrade plan non-interactively
   --no-backup             Explicitly continue without a full state backup
@@ -87,6 +89,11 @@ while [ "$#" -gt 0 ]; do
       ADMIN_USERNAME="$2"
       shift 2
       ;;
+    --builder)
+      [ "$#" -ge 2 ] || fail "--builder requires a value"
+      BUILDER_MODE="$2"
+      shift 2
+      ;;
     --allow-insecure-http)
       ALLOW_INSECURE_HTTP=true
       shift
@@ -121,6 +128,7 @@ printf '%s\n' "$ADMIN_USERNAME" | grep -Eq '^[A-Za-z0-9_.@-]{3,64}$' || fail "--
 
 existing_environment="$CONFIG_DIR/jobdock.env"
 stored_mode=""
+stored_builder_mode=""
 if [ -f "$existing_environment" ]; then
   stored_mode=$(awk -F= '$1 == "JOBDOCK_EXPOSURE_MODE" {print $2; exit}' "$existing_environment")
   if [ -n "$stored_mode" ]; then
@@ -131,7 +139,12 @@ if [ -f "$existing_environment" ]; then
     [ -n "$PUBLIC_URL" ] || PUBLIC_URL=$(awk -F= '$1 == "JOBDOCK_PUBLIC_URL" {sub(/^[^=]*=/, ""); print; exit}' "$existing_environment")
     [ -n "$DOMAIN" ] || DOMAIN=$(awk -F= '$1 == "JOBDOCK_DOMAIN" {print $2; exit}' "$existing_environment")
   fi
+  stored_builder_mode=$(awk -F= '$1 == "JOBDOCK_BUILDER_ENABLED" {print $2; exit}' "$existing_environment")
 fi
+if [ -z "$BUILDER_MODE" ]; then
+  case "$stored_builder_mode" in true) BUILDER_MODE=enabled;; false) BUILDER_MODE=disabled;; *) BUILDER_MODE=enabled;; esac
+fi
+case "$BUILDER_MODE" in enabled|disabled) :;; *) fail "--builder must be enabled or disabled";; esac
 if [ -n "$stored_mode" ]; then
   [ -z "$MODE" ] || [ "$MODE" = "$stored_mode" ] || fail "this installation uses $stored_mode mode; changing exposure mode requires the supported reconfiguration flow"
   MODE="$stored_mode"
@@ -399,6 +412,8 @@ if [ ! -f "$environment_file" ]; then
     printf 'JOBDOCK_RELEASE_MANIFEST_PATH=/var/lib/jobdock/release-manifest.json\n'
     printf 'JOBDOCK_BUILDER_DATA_DIR=%s/builder\n' "$DATA_DIR"
     printf 'JOBDOCK_BUILDKIT_DATA_DIR=%s/buildkit\n' "$DATA_DIR"
+    printf 'JOBDOCK_BUILDER_ENABLED=%s\n' "$( [ "$BUILDER_MODE" = enabled ] && printf true || printf false )"
+    printf 'COMPOSE_PROFILES=%s\n' "$( [ "$BUILDER_MODE" = enabled ] && printf builder || printf '')"
     printf 'JOBDOCK_SETUP_SECRET_PATH=%s\n' "$setup_secret"
     printf 'JOBDOCK_MASTER_KEY_SECRET_PATH=%s\n' "$master_key_secret"
     printf 'JOBDOCK_SERVER_BUILDER_TOKEN_SECRET_PATH=%s\n' "$server_builder_secret"
@@ -430,6 +445,8 @@ set_environment JOBDOCK_PUBLIC_URL "$PUBLIC_URL"
 set_environment JOBDOCK_ALLOW_INSECURE_HTTP "$(case "$MODE" in local) printf true;; *) printf false;; esac)"
 set_environment JOBDOCK_TRUST_PROXY_HEADERS "$(case "$MODE" in domain|proxy) printf true;; *) printf false;; esac)"
 set_environment JOBDOCK_BIND_ADDRESS "$(case "$MODE" in proxy) printf 127.0.0.1;; *) printf 0.0.0.0;; esac)"
+set_environment JOBDOCK_BUILDER_ENABLED "$( [ "$BUILDER_MODE" = enabled ] && printf true || printf false )"
+set_environment COMPOSE_PROFILES "$( [ "$BUILDER_MODE" = enabled ] && printf builder || printf '')"
 if [ "$MODE" = "domain" ]; then
   set_environment JOBDOCK_DOMAIN "$DOMAIN"
   set_environment JOBDOCK_CADDYFILE_PATH "$CONFIG_DIR/Caddyfile"

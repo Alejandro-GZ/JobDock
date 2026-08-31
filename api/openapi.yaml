@@ -8,6 +8,11 @@ servers:
 security:
   - sessionCookie: []
 paths:
+  /capabilities:
+    get:
+      operationId: getCapabilities
+      responses:
+        '200': {description: Deployment capabilities, content: {application/json: {schema: {$ref: '#/components/schemas/DeploymentCapabilities'}}}}
   /auth/setup:
     get:
       security: []
@@ -1053,6 +1058,16 @@ components:
       description: RFC 9457-style problem detail
       content: {application/json: {schema: {$ref: '#/components/schemas/Problem'}}}
   schemas:
+    DeploymentCapabilities:
+      type: object
+      required: [source_builds]
+      properties:
+        source_builds:
+          type: object
+          required: [enabled, reason]
+          properties:
+            enabled: {type: boolean}
+            reason: {type: string}
     SetupStatus:
       type: object
       required: [required, enabled, suggested_username]

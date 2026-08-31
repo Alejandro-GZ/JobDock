@@ -68,6 +68,8 @@ if [ -f "$environment_file" ]; then
   mode=$(awk -F= '$1=="JOBDOCK_EXPOSURE_MODE" {print $2; exit}' "$environment_file")
   public_url=$(awk -F= '$1=="JOBDOCK_PUBLIC_URL" {sub(/^[^=]*=/,""); print; exit}' "$environment_file")
   port=$(awk -F= '$1=="JOBDOCK_HTTP_PORT" {print $2; exit}' "$environment_file")
+  builder_enabled=$(awk -F= '$1=="JOBDOCK_BUILDER_ENABLED" {print $2; exit}' "$environment_file")
+  [ -n "$builder_enabled" ] || builder_enabled=true
   case "$mode:$public_url" in domain:https://*|proxy:https://*|local:http://*) record public_url pass "$mode mode and $public_url are coherent." '';; *) record public_url fail 'Exposure mode and public URL are inconsistent.' 'Correct the supported exposure configuration before startup.';; esac
   if [ "$mode" = domain ]; then
     domain=${public_url#https://}; domain=${domain%%/*}
@@ -81,9 +83,17 @@ if [ -f "$environment_file" ]; then
     compose() { docker compose --project-name jobdock --env-file "$environment_file" --env-file "$CONFIG_DIR/overrides.env" -f "$CONFIG_DIR/docker-compose.yml" -f "$exposure" "$@"; }
     if compose config --quiet >/dev/null 2>&1; then record configuration pass 'Effective Compose configuration is valid.' ''; else record configuration fail 'Effective Compose configuration is invalid.' 'Run docker compose config with the installed env and overlay files.'; fi
     running=$(compose ps --status running --services 2>/dev/null)
-    for service in jobdock-server jobdock-builder buildkitd; do
+    for service in jobdock-server; do
       if printf '%s\n' "$running" | grep -qx "$service"; then record "service_$service" pass "$service is running." ''; else record "service_$service" warn "$service is not running." "Inspect $service logs; a deliberately disabled capability may be expected."; fi
     done
+    if [ "$builder_enabled" = false ]; then
+      record source_builds pass 'Source builds are disabled by configuration; OCI jobs remain available.' ''
+    else
+      record source_builds pass 'Source builds are enabled.' ''
+      for service in jobdock-builder buildkitd; do
+        if printf '%s\n' "$running" | grep -qx "$service"; then record "service_$service" pass "$service is running." ''; else record "service_$service" warn "$service is not running although source builds are enabled." "Inspect $service logs."; fi
+      done
+    fi
   fi
 else
   record installation warn 'No installed JobDock configuration was found; runtime checks were skipped.' 'Run the release installer after resolving preflight failures.'

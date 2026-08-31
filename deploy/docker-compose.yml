@@ -17,7 +17,8 @@ services:
       JOBDOCK_TELEMETRY_RETENTION: "${JOBDOCK_TELEMETRY_RETENTION:-720h}"
       JOBDOCK_MAX_INPUT_BYTES: "${JOBDOCK_MAX_INPUT_BYTES:-10737418240}"
       JOBDOCK_BUILD_ANALYSIS_TIMEOUT: "${JOBDOCK_BUILD_ANALYSIS_TIMEOUT:-2m}"
-      JOBDOCK_BUILDER_TOKEN: "${JOBDOCK_BUILDER_TOKEN:?Set a random builder token of at least 32 characters}"
+      JOBDOCK_BUILDER_TOKEN: "${JOBDOCK_BUILDER_TOKEN:-}"
+      JOBDOCK_BUILDER_ENABLED: "${JOBDOCK_BUILDER_ENABLED:-true}"
       JOBDOCK_BUILDER_LEASE: "${JOBDOCK_BUILDER_LEASE:-30s}"
       JOBDOCK_MAX_BUILD_ARTIFACT_BYTES: "${JOBDOCK_MAX_BUILD_ARTIFACT_BYTES:-21474836480}"
       JOBDOCK_BUILD_ARTIFACT_RETENTION: "${JOBDOCK_BUILD_ARTIFACT_RETENTION:-720h}"
@@ -40,6 +41,7 @@ services:
       - builder-control
 
   jobdock-builder:
+    profiles: ["builder"]
     build:
       context: ..
       dockerfile: Dockerfile.builder
@@ -53,7 +55,7 @@ services:
     environment:
       JOBDOCK_SERVER_URL: "http://jobdock-server:8080"
       JOBDOCK_ALLOW_INSECURE_HTTP: "true"
-      JOBDOCK_BUILDER_TOKEN: "${JOBDOCK_BUILDER_TOKEN:?Set a random builder token of at least 32 characters}"
+      JOBDOCK_BUILDER_TOKEN: "${JOBDOCK_BUILDER_TOKEN:-}"
       JOBDOCK_BUILDKIT_ADDRESS: "tcp://buildkitd:1234"
       JOBDOCK_BUILDER_LEASE: "${JOBDOCK_BUILDER_LEASE:-30s}"
       JOBDOCK_BUILD_TIMEOUT: "${JOBDOCK_BUILD_TIMEOUT:-30m}"
@@ -73,6 +75,7 @@ services:
       - builder-backend
 
   buildkitd:
+    profiles: ["builder"]
     image: moby/buildkit:v0.30.0-rootless
     restart: unless-stopped
     command:

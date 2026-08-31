@@ -34,6 +34,7 @@ type Server struct {
 	BuildAnalysisTimeout   time.Duration
 	RailpackBinary         string
 	BuilderToken           string
+	BuilderDisabled        bool
 	BuilderLease           time.Duration
 	MaxBuildArtifactBytes  int64
 	BuildArtifactRetention time.Duration
@@ -93,6 +94,7 @@ func LoadServer() (Server, error) {
 		BuildAnalysisTimeout:   envDuration("JOBDOCK_BUILD_ANALYSIS_TIMEOUT", 2*time.Minute),
 		RailpackBinary:         env("JOBDOCK_RAILPACK_BINARY", "railpack"),
 		BuilderLease:           envDuration("JOBDOCK_BUILDER_LEASE", 30*time.Second),
+		BuilderDisabled:        !envBool("JOBDOCK_BUILDER_ENABLED", true),
 		MaxBuildArtifactBytes:  envInt64("JOBDOCK_MAX_BUILD_ARTIFACT_BYTES", 20<<30),
 		BuildArtifactRetention: envDuration("JOBDOCK_BUILD_ARTIFACT_RETENTION", 30*24*time.Hour),
 		ReleaseManifestPath:    env("JOBDOCK_RELEASE_MANIFEST_PATH", ""),

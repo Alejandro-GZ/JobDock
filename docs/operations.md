@@ -24,6 +24,10 @@ enabled. HSTS belongs at the external proxy in proxy mode and is deliberately
 absent from local mode.
 - Run `jobdock-builder` and `buildkitd` as separate services. Neither service may mount the host Docker socket.
 
+### Optional source builder
+
+The supported OCI-only mode stores `JOBDOCK_BUILDER_ENABLED=false` and leaves `COMPOSE_PROFILES` empty. Jobs based on existing OCI images remain available, while source-build actions explain that the capability is disabled. `jobdock-doctor` reports this as intentional instead of treating the missing builder services as broken. Enabling source builds sets `JOBDOCK_BUILDER_ENABLED=true` and `COMPOSE_PROFILES=builder`; the doctor then requires both builder services to be running.
+
 ## Backup and restore
 
 The release installer places `jobdockctl` in `/usr/local/bin`. Create a consistent, portable snapshot with:
