@@ -58,6 +58,8 @@ awk \
    {print}' \
   "$script_dir/install-control-plane.sh" > "$output_dir/install-control-plane.sh"
 chmod 0755 "$output_dir/install-control-plane.sh"
+cp -- "$script_dir/jobdock-doctor.sh" "$output_dir/jobdock-doctor"
+chmod 0755 "$output_dir/jobdock-doctor"
 
 awk \
   -v server="$server_reference" \
@@ -84,6 +86,7 @@ cat > "$output_dir/release-notes.md" <<EOF
 - Publishes the version-matched JobDock server, agent, and builder as one verified release set.
 - Includes digest-pinned deployment assets for reproducible installation and auditing.
 - Adds the one-command, checksum-verifying control-plane bootstrap.
+- Includes the read-only JobDock doctor with human and machine-readable diagnostics.
 - Publishes the matching Python SDK from the same verified release manifest.
 
 ## Components
@@ -115,5 +118,5 @@ EOF
 
 (
   cd -- "$output_dir"
-  sha256sum release-manifest.json docker-compose.yml docker-compose.domain.yml docker-compose.proxy.yml docker-compose.local.yml Caddyfile install-control-plane.sh install-agent.sh "$wheel_filename" "$sdist_filename" > SHA256SUMS
+  sha256sum release-manifest.json docker-compose.yml docker-compose.domain.yml docker-compose.proxy.yml docker-compose.local.yml Caddyfile install-control-plane.sh install-agent.sh jobdock-doctor "$wheel_filename" "$sdist_filename" > SHA256SUMS
 )

@@ -59,6 +59,7 @@ func TestControlPlaneInstallerIsVerifiedAndIdempotent(t *testing.T) {
 	config := filepath.Join(root, "etc", "jobdock")
 	data := filepath.Join(root, "var", "lib", "jobdock")
 	releases := filepath.Join(root, "usr", "lib", "jobdock", "releases")
+	installedBin := filepath.Join(root, "usr", "bin")
 	for _, directory := range []string{release, bin} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			t.Fatal(err)
@@ -74,13 +75,14 @@ func TestControlPlaneInstallerIsVerifiedAndIdempotent(t *testing.T) {
 		"docker-compose.proxy.yml":  "services:\n  jobdock-server:\n    ports: [\"127.0.0.1:18080:8080\"]\n",
 		"docker-compose.local.yml":  "services:\n  jobdock-server:\n    ports: [\"18080:8080\"]\n",
 		"Caddyfile":                 "{$JOBDOCK_DOMAIN} { reverse_proxy jobdock-server:8080 }\n",
+		"jobdock-doctor":            "#!/bin/sh\nexit 0\n",
 	}
 	for name, contents := range assets {
 		if err := os.WriteFile(filepath.Join(release, name), []byte(contents), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	checksum := exec.Command("sha256sum", "release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-agent.sh")
+	checksum := exec.Command("sha256sum", "release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-agent.sh", "jobdock-doctor")
 	checksum.Dir = release
 	output, err := checksum.Output()
 	if err != nil {
@@ -125,6 +127,7 @@ cp "$JOBDOCK_TEST_RELEASE_DIR/$asset" "$output"
 		"JOBDOCK_INSTALL_CONFIG_DIR="+config,
 		"JOBDOCK_INSTALL_DATA_DIR="+data,
 		"JOBDOCK_INSTALL_RELEASES_DIR="+releases,
+		"JOBDOCK_INSTALL_BIN_DIR="+installedBin,
 		"JOBDOCK_RELEASES_URL=https://releases.example.test",
 		"JOBDOCK_TEST_RELEASES_URL=https://releases.example.test",
 		"JOBDOCK_TEST_RELEASE_DIR="+release,
@@ -153,6 +156,7 @@ cp "$JOBDOCK_TEST_RELEASE_DIR/$asset" "$output"
 		filepath.Join(config, "secrets", "builder-token"),
 		filepath.Join(data, "server"),
 		filepath.Join(releases, "1.2.3", "release-manifest.json"),
+		filepath.Join(installedBin, "jobdock-doctor"),
 	} {
 		if _, err = os.Stat(path); err != nil {
 			t.Fatalf("expected installed path %s: %v", path, err)

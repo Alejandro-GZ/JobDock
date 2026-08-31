@@ -6,6 +6,7 @@ RELEASES_URL="${JOBDOCK_RELEASES_URL:-https://github.com/$REPOSITORY/releases}"
 CONFIG_DIR="${JOBDOCK_INSTALL_CONFIG_DIR:-/etc/jobdock}"
 DATA_DIR="${JOBDOCK_INSTALL_DATA_DIR:-/var/lib/jobdock}"
 RELEASES_DIR="${JOBDOCK_INSTALL_RELEASES_DIR:-/usr/local/lib/jobdock/releases}"
+BIN_DIR="${JOBDOCK_INSTALL_BIN_DIR:-/usr/local/bin}"
 HEALTH_TIMEOUT="${JOBDOCK_INSTALL_HEALTH_TIMEOUT:-180}"
 DEFAULT_VERSION=""
 VERSION="$DEFAULT_VERSION"
@@ -184,7 +185,7 @@ download() {
 
 printf 'Resolving JobDock %s...\n' "$VERSION"
 download SHA256SUMS
-for asset in release-manifest.json docker-compose.yml docker-compose.domain.yml docker-compose.proxy.yml docker-compose.local.yml Caddyfile install-agent.sh; do
+for asset in release-manifest.json docker-compose.yml docker-compose.domain.yml docker-compose.proxy.yml docker-compose.local.yml Caddyfile install-agent.sh jobdock-doctor; do
   download "$asset"
   awk -v expected="$asset" '$2 == expected || $2 == "*" expected {print}' "$temporary/SHA256SUMS" > "$temporary/$asset.sha256"
   [ -s "$temporary/$asset.sha256" ] || fail "SHA256SUMS does not cover $asset"
@@ -224,7 +225,7 @@ fi
 printf 'Installing verified assets into stable system paths...\n'
 release_dir="$RELEASES_DIR/$VERSION"
 secrets_dir="$CONFIG_DIR/secrets"
-mkdir -p "$CONFIG_DIR" "$secrets_dir" "$release_dir" "$DATA_DIR/server" "$DATA_DIR/builder" "$DATA_DIR/buildkit"
+mkdir -p "$CONFIG_DIR" "$secrets_dir" "$release_dir" "$BIN_DIR" "$DATA_DIR/server" "$DATA_DIR/builder" "$DATA_DIR/buildkit"
 chmod 0750 "$CONFIG_DIR" "$DATA_DIR" "$DATA_DIR/server" "$DATA_DIR/builder" "$DATA_DIR/buildkit"
 if [ "$MODE" = "domain" ]; then
   mkdir -p "$DATA_DIR/caddy/data" "$DATA_DIR/caddy/config"
@@ -241,6 +242,8 @@ for deployment_asset in docker-compose.domain.yml docker-compose.proxy.yml docke
   install -m 0644 "$temporary/$deployment_asset" "$release_dir/$deployment_asset"
 done
 install -m 0755 "$temporary/install-agent.sh" "$release_dir/install-agent.sh"
+install -m 0755 "$temporary/jobdock-doctor" "$release_dir/jobdock-doctor"
+install -m 0755 "$temporary/jobdock-doctor" "$BIN_DIR/jobdock-doctor"
 install -m 0644 "$temporary/SHA256SUMS" "$release_dir/SHA256SUMS"
 install -m 0644 "$temporary/docker-compose.yml" "$CONFIG_DIR/docker-compose.yml"
 install -m 0644 "$temporary/docker-compose.$MODE.yml" "$CONFIG_DIR/docker-compose.exposure.yml"

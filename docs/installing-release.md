@@ -114,6 +114,23 @@ If image pull, startup, or readiness fails, the bootstrap exits non-zero and
 prints the exact Compose command needed to inspect status or logs. It never
 announces a partially healthy installation as successful.
 
+## Diagnose a host or installation
+
+Every release publishes the read-only `jobdock-doctor` command, and the
+installer places it in `/usr/local/bin`. Run it before or after installation:
+
+```sh
+jobdock-doctor
+jobdock-doctor --json
+jobdock-doctor --gpu
+```
+
+It checks the supported OS/architecture, Docker and Compose, memory, storage,
+permissions, GitHub/GHCR reachability, exposure URL, DNS/TLS, server, builder,
+BuildKit, and—when explicitly requested—the NVIDIA driver plus a real GPU
+container. Every failed check includes remediation. `--json` emits schema
+version 1 for automation. The command never repairs or modifies the host.
+
 ## Inspect the installation
 
 The generated project can be inspected without a repository checkout:
