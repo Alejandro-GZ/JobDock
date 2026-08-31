@@ -193,6 +193,7 @@ jobs:
       agent_digest: ${{ steps.manifest.outputs.agent_digest }}
       builder_digest: ${{ steps.manifest.outputs.builder_digest }}
     steps:
+      - uses: actions/checkout@v4
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -225,6 +226,8 @@ jobs:
           sdist_file="$(basename "${sdists[0]}")"
           wheel_sha256="$(sha256sum "${wheels[0]}" | cut -d ' ' -f 1)"
           sdist_sha256="$(sha256sum "${sdists[0]}" | cut -d ' ' -f 1)"
+          database_schema="$(find internal/store/migrations -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort -n | tail -1 | cut -d_ -f1 | sed 's/^0*//')"
+          test -n "$database_schema"
           jq -s \
             --arg version "$VERSION" \
             --arg tag "$GITHUB_REF_NAME" \
@@ -234,7 +237,8 @@ jobs:
             --arg wheel_sha256 "$wheel_sha256" \
             --arg sdist_file "$sdist_file" \
             --arg sdist_sha256 "$sdist_sha256" \
-            '{schema_version: 2, version: $version, tag: $tag, commit: $commit, images: (sort_by(.image)), sdk: {name: "jobdock-sdk", version: $sdk_version, wheel: {filename: $wheel_file, sha256: $wheel_sha256}, sdist: {filename: $sdist_file, sha256: $sdist_sha256}}}' \
+            --argjson database_schema "$database_schema" \
+            '{schema_version: 2, version: $version, tag: $tag, commit: $commit, database: {schema: $database_schema, rollback_floor: $database_schema}, images: (sort_by(.image)), sdk: {name: "jobdock-sdk", version: $sdk_version, wheel: {filename: $wheel_file, sha256: $wheel_sha256}, sdist: {filename: $sdist_file, sha256: $sdist_sha256}}}' \
             release-digests/jobdock-*.json > release-manifest.json
           {
             echo "manifest=$(jq -c . release-manifest.json)"

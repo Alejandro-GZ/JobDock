@@ -75,7 +75,12 @@ func (a *API) Handler() http.Handler {
 			writeProblem(w, http.StatusServiceUnavailable, "database_unavailable", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+		schema, err := a.store.SchemaVersion(r.Context())
+		if err != nil {
+			writeProblem(w, http.StatusServiceUnavailable, "database_unavailable", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "version": a.version, "database_schema": schema})
 	})
 	mux.HandleFunc("GET /metrics", a.metrics)
 	mux.HandleFunc("GET /install-agent.sh", a.agentInstaller)

@@ -25,7 +25,9 @@ func TestControlPlaneInstallerContract(t *testing.T) {
 		"compose up -d",
 		"/health/ready",
 		"is healthy",
-		"use the supported upgrade flow",
+		"add --upgrade",
+		"Upgrade plan",
+		"--allow-irreversible",
 		"One-time setup token:",
 		"overrides.env",
 		"--mode must be domain, proxy, or local",
@@ -68,7 +70,7 @@ func TestControlPlaneInstallerIsVerifiedAndIdempotent(t *testing.T) {
 
 	digest := strings.Repeat("a", 64)
 	assets := map[string]string{
-		"release-manifest.json":     "{\n  \"schema_version\": 2,\n  \"version\": \"1.2.3\",\n  \"tag\": \"v1.2.3\",\n  \"images\": [\n    {\"image\": \"ghcr.io/alejandro-gz/jobdock-server\", \"reference\": \"ghcr.io/alejandro-gz/jobdock-server@sha256:" + digest + "\"},\n    {\"image\": \"ghcr.io/alejandro-gz/jobdock-builder\", \"reference\": \"ghcr.io/alejandro-gz/jobdock-builder@sha256:" + digest + "\"}\n  ]\n}",
+		"release-manifest.json":     "{\n  \"schema_version\": 2,\n  \"version\": \"1.2.3\",\n  \"tag\": \"v1.2.3\",\n  \"database\": {\"schema\": 32, \"rollback_floor\": 32},\n  \"images\": [\n    {\"image\": \"ghcr.io/alejandro-gz/jobdock-server\", \"reference\": \"ghcr.io/alejandro-gz/jobdock-server@sha256:" + digest + "\"},\n    {\"image\": \"ghcr.io/alejandro-gz/jobdock-builder\", \"reference\": \"ghcr.io/alejandro-gz/jobdock-builder@sha256:" + digest + "\"}\n  ]\n}",
 		"docker-compose.yml":        "services:\n  jobdock-server:\n    image: \"ghcr.io/alejandro-gz/jobdock-server@sha256:" + digest + "\"\n  jobdock-builder:\n    image: \"ghcr.io/alejandro-gz/jobdock-builder@sha256:" + digest + "\"\n",
 		"install-agent.sh":          "#!/bin/sh\nexit 0\n",
 		"docker-compose.domain.yml": "services:\n  caddy:\n    image: caddy:2.10.2-alpine\n",
@@ -113,7 +115,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$url" in
-  */health/ready) exit 0;;
+  */health/ready) printf '{"status":"ready","version":"%s","database_schema":32}' "${JOBDOCK_TEST_HEALTH_VERSION:-1.2.3}"; exit 0;;
   */latest) printf '%s' "${JOBDOCK_TEST_RELEASES_URL}/tag/v1.2.3"; exit 0;;
 esac
 asset=${url##*/}
@@ -264,6 +266,35 @@ cp "$JOBDOCK_TEST_RELEASE_DIR/$asset" "$output"
 	}
 	if _, statErr := os.Stat(invalidDomainConfig); !os.IsNotExist(statErr) {
 		t.Fatal("invalid domain mutated the target")
+	}
+
+	manifestPath := filepath.Join(release, "release-manifest.json")
+	upgradedManifest := strings.ReplaceAll(readTestFile(t, manifestPath), "1.2.3", "1.2.4")
+	if err = os.WriteFile(manifestPath, []byte(upgradedManifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	checksum = exec.Command("sha256sum", "release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-agent.sh", "jobdock-doctor")
+	checksum.Dir = release
+	output, err = checksum.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(release, "SHA256SUMS"), output, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	upgradeEnvironment := append(withoutEnvironment(environment, "JOBDOCK_TEST_HEALTH_VERSION"), "JOBDOCK_TEST_HEALTH_VERSION=1.2.4")
+	upgrade := exec.Command("sh", installer, "--version", "1.2.4", "--upgrade", "--no-backup", "--yes")
+	upgrade.Env = upgradeEnvironment
+	upgradeOutput, upgradeErr := upgrade.CombinedOutput()
+	if upgradeErr != nil {
+		t.Fatalf("transactional upgrade failed: %v\n%s", upgradeErr, upgradeOutput)
+	}
+	if !strings.Contains(string(upgradeOutput), "Upgrade plan") || !strings.Contains(readTestFile(t, filepath.Join(config, "install-state")), "version=1.2.4") {
+		t.Fatal("upgrade did not report its plan or persist the target version")
+	}
+	history, globErr := filepath.Glob(filepath.Join(releases, "upgrade-history", "*-from-1.2.3-to-1.2.4", "result"))
+	if globErr != nil || len(history) != 1 || !strings.Contains(readTestFile(t, history[0]), "status=succeeded") {
+		t.Fatal("upgrade result was not recorded")
 	}
 
 	tamperedConfig := filepath.Join(root, "tampered-etc")

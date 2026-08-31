@@ -17,6 +17,10 @@ ADMIN_USERNAME="admin"
 MODE=""
 DOMAIN=""
 ALLOW_INSECURE_HTTP=false
+UPGRADE=false
+ASSUME_YES=false
+NO_BACKUP=false
+ALLOW_IRREVERSIBLE=false
 
 usage() {
   cat <<'EOF'
@@ -32,6 +36,10 @@ Options:
   --public-url URL        Required HTTPS URL for proxy mode
   --allow-insecure-http   Explicitly permit HTTP in local/LAN mode
   --admin-username NAME   Bootstrap administrator username (default: admin)
+  --upgrade               Upgrade an existing installation transactionally
+  --yes                   Apply the displayed upgrade plan non-interactively
+  --no-backup             Explicitly continue without a full state backup
+  --allow-irreversible    Accept a database migration that cannot roll back
   --help                  Show this help
 
 The supported system layout is /etc/jobdock for configuration,
@@ -83,6 +91,10 @@ while [ "$#" -gt 0 ]; do
       ALLOW_INSECURE_HTTP=true
       shift
       ;;
+    --upgrade) UPGRADE=true; shift ;;
+    --yes) ASSUME_YES=true; shift ;;
+    --no-backup) NO_BACKUP=true; shift ;;
+    --allow-irreversible) ALLOW_IRREVERSIBLE=true; shift ;;
     --help|-h)
       usage
       exit 0
@@ -151,7 +163,7 @@ case "$HTTP_PORT" in
 esac
 [ "$HTTP_PORT" -ge 1 ] && [ "$HTTP_PORT" -le 65535 ] || fail "stored HTTP port must be an integer from 1 to 65535"
 
-for command_name in curl sha256sum docker mktemp awk grep od tr base64 dd wc install id mkdir chmod chown sleep mv cat; do
+for command_name in curl sha256sum docker mktemp awk grep od tr base64 dd wc install id mkdir chmod chown sleep mv cat cp date sort head; do
   command -v "$command_name" >/dev/null 2>&1 || fail "$command_name is required"
 done
 docker info >/dev/null 2>&1 || fail "Docker Engine is not available or the daemon is not running"
@@ -216,10 +228,52 @@ done
 
 state_file="$CONFIG_DIR/install-state"
 existing_install=false
+installed_version=""
 if [ -f "$state_file" ]; then
   existing_install=true
   installed_version=$(awk -F= '$1 == "version" {print $2}' "$state_file")
-  [ -z "$installed_version" ] || [ "$installed_version" = "$VERSION" ] || fail "JobDock $installed_version is installed; use the supported upgrade flow to install $VERSION"
+  if [ -n "$installed_version" ] && [ "$installed_version" != "$VERSION" ] && [ "$UPGRADE" != "true" ]; then
+    fail "JobDock $installed_version is installed; add --upgrade to install $VERSION"
+  fi
+fi
+
+rollback_dir=""
+irreversible=false
+migration_may_have_run=false
+target_schema=$(awk '/"database"[[:space:]]*:/ {inside=1} inside && /"schema"[[:space:]]*:/ {line=$0; sub(/^.*"schema"[[:space:]]*:[[:space:]]*/, "", line); sub(/[^0-9].*$/, "", line); print line; exit}' "$temporary/release-manifest.json")
+[ -n "$target_schema" ] || target_schema=0
+if [ "$UPGRADE" = "true" ]; then
+  [ "$existing_install" = "true" ] || fail "--upgrade requires an existing JobDock installation"
+  [ "$installed_version" != "$VERSION" ] || fail "JobDock $VERSION is already installed; omit --upgrade for an idempotent repair"
+  [ "$NO_BACKUP" = "true" ] || fail "a supported full backup is not available until P1.71; review the risk and add --no-backup explicitly to continue"
+  installed_schema=$(awk -F= '$1 == "database_schema" {print $2}' "$state_file")
+  [ -n "$installed_schema" ] || installed_schema=0
+  oldest_version=$(printf '%s\n%s\n' "$installed_version" "$VERSION" | sort -V | head -1)
+  [ "$oldest_version" != "$VERSION" ] || fail "downgrade from $installed_version to $VERSION is not supported"
+  [ "$target_schema" -ge "$installed_schema" ] || fail "target database schema $target_schema is older than installed schema $installed_schema"
+  if [ "$target_schema" -gt "$installed_schema" ]; then irreversible=true; fi
+  [ "$irreversible" != "true" ] || [ "$ALLOW_IRREVERSIBLE" = "true" ] || fail "upgrade changes database schema $installed_schema -> $target_schema and cannot roll back automatically; inspect release notes and add --allow-irreversible"
+  printf '\nUpgrade plan\n'
+  printf '  Version: %s -> %s\n' "$installed_version" "$VERSION"
+  printf '  Database schema: %s -> %s\n' "$installed_schema" "$target_schema"
+  printf '  Backup: explicitly skipped\n'
+  if [ "$irreversible" = "true" ]; then printf '  Automatic rollback: unavailable after migration\n'; else printf '  Automatic rollback: enabled\n'; fi
+  if [ "$ASSUME_YES" != "true" ]; then
+    [ -t 0 ] || fail "upgrade confirmation requires an interactive terminal or --yes"
+    printf 'Apply this upgrade? [y/N] '
+    read -r answer
+    case "$answer" in y|Y|yes|YES) ;; *) fail "upgrade cancelled" ;; esac
+  fi
+  for reference in $(awk '/"reference"[[:space:]]*:/ {line=$0; sub(/^.*"reference"[[:space:]]*:[[:space:]]*"/, "", line); sub(/".*$/, "", line); print line}' "$temporary/release-manifest.json"); do
+    docker pull "$reference" >/dev/null || fail "could not pre-pull verified image $reference"
+  done
+  upgrade_id=$(date -u +%Y%m%dT%H%M%SZ)-from-$installed_version-to-$VERSION
+  rollback_dir="$RELEASES_DIR/upgrade-history/$upgrade_id"
+  mkdir -p "$rollback_dir"
+  for preserved in jobdock.env overrides.env docker-compose.yml docker-compose.exposure.yml Caddyfile release-manifest.json install-state; do
+    [ ! -f "$CONFIG_DIR/$preserved" ] || cp -p "$CONFIG_DIR/$preserved" "$rollback_dir/$preserved"
+  done
+  printf 'status=applying\nfrom=%s\nto=%s\ndatabase_schema_before=%s\ndatabase_schema_target=%s\n' "$installed_version" "$VERSION" "$installed_schema" "$target_schema" > "$rollback_dir/result"
 fi
 
 printf 'Installing verified assets into stable system paths...\n'
@@ -394,15 +448,33 @@ compose() {
   docker compose --project-name jobdock --env-file "$environment_file" --env-file "$overrides_file" -f "$CONFIG_DIR/docker-compose.yml" -f "$CONFIG_DIR/docker-compose.exposure.yml" "$@"
 }
 
+upgrade_failure() {
+  reason="$1"
+  if [ "$UPGRADE" = "true" ] && { [ "$migration_may_have_run" != "true" ] || [ "$irreversible" != "true" ]; } && [ -n "$rollback_dir" ]; then
+    printf '%s; restoring the previous release configuration...\n' "$reason" >&2
+    for preserved in jobdock.env overrides.env docker-compose.yml docker-compose.exposure.yml Caddyfile release-manifest.json install-state; do
+      [ ! -f "$rollback_dir/$preserved" ] || cp -p "$rollback_dir/$preserved" "$CONFIG_DIR/$preserved"
+    done
+    compose up -d >&2 || true
+    printf 'status=rolled_back\nfrom=%s\nto=%s\nreason=%s\n' "$installed_version" "$VERSION" "$reason" > "$rollback_dir/result"
+    fail "$reason; the previous release configuration was restored. Inspect $rollback_dir/result"
+  fi
+  if [ "$UPGRADE" = "true" ] && [ -n "$rollback_dir" ]; then
+    printf 'status=failed\nfrom=%s\nto=%s\nreason=%s\n' "$installed_version" "$VERSION" "$reason" > "$rollback_dir/result"
+  fi
+  fail "$reason; automatic rollback is unavailable after an irreversible database migration"
+}
+
 printf 'Validating effective configuration...\n'
-compose config --quiet || fail "effective configuration is invalid; review $overrides_file"
+compose config --quiet || { if [ "$UPGRADE" = "true" ]; then upgrade_failure "effective configuration is invalid; review $overrides_file"; else fail "effective configuration is invalid; review $overrides_file"; fi; }
 printf 'Pulling verified images...\n'
-compose pull || fail "image pull failed; verified configuration remains in $CONFIG_DIR"
+compose pull || { if [ "$UPGRADE" = "true" ]; then upgrade_failure "image pull failed"; else fail "image pull failed; verified configuration remains in $CONFIG_DIR"; fi; }
 if [ "$MODE" = "domain" ]; then
-  compose run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile || fail "Caddy configuration is invalid; review $CONFIG_DIR/Caddyfile and $overrides_file"
+  compose run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile || { if [ "$UPGRADE" = "true" ]; then upgrade_failure "Caddy configuration is invalid"; else fail "Caddy configuration is invalid; review $CONFIG_DIR/Caddyfile and $overrides_file"; fi; }
 fi
 printf 'Starting the JobDock control plane...\n'
-compose up -d || fail "service startup failed; inspect with: docker compose --env-file $environment_file --env-file $overrides_file -f $CONFIG_DIR/docker-compose.yml -f $CONFIG_DIR/docker-compose.exposure.yml ps"
+if [ "$UPGRADE" = "true" ]; then migration_may_have_run=true; fi
+compose up -d || { if [ "$UPGRADE" = "true" ]; then upgrade_failure "service startup failed"; else fail "service startup failed; inspect with: docker compose --env-file $environment_file --env-file $overrides_file -f $CONFIG_DIR/docker-compose.yml -f $CONFIG_DIR/docker-compose.exposure.yml ps"; fi; }
 
 elapsed=0
 case "$MODE" in
@@ -412,6 +484,7 @@ esac
 while ! curl --fail --silent --show-error "$readiness_url" >/dev/null 2>&1; do
   if [ "$elapsed" -ge "$HEALTH_TIMEOUT" ]; then
     compose ps >&2 || true
+    if [ "$UPGRADE" = "true" ]; then upgrade_failure "upgrade readiness failed"; fi
     if [ "$MODE" = "domain" ]; then
       compose logs --tail=100 caddy >&2 || true
       fail "HTTPS readiness failed for $DOMAIN within ${HEALTH_TIMEOUT}s; verify that DNS points to this host and inbound TCP 80/443 and UDP 443 are reachable; the latest Caddy diagnostics are printed above"
@@ -422,13 +495,27 @@ while ! curl --fail --silent --show-error "$readiness_url" >/dev/null 2>&1; do
   elapsed=$((elapsed + 1))
 done
 
+readiness=$(curl --fail --silent --show-error "$readiness_url") || { if [ "$UPGRADE" = "true" ]; then upgrade_failure "readiness disappeared during version validation"; else fail "readiness disappeared during version validation"; fi; }
+if ! printf '%s' "$readiness" | grep -Fq '"version":"'"$VERSION"'"'; then
+  if [ "$UPGRADE" = "true" ]; then upgrade_failure "healthy server does not report expected version $VERSION"; else fail "healthy server does not report expected version $VERSION"; fi
+fi
+if [ "$target_schema" -gt 0 ]; then
+  if ! printf '%s' "$readiness" | grep -Fq '"database_schema":'"$target_schema"; then
+    if [ "$UPGRADE" = "true" ]; then upgrade_failure "healthy server does not report expected database schema $target_schema"; else fail "healthy server does not report expected database schema $target_schema"; fi
+  fi
+fi
+
 manifest_checksum=$(sha256sum "$temporary/release-manifest.json" | awk '{print $1}')
 {
   printf 'version=%s\n' "$VERSION"
   printf 'tag=%s\n' "$TAG"
   printf 'manifest_sha256=%s\n' "$manifest_checksum"
+  printf 'database_schema=%s\n' "$target_schema"
 } > "$state_file"
 chmod 0640 "$state_file"
+if [ "$UPGRADE" = "true" ] && [ -n "$rollback_dir" ]; then
+  printf 'status=succeeded\nfrom=%s\nto=%s\ndatabase_schema=%s\n' "$installed_version" "$VERSION" "$target_schema" > "$rollback_dir/result"
+fi
 
 printf '\nJobDock %s is healthy.\n' "$VERSION"
 printf 'Web console: %s\n' "$PUBLIC_URL"

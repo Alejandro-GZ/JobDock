@@ -21,6 +21,7 @@ jq -e '
   (.version | type == "string" and length > 0) and
   (.tag == ("v" + .version)) and
   (.commit | test("^[0-9a-f]{40}$")) and
+  (.database | (.schema | type == "number" and . >= 1) and (.rollback_floor | type == "number" and . >= 1) and (.rollback_floor <= .schema)) and
   (.images | length == 3) and
   ([.images[].image] | unique | length == 3) and
   (all(.images[]; .digest | test("^sha256:[0-9a-f]{64}$"))) and

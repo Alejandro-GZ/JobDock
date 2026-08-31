@@ -48,6 +48,7 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 	}
 	manifest := map[string]any{
 		"schema_version": 2, "version": "1.2.3-rc.1", "tag": "v1.2.3-rc.1", "commit": commit, "images": images,
+		"database": map[string]any{"schema": 32, "rollback_floor": 32},
 		"sdk": map[string]any{
 			"name": "jobdock-sdk", "version": "1.2.3rc1",
 			"wheel": map[string]string{"filename": wheelName, "sha256": testSHA256(wheelContents)},
