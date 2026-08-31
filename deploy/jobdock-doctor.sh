@@ -64,7 +64,7 @@ fi
 
 release_url="${JOBDOCK_RELEASES_URL:-https://github.com/Alejandro-GZ/JobDock/releases}"
 if command -v curl >/dev/null 2>&1 && curl -fsIL --max-time 10 "$release_url/latest" >/dev/null 2>&1; then record github pass 'GitHub Releases is reachable.' ''; else record github fail 'GitHub Releases is unreachable.' 'Check DNS, HTTPS egress, proxy, and firewall rules.'; fi
-ghcr_code=$(curl -sSIL --max-time 10 -o /dev/null -w '%{http_code}' https://ghcr.io/v2/ 2>/dev/null)
+ghcr_code=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' https://ghcr.io/v2/ 2>/dev/null)
 case "$ghcr_code" in 200|401) record ghcr pass 'GHCR registry endpoint is reachable.' '';; *) record ghcr fail "GHCR returned ${ghcr_code:-no response}." 'Allow HTTPS egress to ghcr.io.';; esac
 
 environment_file="$CONFIG_DIR/jobdock.env"

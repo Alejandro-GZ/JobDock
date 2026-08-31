@@ -22,6 +22,9 @@ func TestDoctorContract(t *testing.T) {
 			t.Fatalf("read-only doctor contains %q", forbidden)
 		}
 	}
+	if !strings.Contains(doctor, "ghcr_code=$(curl -sS --max-time") || strings.Contains(doctor, "ghcr_code=$(curl -sSIL") {
+		t.Fatal("GHCR Registry API reachability must use GET; the endpoint rejects HEAD with 405")
+	}
 }
 
 func TestDoctorProducesStableJSONBeforeInstall(t *testing.T) {
