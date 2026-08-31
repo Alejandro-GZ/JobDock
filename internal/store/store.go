@@ -985,8 +985,8 @@ func (s *Store) CreateEnrollmentToken(ctx context.Context, tokenHash, userID str
 	return err
 }
 
-func (s *Store) ConsumeEnrollmentToken(ctx context.Context, tokenHash string) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE enrollment_tokens SET used_at=? WHERE token_hash=? AND used_at IS NULL AND expires_at>?`, formatTime(time.Now().UTC()), tokenHash, formatTime(time.Now().UTC()))
+func (s *Store) ConsumeEnrollmentToken(ctx context.Context, tokenHash, nodeID string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE enrollment_tokens SET used_at=?,node_id=? WHERE token_hash=? AND used_at IS NULL AND expires_at>?`, formatTime(time.Now().UTC()), nodeID, tokenHash, formatTime(time.Now().UTC()))
 	if err != nil {
 		return err
 	}
@@ -995,6 +995,45 @@ func (s *Store) ConsumeEnrollmentToken(ctx context.Context, tokenHash string) er
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (s *Store) RevokeEnrollmentToken(ctx context.Context, tokenHash, userID string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE enrollment_tokens SET used_at=? WHERE token_hash=? AND created_by=? AND used_at IS NULL`, formatTime(time.Now().UTC()), tokenHash, userID)
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+type EnrollmentStatus struct {
+	Status        string     `json:"status"`
+	NodeID        string     `json:"node_id,omitempty"`
+	Name          string     `json:"node_name,omitempty"`
+	LastHeartbeat *time.Time `json:"last_heartbeat,omitempty"`
+}
+
+func (s *Store) EnrollmentStatus(ctx context.Context, tokenHash string) (EnrollmentStatus, error) {
+	var result EnrollmentStatus
+	var nodeID, name, heartbeat sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT e.node_id,n.name,n.last_heartbeat FROM enrollment_tokens e LEFT JOIN nodes n ON n.id=e.node_id WHERE e.token_hash=? AND e.expires_at>?`, tokenHash, formatTime(time.Now().UTC())).Scan(&nodeID, &name, &heartbeat)
+	if errors.Is(err, sql.ErrNoRows) {
+		return result, ErrNotFound
+	}
+	if err != nil {
+		return result, err
+	}
+	result.Status = "pending"
+	if nodeID.Valid && heartbeat.Valid {
+		result.Status, result.NodeID, result.Name = "connected", nodeID.String, name.String
+		if parsed, parseErr := time.Parse(time.RFC3339Nano, heartbeat.String); parseErr == nil {
+			result.LastHeartbeat = &parsed
+		}
+	}
+	return result, nil
 }
 
 func (s *Store) CreateSecret(ctx context.Context, metadata SecretMetadata, ciphertext []byte) error {

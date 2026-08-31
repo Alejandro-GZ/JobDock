@@ -26,6 +26,7 @@ const descriptors: Record<string, Descriptor> = {
   "node.resume": { category: "nodes", verb: () => "resumed node" },
   "node.delete": { category: "nodes", verb: () => "removed node" },
   "node.enrollment_token.create": { category: "nodes", verb: () => "created a node enrollment token" },
+  "node.enrollment_token.revoke": { category: "nodes", verb: () => "revoked a node enrollment token" },
   "secret.create": { category: "secrets", verb: () => "created secret" },
   "secret.delete": { category: "secrets", verb: () => "deleted secret" },
   "dashboard.create": { category: "dashboards", verb: () => "created dashboard" },
@@ -58,7 +59,7 @@ export function auditSummary(event: AuditEvent) {
   const verb = descriptor?.verb(event) ?? humanizeAction(event.action);
   const target = auditTarget(event);
   if (event.action === "auth.login") return `${auditActor(event)} signed in`;
-  if (event.action === "node.enrollment_token.create") return `${auditActor(event)} created a node enrollment token`;
+  if (event.action === "node.enrollment_token.create" || event.action === "node.enrollment_token.revoke") return `${auditActor(event)} ${verb}`;
   return `${auditActor(event)} ${verb} ${target}`.replace(/\s+/g, " ").trim();
 }
 

@@ -37,6 +37,7 @@ type Server struct {
 	BuilderLease           time.Duration
 	MaxBuildArtifactBytes  int64
 	BuildArtifactRetention time.Duration
+	ReleaseManifestPath    string
 }
 
 type Agent struct {
@@ -94,6 +95,7 @@ func LoadServer() (Server, error) {
 		BuilderLease:           envDuration("JOBDOCK_BUILDER_LEASE", 30*time.Second),
 		MaxBuildArtifactBytes:  envInt64("JOBDOCK_MAX_BUILD_ARTIFACT_BYTES", 20<<30),
 		BuildArtifactRetention: envDuration("JOBDOCK_BUILD_ARTIFACT_RETENTION", 30*24*time.Hour),
+		ReleaseManifestPath:    env("JOBDOCK_RELEASE_MANIFEST_PATH", ""),
 	}
 	if c.MaxLogBytes <= 0 || c.MaxOutputBytes <= 0 || c.MaxInputBytes <= 0 {
 		return c, errors.New("log, output, and input limits must be positive")

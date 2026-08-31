@@ -79,6 +79,7 @@ func (a *API) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /metrics", a.metrics)
 	mux.HandleFunc("GET /install-agent.sh", a.agentInstaller)
+	mux.HandleFunc("POST /api/v1/nodes/enrollment-status", a.enrollmentStatus)
 	mux.HandleFunc("GET /api/v1/auth/setup", a.setupStatus)
 	mux.HandleFunc("POST /api/v1/auth/setup", a.setupAdmin)
 	mux.HandleFunc("POST /api/v1/auth/login", a.login)
@@ -153,6 +154,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/nodes/{id}", a.withSession(true, true, a.updateNodeMetadata))
 	mux.HandleFunc("DELETE /api/v1/nodes/{id}", a.withSession(true, true, a.deleteNode))
 	mux.HandleFunc("POST /api/v1/nodes/enrollment-tokens", a.withSession(true, true, a.createEnrollmentToken))
+	mux.HandleFunc("POST /api/v1/nodes/enrollment-tokens/revoke", a.withSession(true, true, a.revokeEnrollmentToken))
 	mux.HandleFunc("POST /api/v1/nodes/{id}/drain", a.withSession(true, true, a.drainNode))
 	mux.HandleFunc("POST /api/v1/nodes/{id}/resume", a.withSession(true, true, a.resumeNode))
 	mux.HandleFunc("GET /api/v1/secrets", a.withSession(false, false, a.listSecrets))
@@ -189,10 +191,52 @@ func (a *API) Handler() http.Handler {
 }
 
 func (a *API) agentInstaller(w http.ResponseWriter, _ *http.Request) {
+	version, reference, err := a.agentRelease()
+	if err != nil {
+		writeProblem(w, http.StatusServiceUnavailable, "agent_installer_unavailable", err.Error())
+		return
+	}
+	script := strings.Replace(string(deployassets.AgentInstaller), `DEFAULT_VERSION="latest"`, `DEFAULT_VERSION="`+version+`"`, 1)
+	script = strings.Replace(script, `DEFAULT_IMAGE_REFERENCE=""`, `DEFAULT_IMAGE_REFERENCE="`+reference+`"`, 1)
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Header().Set("Content-Disposition", `inline; filename="install-agent.sh"`)
 	w.Header().Set("Cache-Control", "no-cache")
-	_, _ = w.Write(deployassets.AgentInstaller)
+	w.Header().Set("X-JobDock-Agent-Version", version)
+	_, _ = w.Write([]byte(script))
+}
+
+func (a *API) agentRelease() (string, string, error) {
+	version := strings.TrimPrefix(strings.TrimSpace(a.version), "v")
+	if a.config.ReleaseManifestPath == "" {
+		if version == "" {
+			return "", "", errors.New("server version is unavailable")
+		}
+		return version, "", nil
+	}
+	data, err := os.ReadFile(a.config.ReleaseManifestPath)
+	if err != nil {
+		return "", "", fmt.Errorf("release manifest cannot be read: %w", err)
+	}
+	var manifest struct {
+		Version string `json:"version"`
+		Images  []struct {
+			Image     string `json:"image"`
+			Reference string `json:"reference"`
+		} `json:"images"`
+	}
+	if err = json.Unmarshal(data, &manifest); err != nil {
+		return "", "", errors.New("release manifest is invalid")
+	}
+	manifest.Version = strings.TrimPrefix(strings.TrimSpace(manifest.Version), "v")
+	if manifest.Version == "" || (version != "dev" && manifest.Version != version) {
+		return "", "", errors.New("release manifest does not match the running server")
+	}
+	for _, image := range manifest.Images {
+		if strings.HasSuffix(image.Image, "/jobdock-agent") && strings.Contains(image.Reference, "@sha256:") {
+			return manifest.Version, image.Reference, nil
+		}
+	}
+	return "", "", errors.New("release manifest has no immutable jobdock-agent image")
 }
 
 func (a *API) BootstrapAdmin(ctx context.Context) error {
@@ -824,6 +868,39 @@ func (a *API) createEnrollmentToken(w http.ResponseWriter, r *http.Request) {
 	_ = a.store.Audit(r.Context(), user.ID, "node.enrollment_token.create", "enrollment_token", "one_time", map[string]any{"expires_at": expires})
 	writeJSON(w, 201, map[string]any{"token": token, "expires_at": expires})
 }
+func (a *API) revokeEnrollmentToken(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Token string `json:"token"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.Token == "" {
+		writeProblem(w, 422, "invalid_enrollment_token", "Token is required")
+		return
+	}
+	user := currentUser(r)
+	if err := a.store.RevokeEnrollmentToken(r.Context(), auth.TokenHash(body.Token), user.ID); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	_ = a.store.Audit(r.Context(), user.ID, "node.enrollment_token.revoke", "enrollment_token", "one_time", map[string]any{})
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a *API) enrollmentStatus(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Token string `json:"token"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	status, err := a.store.EnrollmentStatus(r.Context(), auth.TokenHash(body.Token))
+	if err != nil {
+		writeProblem(w, http.StatusNotFound, "enrollment_not_found", "Enrollment token is unknown or expired")
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
 func (a *API) drainNode(w http.ResponseWriter, r *http.Request) {
 	a.setNodeStatus(w, r, domain.NodeDraining, "node.drain")
 }
@@ -920,12 +997,12 @@ func (a *API) enrollAgent(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if err := a.store.ConsumeEnrollmentToken(r.Context(), auth.TokenHash(body.EnrollmentToken)); err != nil {
+	body.Node.ID = ids.New()
+	if err := a.store.ConsumeEnrollmentToken(r.Context(), auth.TokenHash(body.EnrollmentToken), body.Node.ID); err != nil {
 		writeProblem(w, 401, "invalid_enrollment_token", "Enrollment token is invalid, expired, or already used")
 		return
 	}
 	credential := ids.Token(32)
-	body.Node.ID = ids.New()
 	body.Node.Status = domain.NodeOnline
 	body.Node.ProtocolVersion = protocolVersion
 	body.Node.LastHeartbeat = time.Now().UTC()

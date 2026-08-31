@@ -63,6 +63,7 @@ esac
 [ "$(uname -s)" = "Linux" ] || fail "only Linux is supported"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "only amd64 hosts are supported" ;; esac
 command -v docker >/dev/null 2>&1 || fail "Docker is not installed"
+command -v curl >/dev/null 2>&1 || fail "curl is required to verify enrollment"
 docker info >/dev/null 2>&1 || fail "Docker is unavailable; run this command with Docker access"
 if docker container inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
   fail "container $CONTAINER_NAME already exists; remove it explicitly before reinstalling"
@@ -103,5 +104,17 @@ fi
 set -- "$@" "$image"
 "$@" >/dev/null
 
-printf 'JobDock agent %s started as %s.\n' "$version" "$node_name"
-printf 'Follow enrollment with: docker logs -f %s\n' "$CONTAINER_NAME"
+printf 'Waiting for JobDock enrollment and first heartbeat...\n'
+elapsed=0
+while [ "$elapsed" -lt 60 ]; do
+  status=$(curl --fail --silent --show-error -H 'Content-Type: application/json' --data "{\"token\":\"$token\"}" "$server/api/v1/nodes/enrollment-status" 2>/dev/null || true)
+  case "$status" in *'"status":"connected"'*)
+    printf 'JobDock agent %s enrolled and connected as %s.\n' "$version" "$node_name"
+    exit 0
+  esac
+  docker container inspect "$CONTAINER_NAME" >/dev/null 2>&1 || fail "agent container stopped before enrollment; inspect with: docker logs $CONTAINER_NAME"
+  sleep 2
+  elapsed=$((elapsed + 2))
+done
+docker logs --tail 40 "$CONTAINER_NAME" >&2 || true
+fail "agent started but did not register within 60 seconds; verify the server URL, token, TLS trust, and outbound connectivity, then run: docker logs $CONTAINER_NAME"

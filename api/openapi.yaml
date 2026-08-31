@@ -735,6 +735,24 @@ paths:
       operationId: createEnrollmentToken
       parameters: [{$ref: '#/components/parameters/CSRFToken'}]
       responses: {'201': {description: One-time token expiring in 15 minutes}}
+  /nodes/enrollment-tokens/revoke:
+    post:
+      operationId: revokeEnrollmentToken
+      parameters: [{$ref: '#/components/parameters/CSRFToken'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/EnrollmentTokenRequest'}}}
+      responses: {'204': {description: Unused token revoked}, '404': {$ref: '#/components/responses/Problem'}}
+  /nodes/enrollment-status:
+    post:
+      security: []
+      operationId: enrollmentStatus
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/EnrollmentTokenRequest'}}}
+      responses:
+        '200': {description: Scoped enrollment result, content: {application/json: {schema: {$ref: '#/components/schemas/EnrollmentStatus'}}}}
+        '404': {$ref: '#/components/responses/Problem'}
   /secrets:
     get:
       operationId: listSecrets
@@ -1973,6 +1991,20 @@ components:
       properties:
         enrollment_token: {type: string, minLength: 1}
         node: {$ref: '#/components/schemas/NodeInventory'}
+    EnrollmentTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token: {type: string, minLength: 1, writeOnly: true}
+    EnrollmentStatus:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string, enum: [pending, connected]}
+        node_id: {type: string, format: uuid}
+        node_name: {type: string}
+        last_heartbeat: {type: string, format: date-time}
     AgentCredential:
       type: object
       required: [node_id, credential]

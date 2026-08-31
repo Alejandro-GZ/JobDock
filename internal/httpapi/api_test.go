@@ -9,7 +9,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,7 +44,7 @@ func TestLoginAndIdempotentJobCreation(t *testing.T) {
 	}
 	installer, _ := io.ReadAll(installerResponse.Body)
 	installerResponse.Body.Close()
-	if installerResponse.StatusCode != http.StatusOK || !bytes.Contains(installer, []byte("DEFAULT_VERSION=\"latest\"")) {
+	if installerResponse.StatusCode != http.StatusOK || !bytes.Contains(installer, []byte("DEFAULT_VERSION=\"dev\"")) || bytes.Contains(installer, []byte("DEFAULT_VERSION=\"latest\"")) {
 		t.Fatalf("versioned installer endpoint: status=%d", installerResponse.StatusCode)
 	}
 	loginBody := bytes.NewBufferString(`{"username":"admin","password":"correct horse battery"}`)
@@ -251,6 +253,36 @@ func TestLoginAndIdempotentJobCreation(t *testing.T) {
 	orderedSecond := readLogSSE(t, server.Client(), combinedURL, cookie, strconv.Itoa(len(firstOrder)+1))
 	if orderedSecond.Stream != "stderr" || string(orderedSecond.Data) != "warning" {
 		t.Fatalf("second combined frame: %#v", orderedSecond)
+	}
+}
+
+func TestAgentInstallerUsesMatchingImmutableRelease(t *testing.T) {
+	root := t.TempDir()
+	manifest := root + "/release-manifest.json"
+	digest := strings.Repeat("a", 64)
+	content := `{"version":"1.2.3","images":[{"image":"ghcr.io/alejandro-gz/jobdock-agent","reference":"ghcr.io/alejandro-gz/jobdock-agent@sha256:` + digest + `"}]}`
+	if err := os.WriteFile(manifest, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repository, err := store.Open(root + "/jobdock.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	files, _ := filestore.New(root, 1<<20, 1<<20, 1<<20)
+	box, _ := secretbox.New(bytes.Repeat([]byte{5}, 32))
+	api := New(config.Server{AllowInsecureHTTP: true, ReleaseManifestPath: manifest}, repository, files, box, slog.New(slog.NewTextHandler(io.Discard, nil))).SetVersion("1.2.3")
+	request := httptest.NewRequest(http.MethodGet, "/install-agent.sh", nil)
+	response := httptest.NewRecorder()
+	api.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("installer status %d: %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `DEFAULT_IMAGE_REFERENCE="ghcr.io/alejandro-gz/jobdock-agent@sha256:`+digest+`"`) {
+		t.Fatal("installer is not pinned to the manifest agent digest")
+	}
+	if strings.Contains(response.Body.String(), `DEFAULT_VERSION="latest"`) {
+		t.Fatal("installer contains ambiguous latest version")
 	}
 }
 

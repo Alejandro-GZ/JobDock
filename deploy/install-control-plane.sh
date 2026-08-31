@@ -249,6 +249,7 @@ install -m 0644 "$temporary/docker-compose.yml" "$CONFIG_DIR/docker-compose.yml"
 install -m 0644 "$temporary/docker-compose.$MODE.yml" "$CONFIG_DIR/docker-compose.exposure.yml"
 install -m 0644 "$temporary/Caddyfile" "$CONFIG_DIR/Caddyfile"
 install -m 0644 "$temporary/release-manifest.json" "$CONFIG_DIR/release-manifest.json"
+install -m 0644 "$temporary/release-manifest.json" "$DATA_DIR/server/release-manifest.json"
 
 environment_file="$CONFIG_DIR/jobdock.env"
 overrides_file="$CONFIG_DIR/overrides.env"
@@ -333,6 +334,7 @@ if [ ! -f "$environment_file" ]; then
     fi
     printf 'JOBDOCK_BOOTSTRAP_ADMIN_USERNAME=%s\n' "$ADMIN_USERNAME"
     printf 'JOBDOCK_DATA_DIR=%s/server\n' "$DATA_DIR"
+    printf 'JOBDOCK_RELEASE_MANIFEST_PATH=/var/lib/jobdock/release-manifest.json\n'
     printf 'JOBDOCK_BUILDER_DATA_DIR=%s/builder\n' "$DATA_DIR"
     printf 'JOBDOCK_BUILDKIT_DATA_DIR=%s/buildkit\n' "$DATA_DIR"
     printf 'JOBDOCK_SETUP_SECRET_PATH=%s\n' "$setup_secret"
@@ -376,6 +378,7 @@ ensure_environment JOBDOCK_SETUP_SECRET_PATH "$setup_secret"
 ensure_environment JOBDOCK_MASTER_KEY_SECRET_PATH "$master_key_secret"
 ensure_environment JOBDOCK_SERVER_BUILDER_TOKEN_SECRET_PATH "$server_builder_secret"
 ensure_environment JOBDOCK_BUILDER_TOKEN_SECRET_PATH "$builder_secret"
+ensure_environment JOBDOCK_RELEASE_MANIFEST_PATH /var/lib/jobdock/release-manifest.json
 chmod 0640 "$environment_file"
 
 if [ ! -f "$overrides_file" ]; then

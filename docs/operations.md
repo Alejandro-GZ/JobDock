@@ -94,7 +94,9 @@ Back up the server, upgrade the control plane, verify readiness, then upgrade ag
 
 ## Enrolling a Docker host
 
-Create a one-time enrollment token from **Nodes**, then use the `install-agent.sh` attached to the same GitHub Release as the server on a Linux amd64 host with Docker ready. Enrollment tokens expire after 15 minutes and cannot be reused. The release installer defaults to the matching immutable agent digest, not `latest`.
+Open **Nodes → Enroll node** to obtain separate copy-ready CPU and NVIDIA commands. The server renders `/install-agent.sh` from its verified release manifest, so the default image is the immutable agent digest matching the running server and never an ambiguous `latest`. Enrollment tokens expire after 15 minutes, cannot be reused, and can be regenerated or revoked before use. Treat the command as a temporary credential and avoid shared shell history.
+
+The installer waits for server-confirmed enrollment and a heartbeat before reporting success. If registration does not complete within 60 seconds it prints recent agent logs and an actionable connectivity/TLS/token error instead of announcing a partial installation.
 
 CPU host:
 
