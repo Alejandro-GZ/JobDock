@@ -1,14 +1,15 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 3 ]; then
-  printf 'Usage: %s RELEASE_MANIFEST OUTPUT_DIRECTORY SDK_DISTRIBUTION_DIRECTORY\n' "$0" >&2
+if [ "$#" -ne 4 ]; then
+  printf 'Usage: %s RELEASE_MANIFEST OUTPUT_DIRECTORY SDK_DISTRIBUTION_DIRECTORY CLI_DISTRIBUTION_DIRECTORY\n' "$0" >&2
   exit 2
 fi
 
 manifest="$1"
 output_dir="$2"
 sdk_dir="$3"
+cli_dir="$4"
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 repository="${GITHUB_REPOSITORY:-Alejandro-GZ/JobDock}"
 
@@ -28,7 +29,10 @@ jq -e '
   (all(.images[]; .reference == (.image + "@" + .digest))) and
   (.sdk.name == "jobdock-sdk") and
   (.sdk.version | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+([ab]|rc|\\.dev)?[0-9]*(\\+[0-9A-Za-z.-]+)?$")) and
-  (all(.sdk.wheel, .sdk.sdist; (.filename | type == "string" and test("^[0-9A-Za-z][0-9A-Za-z._-]*$")) and (.sha256 | test("^[0-9a-f]{64}$"))))
+  (all(.sdk.wheel, .sdk.sdist; (.filename | type == "string" and test("^[0-9A-Za-z][0-9A-Za-z._-]*$")) and (.sha256 | test("^[0-9a-f]{64}$")))) and
+  (.cli.name == "jobdock") and (.cli.version == .version) and (.cli.server_api == "v1") and
+  (.cli.artifacts | length >= 1) and
+  (all(.cli.artifacts[]; (.os | type == "string") and (.arch | type == "string") and (.filename | test("^[0-9A-Za-z][0-9A-Za-z._-]*$")) and (.sha256 | test("^[0-9a-f]{64}$"))))
 ' "$manifest" >/dev/null
 
 version=$(jq -er '.version' "$manifest")
@@ -42,17 +46,24 @@ wheel_filename=$(jq -er '.sdk.wheel.filename' "$manifest")
 wheel_sha256=$(jq -er '.sdk.wheel.sha256' "$manifest")
 sdist_filename=$(jq -er '.sdk.sdist.filename' "$manifest")
 sdist_sha256=$(jq -er '.sdk.sdist.sha256' "$manifest")
+cli_filename=$(jq -er '.cli.artifacts[] | select(.os == "linux" and .arch == "amd64") | .filename' "$manifest")
+cli_sha256=$(jq -er '.cli.artifacts[] | select(.os == "linux" and .arch == "amd64") | .sha256' "$manifest")
 
 [ -f "$sdk_dir/$wheel_filename" ] || { printf 'SDK wheel not found: %s\n' "$wheel_filename" >&2; exit 1; }
 [ -f "$sdk_dir/$sdist_filename" ] || { printf 'SDK sdist not found: %s\n' "$sdist_filename" >&2; exit 1; }
 [ "$(sha256sum "$sdk_dir/$wheel_filename" | cut -d ' ' -f 1)" = "$wheel_sha256" ] || { printf 'SDK wheel checksum mismatch\n' >&2; exit 1; }
 [ "$(sha256sum "$sdk_dir/$sdist_filename" | cut -d ' ' -f 1)" = "$sdist_sha256" ] || { printf 'SDK sdist checksum mismatch\n' >&2; exit 1; }
+[ -f "$cli_dir/$cli_filename" ] || { printf 'CLI archive not found: %s\n' "$cli_filename" >&2; exit 1; }
+[ "$(sha256sum "$cli_dir/$cli_filename" | cut -d ' ' -f 1)" = "$cli_sha256" ] || { printf 'CLI archive checksum mismatch\n' >&2; exit 1; }
 
 [ ! -e "$output_dir" ] || { printf 'Output path already exists: %s\n' "$output_dir" >&2; exit 1; }
 mkdir -p -- "$output_dir"
 cp -- "$manifest" "$output_dir/release-manifest.json"
 cp -- "$sdk_dir/$wheel_filename" "$output_dir/$wheel_filename"
 cp -- "$sdk_dir/$sdist_filename" "$output_dir/$sdist_filename"
+cp -- "$cli_dir/$cli_filename" "$output_dir/$cli_filename"
+cp -- "$script_dir/install-cli.sh" "$output_dir/install-cli.sh"
+chmod 0755 "$output_dir/install-cli.sh"
 awk \
   -v version="$version" \
   '$0 == "DEFAULT_VERSION=\"\"" {print "DEFAULT_VERSION=\"" version "\""; next}
@@ -92,6 +103,7 @@ cat > "$output_dir/release-notes.md" <<EOF
 - Adds the one-command, checksum-verifying control-plane bootstrap.
 - Includes the read-only JobDock doctor with human and machine-readable diagnostics.
 - Publishes the matching Python SDK from the same verified release manifest.
+- Publishes a version-matched, precompiled JobDock CLI for Linux amd64.
 
 ## Components
 
@@ -100,6 +112,12 @@ cat > "$output_dir/release-notes.md" <<EOF
 | Server | \`$server_reference\` |
 | Agent | \`$agent_reference\` |
 | Builder | \`$builder_reference\` |
+
+## JobDock CLI
+
+\`curl -fsSL https://github.com/$repository/releases/latest/download/install-cli.sh | sudo sh\`
+
+The \`jobdock $version\` CLI targets server API \`v1\`. Archive: \`$cli_filename\` (SHA-256 \`$cli_sha256\`).
 
 ## Python SDK
 
@@ -122,5 +140,5 @@ EOF
 
 (
   cd -- "$output_dir"
-  sha256sum release-manifest.json docker-compose.yml docker-compose.domain.yml docker-compose.proxy.yml docker-compose.local.yml Caddyfile install-control-plane.sh install-agent.sh jobdock-doctor jobdockctl "$wheel_filename" "$sdist_filename" > SHA256SUMS
+  sha256sum release-manifest.json docker-compose.yml docker-compose.domain.yml docker-compose.proxy.yml docker-compose.local.yml Caddyfile install-control-plane.sh install-agent.sh install-cli.sh jobdock-doctor jobdockctl "$cli_filename" "$wheel_filename" "$sdist_filename" > SHA256SUMS
 )

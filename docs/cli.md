@@ -1,10 +1,14 @@
 # JobDock CLI
 
-The `jobdock` command operates the control plane without a browser session. Build it from the repository with:
+The `jobdock` command operates the control plane without a browser session. Install the version-matched Linux amd64 binary from the current stable release with:
 
-```text
-go install github.com/jobdock/jobdock/cmd/jobdock@latest
+```sh
+curl -fsSL https://github.com/Alejandro-GZ/JobDock/releases/latest/download/install-cli.sh | sudo sh
 ```
+
+The installer detects the supported platform, downloads the selected release archive, verifies it against the release `SHA256SUMS`, and only then installs `/usr/local/bin/jobdock`. Use `--version 1.2.3` to select an explicit release or `--bin-dir PATH` for another destination. No Go toolchain or repository checkout is required.
+
+Run `jobdock --version` to display the product version and compatible server API. A CLI from a JobDock release targets server API `v1`; using the CLI from the same release as the server is recommended.
 
 Create a personal access token in **Tokens**. The secret is shown once. For an interactive shell, export it without placing it on the command line:
 
@@ -19,6 +23,7 @@ For CI, use the platform's masked secret facility. A token can instead be read f
 
 ```text
 jobdock nodes
+jobdock --version
 jobdock jobs
 jobdock run --name smoke --image alpine:3 --cpu 250 --memory 134217728 -- echo hello
 jobdock logs -f <job-id>

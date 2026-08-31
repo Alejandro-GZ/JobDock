@@ -148,7 +148,8 @@ sudo docker compose \
 ```
 
 `/etc/jobdock/release-manifest.json` records the tag, source commit, immutable
-digests for server, agent, and builder, and the matching Python SDK hashes.
+digests for server, agent, and builder, the precompiled CLI platform and hash,
+and the matching Python SDK hashes.
 
 ## Enroll an execution host
 

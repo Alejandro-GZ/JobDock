@@ -14,6 +14,24 @@ import (
 	"time"
 )
 
+func TestVersionDoesNotRequireAuthentication(t *testing.T) {
+	var out, stderr bytes.Buffer
+	app := New(&out, &stderr).WithVersion("1.2.3")
+	if code := app.Run(context.Background(), []string{"--version"}); code != ExitOK {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	if out.String() != "jobdock 1.2.3 (server API v1)\n" {
+		t.Fatalf("output=%q", out.String())
+	}
+	out.Reset()
+	if code := app.Run(context.Background(), []string{"--format", "json", "version"}); code != ExitOK {
+		t.Fatalf("json exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(out.String(), `"version":"1.2.3"`) || !strings.Contains(out.String(), `"server_api":"v1"`) {
+		t.Fatalf("json output=%q", out.String())
+	}
+}
+
 func TestNodesJSONUsesBearerAndStableOutput(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-secret" {

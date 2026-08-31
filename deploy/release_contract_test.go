@@ -35,7 +35,7 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 		"agent_digest:",
 		"builder_digest:",
 		"release:",
-		"needs: [validate, verify, release-e2e, sdk-package, verify-sdk-pypi]",
+		"needs: [validate, verify, release-e2e, sdk-package, cli-package, verify-sdk-pypi]",
 		"publish-sdk-pypi:",
 		"verify-sdk-pypi:",
 		"gh release create",
@@ -47,6 +47,8 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 		"release-assets/Caddyfile",
 		"release-assets/install-control-plane.sh",
 		"release-assets/install-agent.sh",
+		"release-assets/install-cli.sh",
+		"release-assets/jobdock-cli_*.tar.gz",
 		"release-assets/jobdock-doctor",
 		"release-assets/SHA256SUMS",
 		"--generate-notes",
@@ -84,7 +86,7 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 		}
 	}
 	assets := readReleaseFile(t, "deploy", "prepare-release-assets.sh")
-	for _, required := range []string{"release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-control-plane.sh", "install-agent.sh", "jobdock-doctor", "jobdockctl", "SHA256SUMS", "## Highlights", "## Changes", "sha256sum", "pip install jobdock-sdk==", "SDK wheel checksum mismatch", "SDK sdist checksum mismatch"} {
+	for _, required := range []string{"release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-control-plane.sh", "install-agent.sh", "install-cli.sh", "jobdock-doctor", "jobdockctl", "SHA256SUMS", "## Highlights", "## Changes", "sha256sum", "pip install jobdock-sdk==", "SDK wheel checksum mismatch", "SDK sdist checksum mismatch", "CLI archive checksum mismatch"} {
 		if !strings.Contains(assets, required) {
 			t.Fatalf("release asset packager is missing %q", required)
 		}

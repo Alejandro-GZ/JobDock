@@ -63,6 +63,34 @@ jobs:
     needs: validate
     uses: ./.github/workflows/ci.yml
 
+  cli-package:
+    name: Build and validate precompiled CLI
+    needs: [validate, quality]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.26.x'}
+      - name: Build Linux amd64 CLI archive
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p cli-dist/stage
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o cli-dist/stage/jobdock ./cmd/jobdock
+          test "$(cli-dist/stage/jobdock --version)" = "jobdock ${VERSION} (server API v1)"
+          archive="jobdock-cli_${VERSION}_linux_amd64.tar.gz"
+          tar -C cli-dist/stage -czf "cli-dist/${archive}" jobdock
+          (cd cli-dist && sha256sum "${archive}" > SHA256SUMS.cli && sha256sum --check SHA256SUMS.cli)
+      - name: Preserve validated CLI archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: jobdock-cli-${{ needs.validate.outputs.version }}
+          path: cli-dist/
+          if-no-files-found: error
+          retention-days: 90
+
   sdk-package:
     name: Build and validate Python SDK artifacts
     needs: [validate, quality]
@@ -185,7 +213,7 @@ jobs:
 
   verify:
     name: Verify published release set
-    needs: [validate, publish]
+    needs: [validate, publish, cli-package]
     runs-on: ubuntu-latest
     outputs:
       manifest: ${{ steps.manifest.outputs.manifest }}
@@ -208,6 +236,10 @@ jobs:
         with:
           name: jobdock-sdk-${{ needs.validate.outputs.sdk_version }}
           path: sdk-dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: jobdock-cli-${{ needs.validate.outputs.version }}
+          path: cli-dist
       - id: manifest
         name: Assemble release digest manifest
         env:
@@ -226,6 +258,10 @@ jobs:
           sdist_file="$(basename "${sdists[0]}")"
           wheel_sha256="$(sha256sum "${wheels[0]}" | cut -d ' ' -f 1)"
           sdist_sha256="$(sha256sum "${sdists[0]}" | cut -d ' ' -f 1)"
+          (cd cli-dist && sha256sum --check SHA256SUMS.cli)
+          cli_file="jobdock-cli_${VERSION}_linux_amd64.tar.gz"
+          test -f "cli-dist/${cli_file}"
+          cli_sha256="$(sha256sum "cli-dist/${cli_file}" | cut -d ' ' -f 1)"
           database_schema="$(find internal/store/migrations -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort -n | tail -1 | cut -d_ -f1 | sed 's/^0*//')"
           test -n "$database_schema"
           jq -s \
@@ -237,8 +273,10 @@ jobs:
             --arg wheel_sha256 "$wheel_sha256" \
             --arg sdist_file "$sdist_file" \
             --arg sdist_sha256 "$sdist_sha256" \
+            --arg cli_file "$cli_file" \
+            --arg cli_sha256 "$cli_sha256" \
             --argjson database_schema "$database_schema" \
-            '{schema_version: 2, version: $version, tag: $tag, commit: $commit, database: {schema: $database_schema, rollback_floor: $database_schema}, images: (sort_by(.image)), sdk: {name: "jobdock-sdk", version: $sdk_version, wheel: {filename: $wheel_file, sha256: $wheel_sha256}, sdist: {filename: $sdist_file, sha256: $sdist_sha256}}}' \
+            '{schema_version: 2, version: $version, tag: $tag, commit: $commit, database: {schema: $database_schema, rollback_floor: $database_schema}, images: (sort_by(.image)), sdk: {name: "jobdock-sdk", version: $sdk_version, wheel: {filename: $wheel_file, sha256: $wheel_sha256}, sdist: {filename: $sdist_file, sha256: $sdist_sha256}}, cli: {name: "jobdock", version: $version, server_api: "v1", artifacts: [{os: "linux", arch: "amd64", filename: $cli_file, sha256: $cli_sha256}]}}' \
             release-digests/jobdock-*.json > release-manifest.json
           {
             echo "manifest=$(jq -c . release-manifest.json)"
@@ -272,7 +310,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [validate, verify, release-e2e, sdk-package, verify-sdk-pypi]
+    needs: [validate, verify, release-e2e, sdk-package, cli-package, verify-sdk-pypi]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -285,11 +323,15 @@ jobs:
         with:
           name: jobdock-sdk-${{ needs.validate.outputs.sdk_version }}
           path: sdk-dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: jobdock-cli-${{ needs.validate.outputs.version }}
+          path: cli-dist
       - name: Verify preserved SDK artifacts
         working-directory: sdk-dist
         run: sha256sum --check SHA256SUMS.sdk
       - name: Prepare self-contained release assets
-        run: sh deploy/prepare-release-assets.sh release-manifest.json release-assets sdk-dist/packages
+        run: sh deploy/prepare-release-assets.sh release-manifest.json release-assets sdk-dist/packages cli-dist
       - name: Validate release asset checksums
         working-directory: release-assets
         run: sha256sum --check SHA256SUMS
@@ -324,11 +366,13 @@ jobs:
             release-assets/Caddyfile \
             release-assets/install-control-plane.sh \
             release-assets/install-agent.sh \
+            release-assets/install-cli.sh \
             release-assets/jobdock-doctor \
             release-assets/jobdockctl \
             release-assets/SHA256SUMS \
+            release-assets/jobdock-cli_*.tar.gz \
             release-assets/*.whl \
-            release-assets/*.tar.gz
+            release-assets/jobdock_sdk-*.tar.gz
 
   publish-sdk-pypi:
     name: Publish Python SDK to PyPI

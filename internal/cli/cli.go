@@ -30,10 +30,18 @@ const (
 type App struct {
 	Out, Err io.Writer
 	HTTP     *http.Client
+	Version  string
 	getenv   func(string) string
 }
 
-func New(out, err io.Writer) *App { return &App{Out: out, Err: err, getenv: os.Getenv} }
+func New(out, err io.Writer) *App { return &App{Out: out, Err: err, Version: "dev", getenv: os.Getenv} }
+
+func (a *App) WithVersion(version string) *App {
+	if strings.TrimSpace(version) != "" {
+		a.Version = version
+	}
+	return a
+}
 
 func (a *App) Run(ctx context.Context, args []string) int {
 	global := flag.NewFlagSet("jobdock", flag.ContinueOnError)
@@ -41,11 +49,16 @@ func (a *App) Run(ctx context.Context, args []string) int {
 	server := global.String("server", a.env("JOBDOCK_URL", "http://localhost:8080"), "JobDock server URL")
 	tokenFile := global.String("token-file", a.env("JOBDOCK_TOKEN_FILE", ""), "file containing a personal access token")
 	format := global.String("format", "human", "output format: human or json")
+	showVersion := global.Bool("version", false, "print the CLI version and server compatibility")
 	global.Usage = func() {
-		fmt.Fprintln(a.Err, "Usage: jobdock [--server URL] [--token-file PATH] [--format human|json] <nodes|jobs|run|logs|stop|download> ...")
+		fmt.Fprintln(a.Err, "Usage: jobdock [--server URL] [--token-file PATH] [--format human|json] <version|nodes|jobs|run|logs|stop|download> ...")
 	}
 	if err := global.Parse(args); err != nil {
 		return ExitUsage
+	}
+	if *showVersion {
+		fmt.Fprintf(a.Out, "jobdock %s (server API v1)\n", a.Version)
+		return ExitOK
 	}
 	remaining := global.Args()
 	if len(remaining) == 0 {
@@ -54,6 +67,14 @@ func (a *App) Run(ctx context.Context, args []string) int {
 	}
 	if *format != "human" && *format != "json" {
 		return a.fail(*format, ExitUsage, "invalid_output_format", "format must be human or json")
+	}
+	if remaining[0] == "version" {
+		if *format == "json" {
+			_ = writeJSON(a.Out, map[string]string{"version": a.Version, "server_api": "v1"})
+		} else {
+			fmt.Fprintf(a.Out, "jobdock %s (server API v1)\n", a.Version)
+		}
+		return ExitOK
 	}
 	token := strings.TrimSpace(a.getenv("JOBDOCK_TOKEN"))
 	if *tokenFile != "" {

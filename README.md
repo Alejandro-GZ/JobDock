@@ -13,7 +13,7 @@ The repository contains:
 - `jobdock-sdk`: an optional Python telemetry SDK for running jobs.
 
 Official releases publish version-matched `jobdock-server`, `jobdock-agent`,
-and `jobdock-builder` images to `ghcr.io/alejandro-gz`. Stable releases also
+and `jobdock-builder` images plus a precompiled `jobdock` CLI. Stable releases also
 move the matching minor tag and `latest`; prereleases only publish their exact
 SemVer tag. See [the release guide](docs/releasing.md).
 

@@ -26,7 +26,11 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 	manifestPath := filepath.Join(root, "manifest.json")
 	outputPath := filepath.Join(root, "assets")
 	sdkPath := filepath.Join(root, "sdk")
+	cliPath := filepath.Join(root, "cli")
 	if err := os.Mkdir(sdkPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(cliPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	wheelName := "jobdock_sdk-1.2.3rc1-py3-none-any.whl"
@@ -39,6 +43,11 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 		}
 	}
 	commit := strings.Repeat("a", 40)
+	cliName := "jobdock-cli_1.2.3-rc.1_linux_amd64.tar.gz"
+	cliContents := []byte("verified cli archive")
+	if err := os.WriteFile(filepath.Join(cliPath, cliName), cliContents, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	components := []string{"server", "agent", "builder"}
 	images := make([]map[string]string, 0, len(components))
 	for index, component := range components {
@@ -54,6 +63,10 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 			"wheel": map[string]string{"filename": wheelName, "sha256": testSHA256(wheelContents)},
 			"sdist": map[string]string{"filename": sdistName, "sha256": testSHA256(sdistContents)},
 		},
+		"cli": map[string]any{
+			"name": "jobdock", "version": "1.2.3-rc.1", "server_api": "v1",
+			"artifacts": []map[string]string{{"os": "linux", "arch": "amd64", "filename": cliName, "sha256": testSHA256(cliContents)}},
+		},
 	}
 	contents, err := json.Marshal(manifest)
 	if err != nil {
@@ -63,12 +76,12 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	command := exec.Command("sh", filepath.Join("..", "deploy", "prepare-release-assets.sh"), manifestPath, outputPath, sdkPath)
+	command := exec.Command("sh", filepath.Join("..", "deploy", "prepare-release-assets.sh"), manifestPath, outputPath, sdkPath, cliPath)
 	if output, runErr := command.CombinedOutput(); runErr != nil {
 		t.Fatalf("prepare release assets: %v\n%s", runErr, output)
 	}
 
-	for _, name := range []string{"release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-control-plane.sh", "install-agent.sh", "jobdock-doctor", "jobdockctl", "SHA256SUMS", "release-notes.md", wheelName, sdistName} {
+	for _, name := range []string{"release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-control-plane.sh", "install-agent.sh", "install-cli.sh", "jobdock-doctor", "jobdockctl", "SHA256SUMS", "release-notes.md", cliName, wheelName, sdistName} {
 		if _, err = os.Stat(filepath.Join(outputPath, name)); err != nil {
 			t.Fatalf("expected release asset %s: %v", name, err)
 		}
@@ -117,7 +130,7 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 		t.Fatal(err)
 	}
 	tamperedOutputPath := filepath.Join(root, "tampered-assets")
-	tampered := exec.Command("sh", filepath.Join("..", "deploy", "prepare-release-assets.sh"), manifestPath, tamperedOutputPath, sdkPath)
+	tampered := exec.Command("sh", filepath.Join("..", "deploy", "prepare-release-assets.sh"), manifestPath, tamperedOutputPath, sdkPath, cliPath)
 	output, tamperedErr := tampered.CombinedOutput()
 	if tamperedErr == nil || !strings.Contains(string(output), "SDK wheel checksum mismatch") {
 		t.Fatalf("tampered SDK wheel was not rejected: %v\n%s", tamperedErr, output)
