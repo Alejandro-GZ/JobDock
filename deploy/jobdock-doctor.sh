@@ -38,7 +38,11 @@ record() {
 }
 
 if [ "$(uname -s 2>/dev/null)" = Linux ]; then record os pass 'Linux host detected.' ''; else record os fail 'JobDock requires Linux.' 'Use a supported Linux host.'; fi
-case "$(uname -m 2>/dev/null)" in x86_64|amd64) record architecture pass 'linux/amd64 is supported.' '';; *) record architecture fail "Unsupported architecture: $(uname -m 2>/dev/null)." 'Use linux/amd64 for this release.';; esac
+case "$(uname -m 2>/dev/null)" in
+  x86_64|amd64) host_arch=amd64; record architecture pass 'linux/amd64 is supported.' '';;
+  aarch64|arm64) host_arch=arm64; record architecture pass 'linux/arm64 is supported for the server and CPU agent; source builds and NVIDIA GPU mode are unavailable.' '';;
+  *) host_arch=unsupported; record architecture fail "Unsupported architecture: $(uname -m 2>/dev/null)." 'Use linux/amd64 or linux/arm64.';;
+esac
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then record docker pass 'Docker Engine is reachable.' ''; else record docker fail 'Docker Engine is unavailable.' 'Install/start Docker and grant this user daemon access.'; fi
 if docker compose version >/dev/null 2>&1; then record compose pass "$(docker compose version 2>/dev/null | head -n1)" ''; else record compose fail 'Docker Compose plugin is unavailable.' 'Install the Docker Compose plugin.'; fi
 
@@ -100,9 +104,13 @@ else
 fi
 
 if [ "$GPU" = true ]; then
+  if [ "$host_arch" != amd64 ]; then
+    record nvidia_support fail 'NVIDIA GPU mode is not officially supported on this architecture.' 'Use an amd64 GPU host or run the arm64 CPU agent with --no-gpu.'
+  else
   if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then record nvidia_driver pass 'NVIDIA driver and nvidia-smi are operational.' ''; else record nvidia_driver fail 'nvidia-smi could not enumerate a GPU.' 'Install a supported NVIDIA driver.'; fi
   gpu_image="${JOBDOCK_DOCTOR_GPU_IMAGE:-nvidia/cuda:12.9.1-base-ubuntu24.04}"
   if docker run --rm --gpus all "$gpu_image" nvidia-smi -L >/dev/null 2>&1; then record nvidia_container pass 'A real GPU container completed successfully.' ''; else record nvidia_container fail 'Docker could not run a GPU container.' 'Install/configure NVIDIA Container Toolkit and restart Docker.'; fi
+  fi
 fi
 
 if [ "$FORMAT" = json ]; then printf '{"schema_version":1,"ok":%s,"checks":[%s]}\n' "$( [ "$FAILURES" -eq 0 ] && printf true || printf false )" "$RESULTS"; fi

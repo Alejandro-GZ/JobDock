@@ -1,6 +1,6 @@
 # JobDock CLI
 
-The `jobdock` command operates the control plane without a browser session. Install the version-matched Linux amd64 binary from the current stable release with:
+The `jobdock` command operates the control plane without a browser session. Install the version-matched Linux amd64 or arm64 binary from the current stable release with:
 
 ```sh
 curl -fsSL https://github.com/Alejandro-GZ/JobDock/releases/latest/download/install-cli.sh | sudo sh

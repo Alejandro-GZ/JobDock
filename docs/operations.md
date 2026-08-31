@@ -28,6 +28,8 @@ absent from local mode.
 
 The supported OCI-only mode stores `JOBDOCK_BUILDER_ENABLED=false` and leaves `COMPOSE_PROFILES` empty. Jobs based on existing OCI images remain available, while source-build actions explain that the capability is disabled. `jobdock-doctor` reports this as intentional instead of treating the missing builder services as broken. Enabling source builds sets `JOBDOCK_BUILDER_ENABLED=true` and `COMPOSE_PROFILES=builder`; the doctor then requires both builder services to be running.
 
+The server and CPU agent are supported on Linux amd64 and arm64. Builder/BuildKit and NVIDIA GPU mode are advertised only on amd64. On arm64, the installer enforces OCI-only deployment, the agent defaults to disabled GPU discovery, and `jobdock-doctor --gpu` explains the unsupported combination instead of attempting a misleading GPU validation.
+
 ## Backup and restore
 
 The release installer places `jobdockctl` in `/usr/local/bin`. Create a consistent, portable snapshot with:

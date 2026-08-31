@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -12,6 +13,10 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Printf("jobdock-agent %s\n", agent.Version())
+		return
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("component", "agent")
 	cfg, err := config.LoadAgent()
 	if err != nil {

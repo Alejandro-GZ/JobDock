@@ -26,7 +26,7 @@ Terminal and CI usage is documented in the [CLI guide](docs/cli.md).
 
 ## Install a stable release
 
-A published release requires only Linux amd64, Docker Engine with the Compose
+A published release requires only Linux amd64 or arm64, Docker Engine with the Compose
 plugin, `curl`, and `sha256sum`. Install the current stable control plane with
 one command:
 
@@ -40,6 +40,10 @@ them, generates file-mounted internal secrets, starts the digest-pinned Compose
 project, waits for readiness, and prints the web URL and one-time setup token.
 No repository clone, Go, Node.js,
 Python, or local image build is involved.
+
+Linux arm64 supports the control plane, CPU agents, OCI jobs, and the CLI. The
+isolated source builder and NVIDIA GPU agent mode remain amd64-only in this
+release and are reported as unavailable instead of being started implicitly.
 
 See [Install a published release](docs/installing-release.md) for the complete
 server, builder, CPU-agent, and NVIDIA-agent procedure.

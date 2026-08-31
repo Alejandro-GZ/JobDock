@@ -12,7 +12,7 @@ Install a verified precompiled JobDock CLI.
 
 Usage: install-cli.sh [--version VERSION] [--bin-dir PATH]
 
-The current stable release is used when --version is omitted. Linux amd64 is
+The current stable release is used when --version is omitted. Linux amd64 and arm64 are
 supported by this release. The archive is verified against the release
 SHA256SUMS before it is extracted or installed.
 EOF
@@ -29,7 +29,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$(uname -s 2>/dev/null || true)" = Linux ] || fail "Linux is required"
-case "$(uname -m 2>/dev/null || true)" in x86_64|amd64) platform=linux_amd64;; *) fail "this release supports Linux amd64 only";; esac
+case "$(uname -m 2>/dev/null || true)" in x86_64|amd64) platform=linux_amd64;; aarch64|arm64) platform=linux_arm64;; *) fail "this release supports Linux amd64 and arm64 only";; esac
 for command_name in curl sha256sum mktemp tar install awk grep find wc tr; do command -v "$command_name" >/dev/null 2>&1 || fail "$command_name is required"; done
 
 if [ -z "$VERSION" ]; then

@@ -6,7 +6,7 @@ COPY go.mod go.sum ./
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X github.com/jobdock/jobdock/internal/agent.version=${VERSION}" -o /out/jobdock-agent ./cmd/jobdock-agent
+    CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X github.com/jobdock/jobdock/internal/agent.version=${VERSION}" -o /out/jobdock-agent ./cmd/jobdock-agent
 
 FROM debian:bookworm-slim
 ARG VERSION=dev

@@ -24,7 +24,7 @@ gpu_set=false
 
 usage() {
   cat <<EOF
-Install the JobDock agent on a Linux amd64 Docker host.
+Install the JobDock CPU agent on a Linux amd64 or arm64 Docker host.
 
 Usage:
   install-agent.sh --server URL --token TOKEN [options]
@@ -72,7 +72,11 @@ case "$health_timeout" in *[!0-9]*|'') fail "health timeout must be a positive i
 [ "$health_timeout" -gt 0 ] || fail "health timeout must be positive"
 
 [ "$(uname -s)" = "Linux" ] || fail "only Linux is supported"
-case "$(uname -m)" in x86_64|amd64) ;; *) fail "only amd64 hosts are supported" ;; esac
+case "$(uname -m)" in
+  x86_64|amd64) host_arch=amd64 ;;
+  aarch64|arm64) host_arch=arm64 ;;
+  *) fail "only amd64 and arm64 hosts are supported" ;;
+esac
 command -v docker >/dev/null 2>&1 || fail "Docker is not installed"
 command -v curl >/dev/null 2>&1 || fail "curl is required to verify enrollment"
 docker info >/dev/null 2>&1 || fail "Docker is unavailable; run this command with Docker access"
@@ -96,6 +100,11 @@ if [ "$existing" = "true" ]; then
   saved=$(read_existing_env JOBDOCK_ALLOW_INSECURE_HTTP); [ -z "$saved" ] || allow_insecure="$saved"
   [ -f "$STATE_DIR/credential.json" ] || fail "existing agent identity is missing; repair cannot safely create a different node. Restore credential.json or explicitly remove the installation and enroll again"
   token=""
+fi
+
+if [ "$host_arch" = arm64 ]; then
+  [ "$gpu_mode" != required ] || fail "NVIDIA GPU mode is not officially supported on linux/arm64; use --no-gpu"
+  [ "$gpu_mode" != auto ] || gpu_mode=disabled
 fi
 
 [ -n "$server" ] || fail "--server is required for a new or legacy installation"

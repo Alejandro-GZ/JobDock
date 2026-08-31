@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -14,6 +15,10 @@ import (
 var version = "dev"
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Printf("jobdock-builder %s\n", version)
+		return
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("component", "builder", "version", version)
 	cfg, err := config.LoadBuilder()
 	if err != nil {

@@ -64,30 +64,38 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   cli-package:
-    name: Build and validate precompiled CLI
+    name: Build and validate CLI (${{ matrix.arch }})
     needs: [validate, quality]
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: {go-version: '1.26.x'}
-      - name: Build Linux amd64 CLI archive
+      - uses: docker/setup-qemu-action@v3
+      - name: Build Linux CLI archive
         env:
           VERSION: ${{ needs.validate.outputs.version }}
+          ARCH: ${{ matrix.arch }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p cli-dist/stage
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o cli-dist/stage/jobdock ./cmd/jobdock
-          test "$(cli-dist/stage/jobdock --version)" = "jobdock ${VERSION} (server API v1)"
-          archive="jobdock-cli_${VERSION}_linux_amd64.tar.gz"
+          CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o cli-dist/stage/jobdock ./cmd/jobdock
+          test "$(docker run --rm --platform "linux/${ARCH}" --entrypoint /cli/jobdock -v "$PWD/cli-dist/stage:/cli:ro" alpine:3.20 --version)" = "jobdock ${VERSION} (server API v1)"
+          archive="jobdock-cli_${VERSION}_linux_${ARCH}.tar.gz"
           tar -C cli-dist/stage -czf "cli-dist/${archive}" jobdock
-          (cd cli-dist && sha256sum "${archive}" > SHA256SUMS.cli && sha256sum --check SHA256SUMS.cli)
+          checksum="$(sha256sum "cli-dist/${archive}" | cut -d ' ' -f 1)"
+          jq -n --arg arch "$ARCH" --arg filename "$archive" --arg sha256 "$checksum" '{os:"linux", arch:$arch, filename:$filename, sha256:$sha256}' > "cli-dist/cli-${ARCH}.json"
       - name: Preserve validated CLI archive
         uses: actions/upload-artifact@v4
         with:
-          name: jobdock-cli-${{ needs.validate.outputs.version }}
-          path: cli-dist/
+          name: jobdock-cli-${{ needs.validate.outputs.version }}-${{ matrix.arch }}
+          path: |
+            cli-dist/*.tar.gz
+            cli-dist/*.json
           if-no-files-found: error
           retention-days: 90
 
@@ -153,12 +161,16 @@ jobs:
         include:
           - image: jobdock-server
             dockerfile: Dockerfile.server
+            platforms: linux/amd64,linux/arm64
           - image: jobdock-agent
             dockerfile: Dockerfile.agent
+            platforms: linux/amd64,linux/arm64
           - image: jobdock-builder
             dockerfile: Dockerfile.builder
+            platforms: linux/amd64
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -179,7 +191,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64
+          platforms: ${{ matrix.platforms }}
           push: true
           build-args: VERSION=${{ needs.validate.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
@@ -192,6 +204,7 @@ jobs:
         env:
           IMAGE: ghcr.io/alejandro-gz/${{ matrix.image }}
           DIGEST: ${{ steps.build.outputs.digest }}
+          PLATFORMS: ${{ matrix.platforms }}
         shell: bash
         run: |
           set -euo pipefail
@@ -200,7 +213,8 @@ jobs:
             --arg image "$IMAGE" \
             --arg digest "$DIGEST" \
             --arg reference "${IMAGE}@${DIGEST}" \
-            '{image: $image, digest: $digest, reference: $reference}' \
+            --arg platforms "$PLATFORMS" \
+            '{image: $image, digest: $digest, reference: $reference, platforms: ($platforms | split(","))}' \
             > "release-digest/${{ matrix.image }}.json"
           echo "${IMAGE}@${DIGEST}" >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve immutable digest
@@ -238,8 +252,9 @@ jobs:
           path: sdk-dist
       - uses: actions/download-artifact@v4
         with:
-          name: jobdock-cli-${{ needs.validate.outputs.version }}
+          pattern: jobdock-cli-${{ needs.validate.outputs.version }}-*
           path: cli-dist
+          merge-multiple: true
       - id: manifest
         name: Assemble release digest manifest
         env:
@@ -258,10 +273,13 @@ jobs:
           sdist_file="$(basename "${sdists[0]}")"
           wheel_sha256="$(sha256sum "${wheels[0]}" | cut -d ' ' -f 1)"
           sdist_sha256="$(sha256sum "${sdists[0]}" | cut -d ' ' -f 1)"
-          (cd cli-dist && sha256sum --check SHA256SUMS.cli)
-          cli_file="jobdock-cli_${VERSION}_linux_amd64.tar.gz"
-          test -f "cli-dist/${cli_file}"
-          cli_sha256="$(sha256sum "cli-dist/${cli_file}" | cut -d ' ' -f 1)"
+          test "$(find cli-dist -maxdepth 1 -name 'cli-*.json' | wc -l)" -eq 2
+          for descriptor in cli-dist/cli-*.json; do
+            cli_file="$(jq -r .filename "$descriptor")"
+            cli_sha256="$(jq -r .sha256 "$descriptor")"
+            test "$(sha256sum "cli-dist/${cli_file}" | cut -d ' ' -f 1)" = "$cli_sha256"
+          done
+          cli_artifacts="$(jq -s 'sort_by(.arch)' cli-dist/cli-*.json)"
           database_schema="$(find internal/store/migrations -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort -n | tail -1 | cut -d_ -f1 | sed 's/^0*//')"
           test -n "$database_schema"
           jq -s \
@@ -273,10 +291,9 @@ jobs:
             --arg wheel_sha256 "$wheel_sha256" \
             --arg sdist_file "$sdist_file" \
             --arg sdist_sha256 "$sdist_sha256" \
-            --arg cli_file "$cli_file" \
-            --arg cli_sha256 "$cli_sha256" \
+            --argjson cli_artifacts "$cli_artifacts" \
             --argjson database_schema "$database_schema" \
-            '{schema_version: 2, version: $version, tag: $tag, commit: $commit, database: {schema: $database_schema, rollback_floor: $database_schema}, images: (sort_by(.image)), sdk: {name: "jobdock-sdk", version: $sdk_version, wheel: {filename: $wheel_file, sha256: $wheel_sha256}, sdist: {filename: $sdist_file, sha256: $sdist_sha256}}, cli: {name: "jobdock", version: $version, server_api: "v1", artifacts: [{os: "linux", arch: "amd64", filename: $cli_file, sha256: $cli_sha256}]}}' \
+            '{schema_version: 2, version: $version, tag: $tag, commit: $commit, database: {schema: $database_schema, rollback_floor: $database_schema}, images: (sort_by(.image)), sdk: {name: "jobdock-sdk", version: $sdk_version, wheel: {filename: $wheel_file, sha256: $wheel_sha256}, sdist: {filename: $sdist_file, sha256: $sdist_sha256}}, cli: {name: "jobdock", version: $version, server_api: "v1", artifacts: $cli_artifacts}}' \
             release-digests/jobdock-*.json > release-manifest.json
           {
             echo "manifest=$(jq -c . release-manifest.json)"
@@ -299,6 +316,14 @@ jobs:
             test "$actual_version" = "$VERSION"
             tag_digest="$(docker buildx imagetools inspect "${image}:${VERSION}" --format '{{json .Manifest}}' | jq -r .digest)"
             test "$tag_digest" = "$digest"
+            platform_report="$(docker buildx imagetools inspect "$reference")"
+            for platform in $(jq -r '.platforms[]' "$file"); do
+              grep -Fq "$platform" <<< "$platform_report"
+            done
+            if [[ "$image" == */jobdock-builder ]] && grep -Fq 'linux/arm64' <<< "$platform_report"; then
+              echo "Builder must not advertise unverified linux/arm64 support" >&2
+              exit 1
+            fi
           done
       - name: Preserve release manifest
         uses: actions/upload-artifact@v4
@@ -308,9 +333,35 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  platform-smoke:
+    name: Smoke linux/arm64 ${{ matrix.component }}
+    needs: [validate, verify]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - component: server
+            executable: /usr/local/bin/jobdock-server
+          - component: agent
+            executable: /usr/local/bin/jobdock-agent
+    steps:
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run versioned arm64 component
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          REFERENCE: ghcr.io/alejandro-gz/jobdock-${{ matrix.component }}@${{ matrix.component == 'server' && needs.verify.outputs.server_digest || needs.verify.outputs.agent_digest }}
+        run: |
+          set -euo pipefail
+          output="$(docker run --rm --platform linux/arm64 --entrypoint '${{ matrix.executable }}' "$REFERENCE" --version)"
+          test "$output" = "jobdock-${{ matrix.component }} ${VERSION}"
   release:
     name: Create GitHub Release
-    needs: [validate, verify, release-e2e, sdk-package, cli-package, verify-sdk-pypi]
+    needs: [validate, verify, platform-smoke, release-e2e, sdk-package, cli-package, verify-sdk-pypi]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -325,8 +376,9 @@ jobs:
           path: sdk-dist
       - uses: actions/download-artifact@v4
         with:
-          name: jobdock-cli-${{ needs.validate.outputs.version }}
+          pattern: jobdock-cli-${{ needs.validate.outputs.version }}-*
           path: cli-dist
+          merge-multiple: true
       - name: Verify preserved SDK artifacts
         working-directory: sdk-dist
         run: sha256sum --check SHA256SUMS.sdk
@@ -430,12 +482,13 @@ jobs:
     name: Validate published release end to end
     needs: [validate, verify]
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     permissions:
       contents: read
       packages: read
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io

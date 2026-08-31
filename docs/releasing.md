@@ -1,7 +1,6 @@
 # Release guide
 
-JobDock publishes the server, agent, builder, CLI, and Python SDK as one versioned Linux amd64
-release set in GitHub Container Registry:
+JobDock publishes the server, CPU agent, CLI, and Python SDK as one versioned Linux amd64/arm64 release set. The builder remains explicitly amd64-only until its complete BuildKit/Railpack chain is verified on arm64:
 
 - `ghcr.io/alejandro-gz/jobdock-server`
 - `ghcr.io/alejandro-gz/jobdock-agent`
@@ -11,12 +10,12 @@ release set in GitHub Container Registry:
 2. Create and push an annotated semantic-version tag such as `v0.1.0` from the reviewed release commit.
 3. The `Publish release images` workflow validates the tag, derives the Python SDK's PEP 440 version from that same tag, and invokes the required CI workflow. After CI, a dedicated job builds one wheel and one source distribution, validates both with Twine, installs the wheel in a clean environment, checks `jobdock.__version__`, and records SHA-256 hashes. The validated files are retained as a single workflow artifact and are never rebuilt by downstream jobs. The workflow also builds each Dockerfile once with the same product version embedded in its binary and OCI labels. Every image is published with BuildKit provenance and an SBOM.
 4. A stable tag publishes the immutable patch tag (`0.1.0`), the moving minor tag (`0.1`), and `latest`. A prerelease such as `v0.2.0-rc.1` publishes only `0.2.0-rc.1`; it never changes `0.2` or `latest`.
-5. Each matrix build persists its published digest. A separate job builds the Linux amd64 CLI with the product version injected, runs `jobdock --version`, archives it, and records its checksum. The verification phase assembles these values, the version, tag, source commit, CLI platform/API compatibility, and SDK distribution identity into `release-manifest.json`. It pulls exact image digests and verifies preserved CLI and SDK checksums; it never rebuilds a component for validation.
+5. Server and agent images are published as amd64/arm64 manifests; every image record lists its actual platforms. Separate jobs build both CLI architectures with the product version injected, execute each packaged binary through the corresponding platform runtime, and record their checksums. The verification phase assembles these values, source commit, platform/API compatibility, and SDK identity into `release-manifest.json`; it never rebuilds a component for validation.
 6. After digest verification, the release E2E starts the published server, builder, and agent images by digest. It completes enrollment, a Railpack/BuildKit source build, managed-image scheduling and execution, and a separate existing-OCI job. It never compiles a JobDock component locally.
 7. Only after all required CI, publication, digest verification, and published-package E2E jobs succeed does the workflow publish the already validated SDK distributions to PyPI through Trusted Publishing. A separate unprivileged job installs exactly `jobdock-sdk==VERSION` from PyPI and checks the imported version. The workflow creates the GitHub Release only after this verification. Stable releases are marked latest; prereleases are explicitly marked prerelease and never latest. Highlights and the exact component references are prepended to GitHub's generated change notes.
 8. Every GitHub Release contains `release-manifest.json`, a digest-pinned base `docker-compose.yml`, versioned domain/proxy/local Compose overlays, the Caddy configuration, the version-pinned `install-control-plane.sh` bootstrap, the read-only `jobdock-doctor`, the backup/restore `jobdockctl`, a digest-pinned `install-agent.sh`, the checksum-verifying `install-cli.sh`, the precompiled CLI archive, and the already validated SDK wheel and sdist. One `SHA256SUMS` covers the complete set. The release notes include CLI and control-plane installation plus the exact `pip install jobdock-sdk==VERSION` command.
 9. On the first release, set all three package visibilities to public in the repository package settings.
-10. Run the downloaded server/builder Compose file and CPU/NVIDIA agent installer on disposable hosts. Confirm component versions and agent enrollment before announcing the release.
+10. QEMU-backed release smoke tests execute the arm64 server, CPU agent, and CLI and verify their embedded version. The amd64 published-release E2E continues to exercise the complete builder and NVIDIA-capable installation path.
 
 The administrator-facing procedure is documented in [Install a published release](installing-release.md). Keep it independent from the repository development flow.
 

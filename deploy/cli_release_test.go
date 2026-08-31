@@ -31,7 +31,7 @@ func TestReleaseWorkflowPackagesAndSmokesCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(contents)
-	for _, required := range []string{"cli-package:", "CGO_ENABLED=0 GOOS=linux GOARCH=amd64", "-X main.version=${VERSION}", "jobdock --version", "jobdock-cli_${VERSION}_linux_amd64.tar.gz", "server_api: \"v1\""} {
+	for _, required := range []string{"cli-package:", "arch: [amd64, arm64]", "CGO_ENABLED=0 GOOS=linux GOARCH=\"$ARCH\"", "-X main.version=${VERSION}", "--version)\" = \"jobdock ${VERSION} (server API v1)", "jobdock-cli_${VERSION}_linux_${ARCH}.tar.gz", "server_api: \"v1\""} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("release workflow missing %s", required)
 		}

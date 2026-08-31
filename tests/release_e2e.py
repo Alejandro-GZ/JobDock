@@ -106,20 +106,21 @@ def multipart(metadata: dict[str, Any], archive: Path) -> tuple[bytes, str]:
     return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
 
 
-def exercise_oci_only(server_image: str, agent_image: str, root: Path) -> None:
-    """Prove the minimal release runs OCI jobs without builder or BuildKit."""
+def exercise_oci_only(server_image: str, agent_image: str, root: Path, platform: str = "linux/amd64") -> None:
+    """Prove the minimal release runs OCI jobs on the selected control-plane platform."""
     prefix = "jobdock-oci-only-" + uuid.uuid4().hex[:10]
     network, volume = prefix, prefix + "-server"
     server_name, agent_name = prefix + "-server", prefix + "-agent"
     agent_root = root / "oci-only-agent"
     agent_root.mkdir(mode=0o700)
+    initial_jobs = set(command("docker", "ps", "-aq", "--filter", "label=jobdock.managed=true").stdout.split())
     port = free_port()
     password = "release-oci-only-admin-password"
     try:
         command("docker", "network", "create", network)
         command("docker", "volume", "create", volume)
         command(
-            "docker", "run", "-d", "--name", server_name, "--network", network,
+            "docker", "run", "-d", "--platform", platform, "--name", server_name, "--network", network,
             "--network-alias", "jobdock-server", "-p", f"127.0.0.1:{port}:8080",
             "-v", f"{volume}:/var/lib/jobdock", "-e", "JOBDOCK_LISTEN_ADDR=:8080",
             "-e", "JOBDOCK_PUBLIC_URL=http://jobdock-server:8080", "-e", "JOBDOCK_ALLOW_INSECURE_HTTP=true",
@@ -134,7 +135,7 @@ def exercise_oci_only(server_image: str, agent_image: str, root: Path) -> None:
             raise AssertionError(f"OCI-only capability is incorrect: {capability}")
         enrollment = api.json("POST", "/api/v1/nodes/enrollment-tokens", {}, mutate=True)["token"]
         command(
-            "docker", "run", "-d", "--name", agent_name, "--network", network,
+            "docker", "run", "-d", "--platform", platform, "--name", agent_name, "--network", network,
             "-v", "/var/run/docker.sock:/var/run/docker.sock", "-v", f"{agent_root}:{agent_root}",
             "-e", "JOBDOCK_SERVER_URL=http://jobdock-server:8080", "-e", "JOBDOCK_ALLOW_INSECURE_HTTP=true",
             "-e", f"JOBDOCK_ENROLLMENT_TOKEN={enrollment}", "-e", "JOBDOCK_NODE_NAME=oci-only-release-node",
@@ -150,6 +151,9 @@ def exercise_oci_only(server_image: str, agent_image: str, root: Path) -> None:
         if finished["status"] != "SUCCEEDED":
             raise AssertionError(f"OCI-only job failed: {finished}")
     finally:
+        current_jobs = set(command("docker", "ps", "-aq", "--filter", "label=jobdock.managed=true", check=False).stdout.split())
+        for container_id in current_jobs - initial_jobs:
+            command("docker", "rm", "-f", container_id, check=False)
         command("docker", "rm", "-f", agent_name, server_name, check=False)
         command("docker", "volume", "rm", "-f", volume, check=False)
         command("docker", "network", "rm", network, check=False)
@@ -177,7 +181,7 @@ def main() -> None:
         for reference in references.values():
             command("docker", "pull", reference)
         command("docker", "pull", "alpine:3.20")
-        exercise_oci_only(references["server"], references["agent"], root)
+        exercise_oci_only(references["server"], references["agent"], root, "linux/arm64")
         command("docker", "network", "create", network)
         for volume in volumes:
             command("docker", "volume", "create", volume)

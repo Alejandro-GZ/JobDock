@@ -43,17 +43,25 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 		}
 	}
 	commit := strings.Repeat("a", 40)
-	cliName := "jobdock-cli_1.2.3-rc.1_linux_amd64.tar.gz"
-	cliContents := []byte("verified cli archive")
-	if err := os.WriteFile(filepath.Join(cliPath, cliName), cliContents, 0o600); err != nil {
-		t.Fatal(err)
+	cliContents := map[string][]byte{
+		"jobdock-cli_1.2.3-rc.1_linux_amd64.tar.gz": []byte("verified amd64 cli archive"),
+		"jobdock-cli_1.2.3-rc.1_linux_arm64.tar.gz": []byte("verified arm64 cli archive"),
+	}
+	for name, data := range cliContents {
+		if err := os.WriteFile(filepath.Join(cliPath, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	components := []string{"server", "agent", "builder"}
-	images := make([]map[string]string, 0, len(components))
+	images := make([]map[string]any, 0, len(components))
 	for index, component := range components {
 		digest := "sha256:" + strings.Repeat(string(rune('1'+index)), 64)
 		image := "ghcr.io/alejandro-gz/jobdock-" + component
-		images = append(images, map[string]string{"image": image, "digest": digest, "reference": image + "@" + digest})
+		platforms := []string{"linux/amd64"}
+		if component != "builder" {
+			platforms = append(platforms, "linux/arm64")
+		}
+		images = append(images, map[string]any{"image": image, "digest": digest, "reference": image + "@" + digest, "platforms": platforms})
 	}
 	manifest := map[string]any{
 		"schema_version": 2, "version": "1.2.3-rc.1", "tag": "v1.2.3-rc.1", "commit": commit, "images": images,
@@ -65,7 +73,10 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 		},
 		"cli": map[string]any{
 			"name": "jobdock", "version": "1.2.3-rc.1", "server_api": "v1",
-			"artifacts": []map[string]string{{"os": "linux", "arch": "amd64", "filename": cliName, "sha256": testSHA256(cliContents)}},
+			"artifacts": []map[string]string{
+				{"os": "linux", "arch": "amd64", "filename": "jobdock-cli_1.2.3-rc.1_linux_amd64.tar.gz", "sha256": testSHA256(cliContents["jobdock-cli_1.2.3-rc.1_linux_amd64.tar.gz"])},
+				{"os": "linux", "arch": "arm64", "filename": "jobdock-cli_1.2.3-rc.1_linux_arm64.tar.gz", "sha256": testSHA256(cliContents["jobdock-cli_1.2.3-rc.1_linux_arm64.tar.gz"])},
+			},
 		},
 	}
 	contents, err := json.Marshal(manifest)
@@ -81,13 +92,13 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 		t.Fatalf("prepare release assets: %v\n%s", runErr, output)
 	}
 
-	for _, name := range []string{"release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-control-plane.sh", "install-agent.sh", "install-cli.sh", "jobdock-doctor", "jobdockctl", "SHA256SUMS", "release-notes.md", cliName, wheelName, sdistName} {
+	for _, name := range []string{"release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-control-plane.sh", "install-agent.sh", "install-cli.sh", "jobdock-doctor", "jobdockctl", "SHA256SUMS", "release-notes.md", "jobdock-cli_1.2.3-rc.1_linux_amd64.tar.gz", "jobdock-cli_1.2.3-rc.1_linux_arm64.tar.gz", wheelName, sdistName} {
 		if _, err = os.Stat(filepath.Join(outputPath, name)); err != nil {
 			t.Fatalf("expected release asset %s: %v", name, err)
 		}
 	}
 	compose := readTestFile(t, filepath.Join(outputPath, "docker-compose.yml"))
-	if strings.Contains(compose, "@@JOBDOCK_") || !strings.Contains(compose, images[0]["reference"]) || !strings.Contains(compose, images[2]["reference"]) {
+	if strings.Contains(compose, "@@JOBDOCK_") || !strings.Contains(compose, images[0]["reference"].(string)) || !strings.Contains(compose, images[2]["reference"].(string)) {
 		t.Fatal("release Compose file is not pinned to the verified server and builder references")
 	}
 	if strings.Contains(compose, "build:") {
@@ -108,10 +119,10 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 		}
 	}
 	installer := readTestFile(t, filepath.Join(outputPath, "install-agent.sh"))
-	if !strings.Contains(installer, `DEFAULT_VERSION="1.2.3-rc.1"`) || !strings.Contains(installer, `DEFAULT_IMAGE_REFERENCE="`+images[1]["reference"]+`"`) {
+	if !strings.Contains(installer, `DEFAULT_VERSION="1.2.3-rc.1"`) || !strings.Contains(installer, `DEFAULT_IMAGE_REFERENCE="`+images[1]["reference"].(string)+`"`) {
 		t.Fatal("release agent installer is not pinned to the verified agent reference")
 	}
-	assertInstallerPullsDefaultReference(t, filepath.Join(outputPath, "install-agent.sh"), images[1]["reference"])
+	assertInstallerPullsDefaultReference(t, filepath.Join(outputPath, "install-agent.sh"), images[1]["reference"].(string))
 	controlPlaneInstaller := readTestFile(t, filepath.Join(outputPath, "install-control-plane.sh"))
 	if !strings.Contains(controlPlaneInstaller, "sha256sum --check") || !strings.Contains(controlPlaneInstaller, "docker compose") || !strings.Contains(controlPlaneInstaller, `DEFAULT_VERSION="1.2.3-rc.1"`) {
 		t.Fatal("release control-plane installer is missing its pinned version, verification, or Compose startup")

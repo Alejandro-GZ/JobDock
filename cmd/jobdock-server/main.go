@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -24,6 +25,10 @@ import (
 var version = "dev"
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Printf("jobdock-server %s\n", version)
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--healthcheck" {
 		response, err := http.Get("http://127.0.0.1:8080/health/live")
 		if err != nil || response.StatusCode != http.StatusOK {

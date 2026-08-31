@@ -6,7 +6,7 @@ from one stable GitHub Release.
 
 ## Requirements
 
-- Linux amd64.
+- Linux amd64 or arm64. Source builds and NVIDIA GPU mode are currently amd64-only.
 - Docker Engine with the Docker Compose plugin and a running daemon.
 - `curl` and `sha256sum`.
 - Outbound access to GitHub Releases and `ghcr.io`.
@@ -15,7 +15,7 @@ from one stable GitHub Release.
 
 Go, Node.js, Python, Git, and the JobDock repository are not required.
 
-Source builds are enabled by default and remain the recommended installation. For a smaller control plane that only runs prebuilt OCI images, add `--builder disabled` to the installer command. The server stays fully operational while `jobdock-builder` and BuildKit are omitted. Re-run the same versioned installer with `--builder enabled` later to activate source builds without reinstalling or migrating data.
+Source builds are enabled by default on amd64 and remain the recommended installation there. On arm64 the installer selects OCI-only mode because the builder chain is not yet an advertised capability. For a smaller amd64 control plane that only runs prebuilt OCI images, add `--builder disabled`. The server stays fully operational while `jobdock-builder` and BuildKit are omitted. Re-run the same versioned installer with `--builder enabled` later on amd64 to activate source builds without reinstalling or migrating data.
 
 ## Install the current stable release
 

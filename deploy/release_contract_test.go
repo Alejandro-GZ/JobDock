@@ -35,7 +35,7 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 		"agent_digest:",
 		"builder_digest:",
 		"release:",
-		"needs: [validate, verify, release-e2e, sdk-package, cli-package, verify-sdk-pypi]",
+		"needs: [validate, verify, platform-smoke, release-e2e, sdk-package, cli-package, verify-sdk-pypi]",
 		"publish-sdk-pypi:",
 		"verify-sdk-pypi:",
 		"gh release create",

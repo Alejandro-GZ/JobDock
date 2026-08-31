@@ -27,6 +27,8 @@ import (
 
 var version = "dev"
 
+func Version() string { return version }
+
 const minimumEmptyPollInterval = 250 * time.Millisecond
 
 type Agent struct {

@@ -112,8 +112,9 @@ done
 
 [ "$(uname -s 2>/dev/null || true)" = "Linux" ] || fail "Linux is required"
 case "$(uname -m 2>/dev/null || true)" in
-  x86_64|amd64) ;;
-  *) fail "this release supports Linux amd64 only" ;;
+  x86_64|amd64) HOST_ARCH=amd64 ;;
+  aarch64|arm64) HOST_ARCH=arm64 ;;
+  *) fail "this release supports Linux amd64 and arm64 only" ;;
 esac
 
 if [ "${JOBDOCK_INSTALL_ALLOW_NON_ROOT:-false}" != "true" ] && [ "$(id -u)" -ne 0 ]; then
@@ -142,9 +143,12 @@ if [ -f "$existing_environment" ]; then
   stored_builder_mode=$(awk -F= '$1 == "JOBDOCK_BUILDER_ENABLED" {print $2; exit}' "$existing_environment")
 fi
 if [ -z "$BUILDER_MODE" ]; then
-  case "$stored_builder_mode" in true) BUILDER_MODE=enabled;; false) BUILDER_MODE=disabled;; *) BUILDER_MODE=enabled;; esac
+  case "$stored_builder_mode" in true) BUILDER_MODE=enabled;; false) BUILDER_MODE=disabled;; *) if [ "$HOST_ARCH" = arm64 ]; then BUILDER_MODE=disabled; else BUILDER_MODE=enabled; fi;; esac
 fi
 case "$BUILDER_MODE" in enabled|disabled) :;; *) fail "--builder must be enabled or disabled";; esac
+if [ "$HOST_ARCH" = arm64 ] && [ "$BUILDER_MODE" = enabled ]; then
+  fail "source builds are not supported on linux/arm64 in this release; use --builder disabled and submit OCI images"
+fi
 if [ -n "$stored_mode" ]; then
   [ -z "$MODE" ] || [ "$MODE" = "$stored_mode" ] || fail "this installation uses $stored_mode mode; changing exposure mode requires the supported reconfiguration flow"
   MODE="$stored_mode"
