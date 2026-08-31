@@ -359,12 +359,11 @@ jobs:
           set -euo pipefail
           output="$(docker run --rm --platform linux/arm64 --entrypoint '${{ matrix.executable }}' "$REFERENCE" --version)"
           test "$output" = "jobdock-${{ matrix.component }} ${VERSION}"
-  release:
-    name: Create GitHub Release
-    needs: [validate, verify, platform-smoke, release-e2e, sdk-package, cli-package, verify-sdk-pypi]
+
+  release-assets:
+    name: Assemble verified release bundle
+    needs: [validate, verify, sdk-package, cli-package]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -379,11 +378,42 @@ jobs:
           pattern: jobdock-cli-${{ needs.validate.outputs.version }}-*
           path: cli-dist
           merge-multiple: true
-      - name: Verify preserved SDK artifacts
-        working-directory: sdk-dist
-        run: sha256sum --check SHA256SUMS.sdk
-      - name: Prepare self-contained release assets
-        run: sh deploy/prepare-release-assets.sh release-manifest.json release-assets sdk-dist/packages cli-dist
+      - name: Verify inputs and assemble the exact distributable set
+        run: |
+          set -euo pipefail
+          (cd sdk-dist && sha256sum --check SHA256SUMS.sdk)
+          sh deploy/prepare-release-assets.sh release-manifest.json release-assets sdk-dist/packages cli-dist
+          (cd release-assets && sha256sum --check SHA256SUMS)
+      - name: Preserve the exact release-gated bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: jobdock-release-assets-${{ needs.validate.outputs.version }}
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Stage the release gate harness separately
+        run: |
+          mkdir release-gate-harness
+          cp tests/clean_host_release_e2e.py tests/release_e2e.py release-gate-harness/
+      - name: Preserve the release gate harness separately
+        uses: actions/upload-artifact@v4
+        with:
+          name: jobdock-release-gate-${{ needs.validate.outputs.version }}
+          path: release-gate-harness/
+          if-no-files-found: error
+          retention-days: 90
+
+  release:
+    name: Create GitHub Release
+    needs: [validate, release-assets, platform-smoke, release-e2e, verify-sdk-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: jobdock-release-assets-${{ needs.validate.outputs.version }}
+          path: release-assets
       - name: Validate release asset checksums
         working-directory: release-assets
         run: sha256sum --check SHA256SUMS
@@ -479,24 +509,32 @@ jobs:
           test "$actual_version" = "$SDK_VERSION"
 
   release-e2e:
-    name: Validate published release end to end
-    needs: [validate, verify]
+    name: Validate clean-host installation end to end
+    needs: [validate, release-assets]
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     permissions:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Exercise minimal and full published deployments
+      - uses: actions/download-artifact@v4
+        with:
+          name: jobdock-release-assets-${{ needs.validate.outputs.version }}
+          path: release-assets
+      - uses: actions/download-artifact@v4
+        with:
+          name: jobdock-release-gate-${{ needs.validate.outputs.version }}
+          path: release-gate
+      - name: Validate bundle checksums before clean-host installation
+        working-directory: release-assets
+        run: sha256sum --check SHA256SUMS
+      - name: Exercise the official bootstrap on a clean Docker host
         env:
-          JOBDOCK_RELEASE_SERVER_IMAGE: ghcr.io/alejandro-gz/jobdock-server@${{ needs.verify.outputs.server_digest }}
-          JOBDOCK_RELEASE_AGENT_IMAGE: ghcr.io/alejandro-gz/jobdock-agent@${{ needs.verify.outputs.agent_digest }}
-          JOBDOCK_RELEASE_BUILDER_IMAGE: ghcr.io/alejandro-gz/jobdock-builder@${{ needs.verify.outputs.builder_digest }}
-        run: python3 tests/release_e2e.py
+          JOBDOCK_RELEASE_ASSETS: ${{ github.workspace }}/release-assets
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 release-gate/clean_host_release_e2e.py

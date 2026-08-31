@@ -34,8 +34,12 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 		"server_digest:",
 		"agent_digest:",
 		"builder_digest:",
+		"release-assets:",
+		"Assemble verified release bundle",
+		"jobdock-release-assets-${{ needs.validate.outputs.version }}",
+		"jobdock-release-gate-${{ needs.validate.outputs.version }}",
 		"release:",
-		"needs: [validate, verify, platform-smoke, release-e2e, sdk-package, cli-package, verify-sdk-pypi]",
+		"needs: [validate, release-assets, platform-smoke, release-e2e, verify-sdk-pypi]",
 		"publish-sdk-pypi:",
 		"verify-sdk-pypi:",
 		"gh release create",
@@ -54,11 +58,9 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 		"--generate-notes",
 		"--latest=false",
 		"release-e2e:",
-		"Validate published release end to end",
-		"JOBDOCK_RELEASE_SERVER_IMAGE: ghcr.io/alejandro-gz/jobdock-server@${{ needs.verify.outputs.server_digest }}",
-		"JOBDOCK_RELEASE_AGENT_IMAGE: ghcr.io/alejandro-gz/jobdock-agent@${{ needs.verify.outputs.agent_digest }}",
-		"JOBDOCK_RELEASE_BUILDER_IMAGE: ghcr.io/alejandro-gz/jobdock-builder@${{ needs.verify.outputs.builder_digest }}",
-		"python3 tests/release_e2e.py",
+		"Validate clean-host installation end to end",
+		"JOBDOCK_RELEASE_ASSETS: ${{ github.workspace }}/release-assets",
+		"python3 release-gate/clean_host_release_e2e.py",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("release workflow is missing %q", required)
@@ -91,15 +93,15 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 			t.Fatalf("release asset packager is missing %q", required)
 		}
 	}
-	releaseE2E := readReleaseFile(t, "tests", "release_e2e.py")
-	for _, required := range []string{"/api/v1/nodes/enrollment-tokens", `"mode": "RAILPACK"`, "/confirm", "artifact_reference", "alpine:3.20", `"SUCCEEDED"`} {
+	releaseE2E := readReleaseFile(t, "tests", "clean_host_release_e2e.py")
+	for _, required := range []string{"docker:28-dind", "install-control-plane.sh", "jobdock-doctor --json", "/install-agent.sh", "/api/v1/nodes/enrollment-tokens", `"mode": "RAILPACK"`, "/confirm", "artifact_reference", "alpine:3.20", `"SUCCEEDED"`, "restart jobdock-server"} {
 		if !strings.Contains(releaseE2E, required) {
-			t.Fatalf("published release E2E is missing %q", required)
+			t.Fatalf("clean-host release E2E is missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"go build", "docker build", "npm run build"} {
+	for _, forbidden := range []string{"go build", "docker build", "npm run build", ":/workspace", ":/repo"} {
 		if strings.Contains(releaseE2E, forbidden) {
-			t.Fatalf("published release E2E must not compile JobDock locally: found %q", forbidden)
+			t.Fatalf("clean-host release E2E must not compile or mount JobDock locally: found %q", forbidden)
 		}
 	}
 }
