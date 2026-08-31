@@ -98,6 +98,8 @@ Open **Nodes → Enroll node** to obtain separate copy-ready CPU and NVIDIA comm
 
 The installer waits for server-confirmed enrollment and a heartbeat before reporting success. If registration does not complete within 60 seconds it prints recent agent logs and an actionable connectivity/TLS/token error instead of announcing a partial installation.
 
+Running the matching command again is idempotent. The installer detects `install`, `repair`, or `upgrade`, preserves `/var/lib/jobdock-agent/credential.json` and supported server/name/labels/GPU configuration, and keeps the previous container as a rollback candidate until the replacement authenticates. Upgrades are rejected while local assignment records are active unless the operator deliberately supplies `--force-active`; drain the node first in normal operation. Use `--repair` to recreate the current image, or run the installer served by an upgraded control plane to pull its new immutable digest. `--gpu` and `--no-gpu` declaratively change NVIDIA discovery.
+
 CPU host:
 
 ```sh

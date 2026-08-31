@@ -113,6 +113,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err := a.authenticate(ctx); err != nil {
 		return err
 	}
+	a.log.Info("agent_authenticated", "node_id", a.nodeID)
 	go a.gpuTelemetryLoop(ctx)
 	go a.heartbeatLoop(ctx)
 	if err := a.reconcile(ctx); err != nil {

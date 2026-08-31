@@ -132,19 +132,21 @@ func assertInstallerPullsDefaultReference(t *testing.T, installerPath, reference
 	binDir := t.TempDir()
 	callsPath := filepath.Join(binDir, "docker-calls")
 	dockerStub := `#!/bin/sh
-if [ "${1:-}" = "container" ] && [ "${2:-}" = "inspect" ]; then exit 1; fi
+if [ "${1:-}" = "container" ] && [ "${2:-}" = "inspect" ]; then [ -f "$DOCKER_STARTED" ]; exit $?; fi
 printf '%s\n' "$*" >>"$DOCKER_CALLS"
+if [ "${1:-}" = "run" ]; then : >"$DOCKER_STARTED"; fi
 `
 	unameStub := `#!/bin/sh
 if [ "${1:-}" = "-m" ]; then printf 'x86_64\n'; else printf 'Linux\n'; fi
 `
-	for name, contents := range map[string]string{"docker": dockerStub, "uname": unameStub} {
+	curlStub := "#!/bin/sh\nprintf '{\"status\":\"connected\"}\\n'\n"
+	for name, contents := range map[string]string{"docker": dockerStub, "uname": unameStub, "curl": curlStub} {
 		if err := os.WriteFile(filepath.Join(binDir, name), []byte(contents), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
 	command := exec.Command("sh", installerPath, "--server", "https://dock.example.test", "--token", "one-use-token")
-	command.Env = append(withoutEnvironment(os.Environ(), "PATH", "DOCKER_CALLS"), "PATH="+binDir+":"+os.Getenv("PATH"), "DOCKER_CALLS="+callsPath)
+	command.Env = append(withoutEnvironment(os.Environ(), "PATH", "DOCKER_CALLS", "DOCKER_STARTED", "JOBDOCK_AGENT_STATE_DIR"), "PATH="+binDir+":"+os.Getenv("PATH"), "DOCKER_CALLS="+callsPath, "DOCKER_STARTED="+filepath.Join(binDir, "started"), "JOBDOCK_AGENT_STATE_DIR="+filepath.Join(binDir, "state"))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("run generated installer: %v\n%s", err, output)
 	}
