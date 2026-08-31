@@ -24,6 +24,18 @@ enabled. HSTS belongs at the external proxy in proxy mode and is deliberately
 absent from local mode.
 - Run `jobdock-builder` and `buildkitd` as separate services. Neither service may mount the host Docker socket.
 
+## Backup and restore
+
+The release installer places `jobdockctl` in `/usr/local/bin`. Create a consistent, portable snapshot with:
+
+```sh
+sudo jobdockctl backup --output /srv/backups/jobdock-$(date +%F).tar
+```
+
+The command checks free space, briefly stops all state writers, captures SQLite, the master key, secrets, logs, outputs, managed images, builder identity and BuildKit state, writes a versioned manifest and checksums, and restarts the deployment only after validating the archive. The resulting file is mode `0600` and must be handled as a credential.
+
+Restore onto an empty supported host layout with `sudo jobdockctl restore BACKUP.tar`. The command validates the outer layout, hashes, payload paths, file types and database compatibility before writing anything. Use `--force` only after inspection when replacing an existing installation; the previous directories are moved to timestamped recovery paths instead of deleted. When a newer installed release is present, its generated deployment files are retained and the restored database is migrated by normal server startup. Downgrades from a newer backup schema are rejected.
+
 ## Isolated source builder
 
 The official installer generates a random builder credential and mounts

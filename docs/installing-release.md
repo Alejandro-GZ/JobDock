@@ -170,10 +170,10 @@ plane.
 Download `install-control-plane.sh` from the target release and run it against the existing system layout. It verifies the target manifest, checksums, and immutable images, then displays the version and database-schema plan before changing configuration:
 
 ```sh
-sudo sh install-control-plane.sh --version 0.4.0 --upgrade --no-backup
+sudo sh install-control-plane.sh --version 0.4.0 --upgrade
 ```
 
-Add `--yes` for non-interactive automation. Until P1.71 provides the supported full backup command, `--no-backup` is deliberately mandatory. A release that raises the SQLite schema is classified as irreversible and also requires `--allow-irreversible` after its release notes have been reviewed.
+Add `--yes` for non-interactive automation. By default, the installer creates and validates a consistent pre-upgrade backup through `jobdockctl`; `--no-backup` is an explicit high-risk opt-out. A release that raises the SQLite schema is classified as irreversible and also requires `--allow-irreversible` after its release notes have been reviewed.
 
 The upgrade preserves `jobdock.env`, `overrides.env`, secrets, persistent data, and the exposure mode. Its plan and outcome are recorded under `/usr/local/lib/jobdock/releases/upgrade-history`. If readiness fails before an irreversible migration, the previous release configuration is restored automatically. Agent upgrades remain separate and should be rolled out gradually after the control plane is healthy.
 

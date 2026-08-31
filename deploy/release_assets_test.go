@@ -68,7 +68,7 @@ func TestPrepareReleaseAssetsPinsVerifiedComponents(t *testing.T) {
 		t.Fatalf("prepare release assets: %v\n%s", runErr, output)
 	}
 
-	for _, name := range []string{"release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-control-plane.sh", "install-agent.sh", "jobdock-doctor", "SHA256SUMS", "release-notes.md", wheelName, sdistName} {
+	for _, name := range []string{"release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-control-plane.sh", "install-agent.sh", "jobdock-doctor", "jobdockctl", "SHA256SUMS", "release-notes.md", wheelName, sdistName} {
 		if _, err = os.Stat(filepath.Join(outputPath, name)); err != nil {
 			t.Fatalf("expected release asset %s: %v", name, err)
 		}

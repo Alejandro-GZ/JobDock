@@ -197,7 +197,7 @@ download() {
 
 printf 'Resolving JobDock %s...\n' "$VERSION"
 download SHA256SUMS
-for asset in release-manifest.json docker-compose.yml docker-compose.domain.yml docker-compose.proxy.yml docker-compose.local.yml Caddyfile install-agent.sh jobdock-doctor; do
+for asset in release-manifest.json docker-compose.yml docker-compose.domain.yml docker-compose.proxy.yml docker-compose.local.yml Caddyfile install-agent.sh jobdock-doctor jobdockctl; do
   download "$asset"
   awk -v expected="$asset" '$2 == expected || $2 == "*" expected {print}' "$temporary/SHA256SUMS" > "$temporary/$asset.sha256"
   [ -s "$temporary/$asset.sha256" ] || fail "SHA256SUMS does not cover $asset"
@@ -245,7 +245,6 @@ target_schema=$(awk '/"database"[[:space:]]*:/ {inside=1} inside && /"schema"[[:
 if [ "$UPGRADE" = "true" ]; then
   [ "$existing_install" = "true" ] || fail "--upgrade requires an existing JobDock installation"
   [ "$installed_version" != "$VERSION" ] || fail "JobDock $VERSION is already installed; omit --upgrade for an idempotent repair"
-  [ "$NO_BACKUP" = "true" ] || fail "a supported full backup is not available until P1.71; review the risk and add --no-backup explicitly to continue"
   installed_schema=$(awk -F= '$1 == "database_schema" {print $2}' "$state_file")
   [ -n "$installed_schema" ] || installed_schema=0
   oldest_version=$(printf '%s\n%s\n' "$installed_version" "$VERSION" | sort -V | head -1)
@@ -256,7 +255,7 @@ if [ "$UPGRADE" = "true" ]; then
   printf '\nUpgrade plan\n'
   printf '  Version: %s -> %s\n' "$installed_version" "$VERSION"
   printf '  Database schema: %s -> %s\n' "$installed_schema" "$target_schema"
-  printf '  Backup: explicitly skipped\n'
+  if [ "$NO_BACKUP" = "true" ]; then printf '  Backup: explicitly skipped\n'; else printf '  Backup: required before mutation\n'; fi
   if [ "$irreversible" = "true" ]; then printf '  Automatic rollback: unavailable after migration\n'; else printf '  Automatic rollback: enabled\n'; fi
   if [ "$ASSUME_YES" != "true" ]; then
     [ -t 0 ] || fail "upgrade confirmation requires an interactive terminal or --yes"
@@ -268,6 +267,13 @@ if [ "$UPGRADE" = "true" ]; then
     docker pull "$reference" >/dev/null || fail "could not pre-pull verified image $reference"
   done
   upgrade_id=$(date -u +%Y%m%dT%H%M%SZ)-from-$installed_version-to-$VERSION
+  if [ "$NO_BACKUP" != "true" ]; then
+    [ -x "$BIN_DIR/jobdockctl" ] || fail "jobdockctl backup is unavailable on this older installation; install P1.71 support first or explicitly add --no-backup"
+    mkdir -p "$DATA_DIR/backups"
+    backup_path="$DATA_DIR/backups/pre-upgrade-$upgrade_id.tar"
+    "$BIN_DIR/jobdockctl" backup --output "$backup_path" || fail "pre-upgrade backup failed; no deployment files were changed"
+    [ -s "$backup_path" ] || fail "pre-upgrade backup did not produce a valid artifact"
+  fi
   rollback_dir="$RELEASES_DIR/upgrade-history/$upgrade_id"
   mkdir -p "$rollback_dir"
   for preserved in jobdock.env overrides.env docker-compose.yml docker-compose.exposure.yml Caddyfile release-manifest.json install-state; do
@@ -298,6 +304,8 @@ done
 install -m 0755 "$temporary/install-agent.sh" "$release_dir/install-agent.sh"
 install -m 0755 "$temporary/jobdock-doctor" "$release_dir/jobdock-doctor"
 install -m 0755 "$temporary/jobdock-doctor" "$BIN_DIR/jobdock-doctor"
+install -m 0755 "$temporary/jobdockctl" "$release_dir/jobdockctl"
+install -m 0755 "$temporary/jobdockctl" "$BIN_DIR/jobdockctl"
 install -m 0644 "$temporary/SHA256SUMS" "$release_dir/SHA256SUMS"
 install -m 0644 "$temporary/docker-compose.yml" "$CONFIG_DIR/docker-compose.yml"
 install -m 0644 "$temporary/docker-compose.$MODE.yml" "$CONFIG_DIR/docker-compose.exposure.yml"

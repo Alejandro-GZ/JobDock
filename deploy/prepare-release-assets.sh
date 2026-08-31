@@ -61,6 +61,9 @@ awk \
 chmod 0755 "$output_dir/install-control-plane.sh"
 cp -- "$script_dir/jobdock-doctor.sh" "$output_dir/jobdock-doctor"
 chmod 0755 "$output_dir/jobdock-doctor"
+database_schema=$(jq -er '.database.schema' "$manifest")
+awk -v schema="$database_schema" '$0 ~ /^SUPPORTED_DATABASE_SCHEMA=/ {print "SUPPORTED_DATABASE_SCHEMA=" schema; next} {print}' "$script_dir/jobdockctl.sh" > "$output_dir/jobdockctl"
+chmod 0755 "$output_dir/jobdockctl"
 
 awk \
   -v server="$server_reference" \
@@ -119,5 +122,5 @@ EOF
 
 (
   cd -- "$output_dir"
-  sha256sum release-manifest.json docker-compose.yml docker-compose.domain.yml docker-compose.proxy.yml docker-compose.local.yml Caddyfile install-control-plane.sh install-agent.sh jobdock-doctor "$wheel_filename" "$sdist_filename" > SHA256SUMS
+  sha256sum release-manifest.json docker-compose.yml docker-compose.domain.yml docker-compose.proxy.yml docker-compose.local.yml Caddyfile install-control-plane.sh install-agent.sh jobdock-doctor jobdockctl "$wheel_filename" "$sdist_filename" > SHA256SUMS
 )

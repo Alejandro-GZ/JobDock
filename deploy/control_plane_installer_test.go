@@ -78,13 +78,14 @@ func TestControlPlaneInstallerIsVerifiedAndIdempotent(t *testing.T) {
 		"docker-compose.local.yml":  "services:\n  jobdock-server:\n    ports: [\"18080:8080\"]\n",
 		"Caddyfile":                 "{$JOBDOCK_DOMAIN} { reverse_proxy jobdock-server:8080 }\n",
 		"jobdock-doctor":            "#!/bin/sh\nexit 0\n",
+		"jobdockctl":                "#!/bin/sh\nexit 0\n",
 	}
 	for name, contents := range assets {
 		if err := os.WriteFile(filepath.Join(release, name), []byte(contents), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	checksum := exec.Command("sha256sum", "release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-agent.sh", "jobdock-doctor")
+	checksum := exec.Command("sha256sum", "release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-agent.sh", "jobdock-doctor", "jobdockctl")
 	checksum.Dir = release
 	output, err := checksum.Output()
 	if err != nil {
@@ -159,6 +160,7 @@ cp "$JOBDOCK_TEST_RELEASE_DIR/$asset" "$output"
 		filepath.Join(data, "server"),
 		filepath.Join(releases, "1.2.3", "release-manifest.json"),
 		filepath.Join(installedBin, "jobdock-doctor"),
+		filepath.Join(installedBin, "jobdockctl"),
 	} {
 		if _, err = os.Stat(path); err != nil {
 			t.Fatalf("expected installed path %s: %v", path, err)
@@ -273,7 +275,7 @@ cp "$JOBDOCK_TEST_RELEASE_DIR/$asset" "$output"
 	if err = os.WriteFile(manifestPath, []byte(upgradedManifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	checksum = exec.Command("sha256sum", "release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-agent.sh", "jobdock-doctor")
+	checksum = exec.Command("sha256sum", "release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-agent.sh", "jobdock-doctor", "jobdockctl")
 	checksum.Dir = release
 	output, err = checksum.Output()
 	if err != nil {

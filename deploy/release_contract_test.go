@@ -84,7 +84,7 @@ func TestReleaseWorkflowPublishesCompleteVersionedSet(t *testing.T) {
 		}
 	}
 	assets := readReleaseFile(t, "deploy", "prepare-release-assets.sh")
-	for _, required := range []string{"release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-control-plane.sh", "install-agent.sh", "jobdock-doctor", "SHA256SUMS", "## Highlights", "## Changes", "sha256sum", "pip install jobdock-sdk==", "SDK wheel checksum mismatch", "SDK sdist checksum mismatch"} {
+	for _, required := range []string{"release-manifest.json", "docker-compose.yml", "docker-compose.domain.yml", "docker-compose.proxy.yml", "docker-compose.local.yml", "Caddyfile", "install-control-plane.sh", "install-agent.sh", "jobdock-doctor", "jobdockctl", "SHA256SUMS", "## Highlights", "## Changes", "sha256sum", "pip install jobdock-sdk==", "SDK wheel checksum mismatch", "SDK sdist checksum mismatch"} {
 		if !strings.Contains(assets, required) {
 			t.Fatalf("release asset packager is missing %q", required)
 		}

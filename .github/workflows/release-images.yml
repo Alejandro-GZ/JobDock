@@ -325,6 +325,7 @@ jobs:
             release-assets/install-control-plane.sh \
             release-assets/install-agent.sh \
             release-assets/jobdock-doctor \
+            release-assets/jobdockctl \
             release-assets/SHA256SUMS \
             release-assets/*.whl \
             release-assets/*.tar.gz
